@@ -1,0 +1,91 @@
+Metadata-Version: 2.4
+Name: memvid
+Version: 0.1.0
+Summary: QR code video-based AI memory library for fast semantic search and retrieval
+Home-page: https://github.com/memvid-org/memvid
+Author: Memvid Team
+Author-email: team@memvid.ai
+Classifier: Development Status :: 3 - Alpha
+Classifier: Intended Audience :: Developers
+Classifier: Topic :: Software Development :: Libraries :: Python Modules
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: qrcode[pil]>=8.0
+Requires-Dist: opencv-python>=4.11.0
+Requires-Dist: pyzbar>=0.1.9
+Requires-Dist: sentence-transformers>=4.0.0
+Requires-Dist: numpy>=2.0.0
+Requires-Dist: openai>=1.0.0
+Requires-Dist: tqdm>=4.67.0
+Requires-Dist: faiss-cpu>=1.11.0
+Requires-Dist: Pillow>=11.0.0
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0.0; extra == "dev"
+Requires-Dist: pytest-cov>=4.0.0; extra == "dev"
+Requires-Dist: black>=23.0.0; extra == "dev"
+Requires-Dist: flake8>=6.0.0; extra == "dev"
+Provides-Extra: web
+Requires-Dist: fastapi>=0.100.0; extra == "web"
+Requires-Dist: gradio>=4.0.0; extra == "web"
+Dynamic: author
+Dynamic: author-email
+Dynamic: classifier
+Dynamic: description
+Dynamic: description-content-type
+Dynamic: home-page
+Dynamic: license-file
+Dynamic: provides-extra
+Dynamic: requires-dist
+Dynamic: requires-python
+Dynamic: summary
+
+# Memvid - QR Code Video-Based AI Memory
+
+A high-performance Python library for creating, storing, and retrieving AI memory using QR code videos. Memvid enables semantic search across millions of text chunks with sub-second retrieval times.
+
+## Features
+
+- **Fast Encoding**: Convert text chunks into QR code videos
+- **Semantic Search**: Lightning-fast retrieval using sentence embeddings
+- **Conversational AI**: Built-in chat interface with context-aware memory
+- **Scalable**: Handles millions of chunks with < 2 second retrieval
+- **Flexible**: Pluggable LLM backends (OpenAI, Claude, Gemini, local models)
+
+## Installation
+
+```bash
+pip install memvid
+```
+
+## Quick Start
+
+```python
+from memvid import MemvidEncoder, MemvidChat
+
+# Create video memory from text chunks
+chunks = ["Important fact 1", "Important fact 2", ...]
+encoder = MemvidEncoder()
+encoder.add_chunks(chunks)
+encoder.build_video("memory.mp4", "memory_index.json")
+
+# Chat with your memory
+chat = MemvidChat("memory.mp4", "memory_index.json")
+chat.start_session()
+response = chat.chat("What do you know about...")
+```
+
+## Requirements
+
+- Python 3.8+
+- System dependencies for pyzbar (libzbar0 on Ubuntu/Debian)
+
+## License
+
+MIT License
