@@ -348,10 +348,6 @@ Check out the [examples/](examples/) directory for:
 - [PyPI Package](https://pypi.org/project/memvid)
 - [Changelog](https://github.com/olow304/memvid/releases)
 
-## 📈 Stats
-
-![GitHub stars](https://img.shields.io/github/stars/olow304/memvid?style=social)
-![GitHub forks](https://img.shields.io/github/forks/olow304/memvid?style=social)
 
 ## 📄 License
 
