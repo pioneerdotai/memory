@@ -2,10 +2,34 @@
 
 **The lightweight, game-changing solution for AI memory at scale**
 
+[![PyPI version](https://badge.fury.io/py/memvid.svg)](https://pypi.org/project/memvid/)
+[![Downloads](https://pepy.tech/badge/memvid)](https://pepy.tech/project/memvid)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
 Memvid revolutionizes AI memory management by encoding text data into videos, enabling **lightning-fast semantic search** across millions of text chunks with **sub-second retrieval times**. Unlike traditional vector databases that consume massive amounts of RAM and storage, Memvid compresses your knowledge base into compact video files while maintaining instant access to any piece of information.
+
+## ✨ Key Features
+
+- 🎥 **Video-as-Database**: Store millions of text chunks in a single MP4 file
+- 🔍 **Semantic Search**: Find relevant content using natural language queries
+- 💬 **Built-in Chat**: Conversational interface with context-aware responses
+- 📚 **PDF Support**: Direct import and indexing of PDF documents
+- 🚀 **Fast Retrieval**: Sub-second search across massive datasets
+- 💾 **Efficient Storage**: 10x compression compared to traditional databases
+- 🔌 **Pluggable LLMs**: Works with OpenAI, Anthropic, or local models
+- 🌐 **Offline-First**: No internet required after video generation
+- 🔧 **Simple API**: Get started with just 3 lines of code
+
+## 🎯 Use Cases
+
+- **📖 Digital Libraries**: Index thousands of books in a single video file
+- **🎓 Educational Content**: Create searchable video memories of course materials
+- **📰 News Archives**: Compress years of articles into manageable video databases
+- **💼 Corporate Knowledge**: Build company-wide searchable knowledge bases
+- **🔬 Research Papers**: Quick semantic search across scientific literature
+- **📝 Personal Notes**: Transform your notes into a searchable AI assistant
 
 ## 🚀 Why Memvid?
 
@@ -282,6 +306,26 @@ pytest --cov=memvid tests/
 black memvid/
 ```
 
+## 🆚 Comparison with Traditional Solutions
+
+| Feature | Memvid | Vector DBs | Traditional DBs |
+|---------|--------|------------|-----------------|
+| Storage Efficiency | ⭐⭐⭐⭐⭐ | ⭐⭐ | ⭐⭐⭐ |
+| Setup Complexity | Simple | Complex | Complex |
+| Semantic Search | ✅ | ✅ | ❌ |
+| Offline Usage | ✅ | ❌ | ✅ |
+| Portability | File-based | Server-based | Server-based |
+| Scalability | Millions | Millions | Billions |
+| Cost | Free | $$$$ | $$$ |
+
+## 🗺️ Roadmap
+
+- [ ] **v0.2.0** - Multi-language support
+- [ ] **v0.3.0** - Real-time memory updates
+- [ ] **v0.4.0** - Distributed video sharding
+- [ ] **v0.5.0** - Audio and image support
+- [ ] **v1.0.0** - Production-ready with enterprise features
+
 ## 📚 Examples
 
 Check out the [examples/](examples/) directory for:
@@ -291,12 +335,23 @@ Check out the [examples/](examples/) directory for:
 - Real-time memory updates
 - Integration with popular LLMs
 
+## 🆘 Getting Help
+
+- 📖 [Documentation](https://github.com/olow304/memvid/wiki) - Comprehensive guides
+- 💬 [Discussions](https://github.com/olow304/memvid/discussions) - Ask questions
+- 🐛 [Issue Tracker](https://github.com/olow304/memvid/issues) - Report bugs
+- 🌟 [Show & Tell](https://github.com/olow304/memvid/discussions/categories/show-and-tell) - Share your projects
+
 ## 🔗 Links
 
-- [Documentation](https://memvid.readthedocs.io)
+- [GitHub Repository](https://github.com/olow304/memvid)
 - [PyPI Package](https://pypi.org/project/memvid)
-- [GitHub Repository](https://github.com/yourusername/memvid)
-- [Discord Community](https://discord.gg/memvid)
+- [Changelog](https://github.com/olow304/memvid/releases)
+
+## 📈 Stats
+
+![GitHub stars](https://img.shields.io/github/stars/olow304/memvid?style=social)
+![GitHub forks](https://img.shields.io/github/forks/olow304/memvid?style=social)
 
 ## 📄 License
 
