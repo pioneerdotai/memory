@@ -12,12 +12,9 @@ Memvid revolutionizes AI memory management by encoding text data into videos, en
 
 ## 🎥 Demo
 
-<div align="center">
-  <video width="100%" controls>
-    <source src="mem.mp4" type="video/mp4">
-    Your browser does not support the video tag.
-  </video>
-</div>
+https://github.com/user-attachments/assets/ec550e93-e9c4-459f-a8a1-46e122b5851e
+
+
 
 ## ✨ Key Features
 
