@@ -53,6 +53,41 @@ class MemvidEncoder:
         chunks = chunk_text(text, chunk_size, overlap)
         self.add_chunks(chunks)
     
+    def add_pdf(self, pdf_path: str, chunk_size: int = 800, overlap: int = 100):
+        """
+        Extract text from PDF and add as chunks
+        
+        Args:
+            pdf_path: Path to PDF file
+            chunk_size: Target chunk size (default larger for books)
+            overlap: Overlap between chunks
+        """
+        try:
+            import PyPDF2
+        except ImportError:
+            raise ImportError("PyPDF2 is required for PDF support. Install with: pip install PyPDF2")
+        
+        if not Path(pdf_path).exists():
+            raise FileNotFoundError(f"PDF file not found: {pdf_path}")
+        
+        text = ""
+        with open(pdf_path, 'rb') as file:
+            pdf_reader = PyPDF2.PdfReader(file)
+            num_pages = len(pdf_reader.pages)
+            
+            logger.info(f"Extracting text from {num_pages} pages of {Path(pdf_path).name}")
+            
+            for page_num in range(num_pages):
+                page = pdf_reader.pages[page_num]
+                page_text = page.extract_text()
+                text += page_text + "\n\n"
+        
+        if text.strip():
+            self.add_text(text, chunk_size, overlap)
+            logger.info(f"Added PDF content: {len(text)} characters from {Path(pdf_path).name}")
+        else:
+            logger.warning(f"No text extracted from PDF: {pdf_path}")
+    
     def build_video(self, output_file: str, index_file: str, 
                     show_progress: bool = True) -> Dict[str, Any]:
         """

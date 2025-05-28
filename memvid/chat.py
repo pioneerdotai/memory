@@ -13,7 +13,7 @@ from .config import get_default_config
 
 logger = logging.getLogger(__name__)
 
-# Try to import OpenAI, but make it optional
+
 try:
     from openai import OpenAI
     OPENAI_AVAILABLE = True
@@ -181,6 +181,12 @@ class MemvidChat:
         """Generate response without LLM (context only)"""
         if not context_chunks:
             return "I couldn't find any relevant information in the knowledge base."
+        
+        # Check if the chunks are actually relevant (not just random matches)
+        # If all chunks are very short or seem unrelated, indicate low relevance
+        avg_chunk_length = sum(len(chunk) for chunk in context_chunks) / len(context_chunks)
+        if avg_chunk_length < 50:  # Likely fragment matches
+            return "I couldn't find any relevant information about that topic in the knowledge base."
         
         response = "Based on the knowledge base, here's what I found:\n\n"
         for i, chunk in enumerate(context_chunks[:3]):  # Limit to top 3
