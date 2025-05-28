@@ -10,6 +10,15 @@
 
 Memvid revolutionizes AI memory management by encoding text data into videos, enabling **lightning-fast semantic search** across millions of text chunks with **sub-second retrieval times**. Unlike traditional vector databases that consume massive amounts of RAM and storage, Memvid compresses your knowledge base into compact video files while maintaining instant access to any piece of information.
 
+## 🎥 Demo
+
+<div align="center">
+  <video width="100%" controls>
+    <source src="demo.mp4" type="video/mp4">
+    Your browser does not support the video tag.
+  </video>
+</div>
+
 ## ✨ Key Features
 
 - 🎥 **Video-as-Database**: Store millions of text chunks in a single MP4 file
