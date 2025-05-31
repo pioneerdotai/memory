@@ -5,6 +5,9 @@ Book memory example using chat_with_memory
 
 import sys
 import os
+
+from memvid.config import VIDEO_FILE_TYPE
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dotenv import load_dotenv
 load_dotenv()
@@ -16,7 +19,7 @@ from memvid import MemvidEncoder, chat_with_memory
 book_pdf = "data/bitcoin.pdf"  # Replace with your PDF path
 
 # Build memory video from PDF
-video_path = "output/book_memory.mp4"
+video_path = f"output/book_memory.{VIDEO_FILE_TYPE}"
 index_path = "output/book_memory_index.json"
 
 # Create output directory with subdirectory for sessions
