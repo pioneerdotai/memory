@@ -6,8 +6,6 @@ import json
 import logging
 from pathlib import Path
 from typing import List, Optional, Dict, Any
-
-from isapi.samples.redirector_asynch import CHUNK_SIZE
 from tqdm import tqdm
 import cv2
 import numpy as np
