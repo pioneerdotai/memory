@@ -6,13 +6,15 @@ import json
 import logging
 from pathlib import Path
 from typing import List, Optional, Dict, Any
+
+from isapi.samples.redirector_asynch import CHUNK_SIZE
 from tqdm import tqdm
 import cv2
 import numpy as np
 
 from .utils import encode_to_qr, qr_to_frame, create_video_writer, chunk_text
 from .index import IndexManager
-from .config import get_default_config
+from .config import get_default_config, DEFAULT_CHUNK_SIZE, DEFAULT_OVERLAP
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +43,7 @@ class MemvidEncoder:
         self.chunks.extend(chunks)
         logger.info(f"Added {len(chunks)} chunks. Total: {len(self.chunks)}")
     
-    def add_text(self, text: str, chunk_size: int = 500, overlap: int = 50):
+    def add_text(self, text: str, chunk_size: int = DEFAULT_CHUNK_SIZE, overlap: int = DEFAULT_OVERLAP):
         """
         Add text and automatically chunk it
         
@@ -53,7 +55,7 @@ class MemvidEncoder:
         chunks = chunk_text(text, chunk_size, overlap)
         self.add_chunks(chunks)
     
-    def add_pdf(self, pdf_path: str, chunk_size: int = 800, overlap: int = 100):
+    def add_pdf(self, pdf_path: str, chunk_size: int = DEFAULT_CHUNK_SIZE, overlap: int = DEFAULT_OVERLAP):
         """
         Extract text from PDF and add as chunks
         
@@ -87,7 +89,66 @@ class MemvidEncoder:
             logger.info(f"Added PDF content: {len(text)} characters from {Path(pdf_path).name}")
         else:
             logger.warning(f"No text extracted from PDF: {pdf_path}")
-    
+
+    def add_epub(self, epub_path: str, chunk_size: int = DEFAULT_CHUNK_SIZE, overlap: int = DEFAULT_OVERLAP):
+        """
+        Extract text from EPUB and add as chunks
+
+        Args:
+            epub_path: Path to EPUB file
+            chunk_size: Target chunk size (default larger for books)
+            overlap: Overlap between chunks
+        """
+        try:
+            import ebooklib
+            from ebooklib import epub
+            from bs4 import BeautifulSoup
+        except ImportError:
+            raise ImportError("ebooklib and beautifulsoup4 are required for EPUB support. Install with: pip install ebooklib beautifulsoup4")
+
+        if not Path(epub_path).exists():
+            raise FileNotFoundError(f"EPUB file not found: {epub_path}")
+
+        try:
+            book = epub.read_epub(epub_path)
+            text_content = []
+
+            logger.info(f"Extracting text from EPUB: {Path(epub_path).name}")
+
+            # Extract text from all document items
+            for item in book.get_items():
+                if item.get_type() == ebooklib.ITEM_DOCUMENT:
+                    # Parse HTML content
+                    soup = BeautifulSoup(item.get_content(), 'html.parser')
+
+                    # Remove script and style elements
+                    for script in soup(["script", "style"]):
+                        script.decompose()
+
+                    # Get text and clean it up
+                    text = soup.get_text()
+
+                    # Clean up whitespace
+                    lines = (line.strip() for line in text.splitlines())
+                    chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+                    text = ' '.join(chunk for chunk in chunks if chunk)
+
+                    if text.strip():
+                        text_content.append(text)
+
+            # Combine all text
+            full_text = "\n\n".join(text_content)
+
+            if full_text.strip():
+                self.add_text(full_text, chunk_size, overlap)
+                logger.info(f"Added EPUB content: {len(full_text)} characters from {Path(epub_path).name}")
+            else:
+                logger.warning(f"No text extracted from EPUB: {epub_path}")
+
+        except Exception as e:
+            logger.error(f"Error processing EPUB {epub_path}: {e}")
+            raise
+
     def build_video(self, output_file: str, index_file: str, 
                     show_progress: bool = True) -> Dict[str, Any]:
         """
@@ -187,8 +248,8 @@ class MemvidEncoder:
         }
     
     @classmethod
-    def from_file(cls, file_path: str, chunk_size: int = 500, 
-                  overlap: int = 50, config: Optional[Dict[str, Any]] = None) -> 'MemvidEncoder':
+    def from_file(cls, file_path: str, chunk_size: int = DEFAULT_CHUNK_SIZE, overlap: int = DEFAULT_OVERLAP,
+                  config: Optional[Dict[str, Any]] = None) -> 'MemvidEncoder':
         """
         Create encoder from text file
         
@@ -210,8 +271,8 @@ class MemvidEncoder:
         return encoder
     
     @classmethod
-    def from_documents(cls, documents: List[str], chunk_size: int = 500,
-                      overlap: int = 50, config: Optional[Dict[str, Any]] = None) -> 'MemvidEncoder':
+    def from_documents(cls, documents: List[str], chunk_size: int = DEFAULT_CHUNK_SIZE, overlap: int = DEFAULT_OVERLAP,
+                       config: Optional[Dict[str, Any]] = None) -> 'MemvidEncoder':
         """
         Create encoder from list of documents
         
