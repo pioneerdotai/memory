@@ -6,6 +6,7 @@ import os
 import time
 from typing import Optional, Dict, Any
 from .chat import MemvidChat
+from .config import VIDEO_FILE_TYPE
 
 
 def chat_with_memory(
@@ -41,7 +42,7 @@ def chat_with_memory(
         
     Example:
         >>> from memvid import chat_with_memory
-        >>> chat_with_memory("knowledge.mp4", "knowledge_index.json")
+        >>> chat_with_memory(f'knowledge.{VIDEO_FILE_TYPE}', 'knowledge_index.json')
     """
     # Set tokenizers parallelism to avoid warning
     os.environ['TOKENIZERS_PARALLELISM'] = 'false'
@@ -172,7 +173,7 @@ def quick_chat(video_file: str, index_file: str, query: str, api_key: Optional[s
         
     Example:
         >>> from memvid import quick_chat
-        >>> response = quick_chat("knowledge.mp4", "knowledge_index.json", "What is quantum computing?")
+        >>> response = quick_chat(f"knowledge.{VIDEO_FILE_TYPE}", "knowledge_index.json", "What is quantum computing?")
         >>> print(response)
     """
     os.environ['TOKENIZERS_PARALLELISM'] = 'false'
