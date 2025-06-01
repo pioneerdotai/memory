@@ -30,7 +30,7 @@ def test_encoding():
 
         # Test encoding
         try:
-            cmd = ['python3', '/scripts/h265_encode_optimized.py',
+            cmd = ['python3', '/scripts/dockerized_encoder.py',
                    str(input_file), str(output_file)]
 
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)

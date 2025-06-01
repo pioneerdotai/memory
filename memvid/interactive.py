@@ -6,7 +6,6 @@ import os
 import time
 from typing import Optional, Dict, Any
 from .chat import MemvidChat
-from .config import VIDEO_FILE_TYPE
 
 
 def chat_with_memory(
@@ -39,10 +38,6 @@ def chat_with_memory(
         - 'clear': Clear conversation history
         - 'help': Show commands
         - 'exit' or 'quit': End session
-        
-    Example:
-        >>> from memvid import chat_with_memory
-        >>> chat_with_memory(f'knowledge.{VIDEO_FILE_TYPE}', 'knowledge_index.json')
     """
     # Set tokenizers parallelism to avoid warning
     os.environ['TOKENIZERS_PARALLELISM'] = 'false'

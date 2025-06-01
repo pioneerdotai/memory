@@ -20,8 +20,8 @@ DEFAULT_OVERLAP = 32
 VIDEO_CODEC = 'h265'        # Valid options are: mpv4, h265 or hevc, h264 or avc, and av1
 MP4V_PARAMETERS= {"video_file_type": ".mp4",
                   "video_fps": 15,
-                  "video_height": 256,
-                  "video_width": 256,
+                  "frame_height": 256,
+                  "frame_width": 256,
                   "video_crf": 18,           # Constant Rate Factor (0-51, lower = better quality, 18 is visually lossless)
                   "video_preset": "medium",  # ultrafast, superfast, veryfast, faster, fast, medium, slow, slower, veryslow
                   "video_profile": "baseline", # baseline, main, high (baseline for max compatibility)
@@ -30,8 +30,8 @@ MP4V_PARAMETERS= {"video_file_type": ".mp4",
 
 H265_PARAMETERS = {"video_file_type": ".mkv", # AKA HEVC
                    "video_fps": 60,
-                   "video_height": 720,
-                   "video_width": 720,
+                   "frame_height": 720,
+                   "frame_width": 720,
                    "video_crf": 24,
                    "video_preset": "medium",
                    "video_profile": "mainstillpicture",
@@ -41,8 +41,8 @@ H265_PARAMETERS = {"video_file_type": ".mkv", # AKA HEVC
 H264_PARAMETERS = {"video_file_type": ".mkv", # AKA AVC
                    "video_crf": 22,
                    "video_fps": 30,
-                   "video_height": 512,
-                   "video_width": 512,
+                   "frame_height": 512,
+                   "frame_width": 512,
                    "video_preset": "medium",
                    "video_profile": "mainstillpicture",
                    "pix_fmt": "yuv420p",
@@ -50,8 +50,8 @@ H264_PARAMETERS = {"video_file_type": ".mkv", # AKA AVC
 
 AV1_PARAMETERS = {"video_file_type": ".mkv",
                   "video_fps": 60,
-                  "video_height": 720,
-                  "video_width": 720,
+                  "frame_height": 720,
+                  "frame_width": 720,
                   "video_crf": 28,
                   "video_preset": "slow",
                   "video_profile": "mainstillpicture",
