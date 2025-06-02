@@ -219,15 +219,14 @@ class MemvidEncoder:
         return frames_dir
 
     def _build_ffmpeg_command(self, frames_dir: Path, output_file: Path, codec: str) -> List[str]:
-        """Build optimized FFmpeg command - FIXED for QR compatibility"""
+        """Build optimized FFmpeg command using codec configuration"""
 
-        from .config import codec_parameters
+        from .config import get_codec_parameters
 
-        if codec not in codec_parameters:
-            raise ValueError(f"Unsupported codec: {codec}")
+        # Get codec-specific configuration
+        codec_config = get_codec_parameters(codec.lower())
 
-        codec_config = codec_parameters[codec]
-
+        # FFmpeg codec mapping
         ffmpeg_codec_map = {
             "h265": "libx265", "hevc": "libx265",
             "h264": "libx264", "avc": "libx264",
@@ -241,6 +240,7 @@ class MemvidEncoder:
         if not str(output_file).endswith(expected_ext):
             output_file = output_file.with_suffix(expected_ext)
 
+        # Build base command using config
         cmd = [
             'ffmpeg', '-y',
             '-framerate', str(codec_config["video_fps"]),
@@ -250,38 +250,40 @@ class MemvidEncoder:
             '-crf', str(codec_config["video_crf"]),
         ]
 
-        # FIXED: Handle QR code specific issues
-        if ffmpeg_codec == 'libx265':
-            # Fix resolution to even dimensions for yuv420p
-            cmd.extend(['-vf', 'scale=720:720'])  # Force even dimensions
-            cmd.extend(['-pix_fmt', 'yuv420p'])
-
-            # Add profile if specified
-            if "video_profile" in codec_config and codec_config["video_profile"]:
-                cmd.extend(['-profile:v', codec_config["video_profile"]])
-
-            # FIXED: Limit threads and remove unsupported tune
-            import os
-            thread_count = min(os.cpu_count() or 4, 16)  # Max 16 threads
-            cmd.extend(['-threads', str(thread_count)])
-
-            # FIXED: Remove tune=stillimage, just use keyint
-            cmd.extend(['-x265-params', f'keyint=1:threads={thread_count}:crf={codec_config["video_crf"]}:preset={codec_config["video_preset"]}'])
-
-        elif ffmpeg_codec == 'libx264':
-            cmd.extend(['-vf', 'scale=720:720'])
-            cmd.extend(['-pix_fmt', 'yuv420p'])
-
-            # FIXED: Use valid H.264 profile
-            cmd.extend(['-profile:v', 'high'])  # NOT "mainstillpicture"
-
-            thread_count = 4
-            cmd.extend(['-threads', str(thread_count)])
-            cmd.extend(['-x264-params', f'keyint=1:threads={thread_count}'])
-
-        else:
-            # Generic codec
+        # Apply scaling and pixel format based on codec
+        if ffmpeg_codec in ['libx265', 'libx264']:
+            # Scale to config dimensions for advanced codecs
+            target_width = codec_config["frame_width"]
+            target_height = codec_config["frame_height"]
+            cmd.extend(['-vf', f'scale={target_width}:{target_height}'])
             cmd.extend(['-pix_fmt', codec_config["pix_fmt"]])
+
+            # Add profile if specified in config
+            if codec_config.get("video_profile"):
+                cmd.extend(['-profile:v', codec_config["video_profile"]])
+        else:
+            # Use pixel format from config for other codecs
+            cmd.extend(['-pix_fmt', codec_config["pix_fmt"]])
+
+        # Threading (limit to 16 max)
+        import os
+        thread_count = min(os.cpu_count() or 4, 16)
+        cmd.extend(['-threads', str(thread_count)])
+
+        # Add codec-specific parameters from config
+        if codec_config.get("extra_ffmpeg_args"):
+            extra_args = codec_config["extra_ffmpeg_args"]
+            if isinstance(extra_args, str):
+                # Parse string args and add thread count for x264/x265
+                if ffmpeg_codec == 'libx265':
+                    extra_args = f"{extra_args}:threads={thread_count}"
+                    cmd.extend(['-x265-params', extra_args])
+                elif ffmpeg_codec == 'libx264':
+                    extra_args = f"{extra_args}:threads={thread_count}"
+                    cmd.extend(['-x264-params', extra_args])
+            else:
+                # Direct args list
+                cmd.extend(extra_args)
 
         # General optimizations
         cmd.extend(['-movflags', '+faststart', '-avoid_negative_ts', 'make_zero'])
@@ -305,7 +307,7 @@ class MemvidEncoder:
         """
         from .config import codec_parameters
 
-        if codec not in codec_parameters:  # FIXED: Check against codec names
+        if codec not in codec_parameters:
             raise ValueError(f"Unsupported codec: {codec}")
 
         codec_config = codec_parameters[codec]  # FIXED: Get specific codec config
@@ -448,12 +450,8 @@ class MemvidEncoder:
             frames_dir = self._generate_qr_frames(temp_path, show_progress)
 
             try:
-
-                print(f"🐛 DEBUG: Requested codec: '{codec}'")
-                print(f"🐛 DEBUG: Available in config: {list(self.config['codec_parameters'].keys())}")
-
-                # Import full mapping for comparison
                 from .config import codec_parameters
+                print(f"🐛 DEBUG: Requested codec: '{codec}'")
                 print(f"🐛 DEBUG: Available in full mapping: {list(codec_parameters.keys())}")
                 # Choose encoding method based on codec
                 if codec == "mp4v":

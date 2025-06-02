@@ -7,14 +7,14 @@ from typing import Dict, Any
 # QR Code settings
 QR_VERSION = 30  # 1-40, higher = more data capacity
 QR_ERROR_CORRECTION = 'M'  # L, M, Q, H
-QR_BOX_SIZE = 5    # QR_BOX_SIZE * QR_VERSION dimensions (1 = 21 x 21, 20 = 97 x 97, 40 = 177×177) + QR_BORDER must be < frame height/width
-QR_BORDER = 4
+QR_BOX_SIZE = 4    # QR_BOX_SIZE * QR_VERSION dimensions (1 = 21 x 21, 20 = 97 x 97, 40 = 177×177) + QR_BORDER must be < frame height/width
+QR_BORDER = 2
 QR_FILL_COLOR = "black"
 QR_BACK_COLOR = "white"
 
 # Chunking settings - SIMPLIFIED
-DEFAULT_CHUNK_SIZE = 1024
-DEFAULT_OVERLAP = 32
+DEFAULT_CHUNK_SIZE = 2048
+DEFAULT_OVERLAP = 16
 
 # Codec Settings
 VIDEO_CODEC = 'h265'        # Valid options are: mpv4, h265 or hevc, h264 or avc, and av1
@@ -30,11 +30,11 @@ MP4V_PARAMETERS= {"video_file_type": ".mp4",
 
 H265_PARAMETERS = {"video_file_type": ".mkv", # AKA HEVC
                    "video_fps": 60,
-                   "frame_height": 512,
-                   "frame_width": 512,
+                   "frame_height": 720,
+                   "frame_width": 720,
                    "video_crf": 24,
                    "video_preset": "medium",
-                   "video_profile": "mainstillpicture",
+                   "video_profile": "main",
                    "pix_fmt": "yuv420p",
                    "extra_ffmpeg_args": "-x265-params keyint=1:tune=stillimage"}
 
@@ -44,9 +44,9 @@ H264_PARAMETERS = {"video_file_type": ".mkv", # AKA AVC
                    "frame_height": 512,
                    "frame_width": 512,
                    "video_preset": "medium",
-                   "video_profile": "mainstillpicture",
+                   "video_profile": "medium",
                    "pix_fmt": "yuv420p",
-                   "extra_ffmpeg_args": "-x265-params keyint=1:tune=stillimage"}
+                   "extra_ffmpeg_args": "-x264-params keyint=1"}
 
 AV1_PARAMETERS = {"video_file_type": ".mkv",
                   "video_fps": 60,
@@ -109,7 +109,6 @@ def get_default_config() -> Dict[str, Any]:
             "back_color": QR_BACK_COLOR,
         },
         "codec": VIDEO_CODEC,
-        "codec_parameters": codec_parameters[VIDEO_CODEC.lower()],
         "chunking": {
             "chunk_size": DEFAULT_CHUNK_SIZE,
             "overlap": DEFAULT_OVERLAP,
@@ -143,3 +142,21 @@ def get_default_config() -> Dict[str, Any]:
             "decode_timeout": DECODE_TIMEOUT,
         }
     }
+
+def get_codec_parameters(codec_name=None):
+    """
+    Get codec parameters for specified codec or all codecs
+
+    Args:
+        codec_name (str, optional): Specific codec name. If None, returns all.
+
+    Returns:
+        dict: Codec parameters
+    """
+    if codec_name is None:
+        return codec_parameters
+
+    if codec_name not in codec_parameters:
+        raise ValueError(f"Unsupported codec: {codec_name}. Available: {list(codec_parameters.keys())}")
+
+    return codec_parameters[codec_name]
