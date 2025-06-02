@@ -30,8 +30,8 @@ MP4V_PARAMETERS= {"video_file_type": ".mp4",
 
 H265_PARAMETERS = {"video_file_type": ".mkv", # AKA HEVC
                    "video_fps": 60,
-                   "frame_height": 720,
-                   "frame_width": 720,
+                   "frame_height": 512,
+                   "frame_width": 512,
                    "video_crf": 24,
                    "video_preset": "medium",
                    "video_profile": "mainstillpicture",

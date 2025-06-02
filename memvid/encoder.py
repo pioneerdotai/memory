@@ -1,11 +1,10 @@
 """
-MemvidEncoder - Handles chunking and QR video creation with Docker H.265 support
+MemvidEncoder - Unified encoding with native OpenCV and FFmpeg (Docker/native) support
 """
 
 import json
 import logging
 import subprocess
-import shutil
 import tempfile
 import warnings
 from pathlib import Path
@@ -14,15 +13,17 @@ from tqdm import tqdm
 import cv2
 import numpy as np
 
-from .utils import encode_to_qr, qr_to_frame, create_video_writer, chunk_text
+from .utils import encode_to_qr, qr_to_frame, chunk_text
 from .index import IndexManager
 from .config import get_default_config, DEFAULT_CHUNK_SIZE, DEFAULT_OVERLAP
+from .docker_manager import DockerManager
 
 logger = logging.getLogger(__name__)
 
 class MemvidEncoder:
     """
-    Enhanced MemvidEncoder with Docker backend support for H.265 encoding.
+    Unified MemvidEncoder with clean separation between encoding logic and Docker management.
+    Supports both native OpenCV encoding and FFmpeg encoding (native or Docker-based).
     """
 
     def __init__(self, config: Optional[Dict[str, Any]] = None, enable_docker=True):
@@ -30,141 +31,11 @@ class MemvidEncoder:
         self.chunks = []
         self.index_manager = IndexManager()
 
-        # Docker backend detection
-        self.enable_docker = enable_docker
-        self._docker_cmd = None
-        self._docker_available = False
-        self._check_docker_setup()
-        self.video_file_type = self.config.get("codect_parameters").get("video_file_type")
+        # Docker backend (optional)
+        self.dcker_mngr = DockerManager() if enable_docker else None
 
-    def _check_docker_setup(self):
-        """Check if Docker backend is available."""
-        if not self.enable_docker:
-            return
-
-        # Find Docker command
-        if shutil.which("docker.exe"):
-            self._docker_cmd = "docker.exe"
-        elif shutil.which("docker"):
-            self._docker_cmd = "docker"
-        else:
-            return
-
-        # Test if memvid-h265 container exists
-        try:
-            result = subprocess.run([self._docker_cmd, "images", "-q", "memvid-h265"],
-                                    capture_output=True, timeout=5, encoding='utf-8', errors='replace')
-            if result.returncode == 0 and result.stdout.strip():
-                self._docker_available = True
-                logger.info("✅ Docker H.265 backend available")
-            else:
-                logger.info("⚠️  Docker found but memvid-h265 container missing (run 'make build')")
-        except:
-            pass
-
-    def _should_use_docker(self, codec):
-        """Check if codec should use Docker backend."""
-        docker_codecs = {'h265', 'hevc', 'libx265', 'h264', 'avc', 'libx264', 'vp9', 'av1'}
-        return codec.lower() in docker_codecs
-
-    def _find_project_root(self):
-        """Find project root directory containing docker/ folder."""
-        current = Path(__file__).parent
-        for _ in range(5):
-            if (current / "docker").exists():
-                return current
-            current = current.parent
-        return None
-
-    def _prepare_docker_paths(self, temp_path, project_root):
-        """Convert paths for Docker volume mounting."""
-        temp_str = str(temp_path)
-        scripts_str = str(project_root / "docker" / "scripts")
-
-        # Convert /mnt/c paths to Windows format for Docker Desktop
-        if temp_str.startswith('/mnt/c'):
-            temp_str = temp_str.replace('/mnt/c', 'C:')
-        if scripts_str.startswith('/mnt/c'):
-            scripts_str = scripts_str.replace('/mnt/c', 'C:')
-
-        return temp_str, scripts_str
-
-    def _build_with_docker(self, output_file, index_file, show_progress=True, **kwargs):
-        """Build video using Docker H.265 backend."""
-
-        if not self._docker_available:
-            raise RuntimeError("Docker backend not available")
-
-        # Find project root
-        project_root = self._find_project_root()
-        if not project_root:
-            raise RuntimeError("Cannot find project root with docker/ directory")
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
-
-            # Create input subdirectory to match Docker script expectations
-            input_dir = temp_path / "input"
-            output_dir = temp_path / "output"
-            input_dir.mkdir()
-            output_dir.mkdir()
-
-            # Create input file in input subdirectory
-            input_file = input_dir / "chunks.json"
-            with open(input_file, 'w', encoding='utf-8') as f:
-                json.dump(self.chunks, f, ensure_ascii=False)
-
-            # Prepare Docker paths
-            temp_str, scripts_path = self._prepare_docker_paths(temp_path, project_root)
-
-            # Run Docker encoding
-            cmd = [
-                self._docker_cmd, "run", "--rm",
-                "-v", f"{temp_str}:/data",
-                "-v", f"{scripts_path}:/scripts",
-                "memvid-h265",
-                "python3", "/scripts/dockerized_encoder.py",
-                "chunks.json", f"output.{self.video_file_type}"
-            ]
-
-            if show_progress:
-                print(f"🐳 Encoding {len(self.chunks)} chunks with Docker H.265...")
-
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600, encoding='utf-8', errors='replace')
-
-            if result.returncode != 0:
-                raise RuntimeError(f"Docker encoding failed: {result.stderr}")
-
-            # Copy results back
-            temp_output = output_dir / f"output.{self.video_file_type}"
-            temp_index = output_dir / "output.json"
-
-            shutil.copy2(temp_output, output_file)
-            if temp_index.exists():
-                shutil.copy2(temp_index, index_file)
-
-    def _try_build_container(self):
-        """Try to build the Docker container."""
-        try:
-            project_root = self._find_project_root()
-            if not project_root:
-                return False
-
-            dockerfile_path = project_root / "docker"
-            cmd = [self._docker_cmd, "build", "-f", str(dockerfile_path / "Dockerfile"),
-                   "-t", "memvid-h265", str(dockerfile_path)]
-
-            print("🏗️  Building memvid-h265 container...")
-            result = subprocess.run(cmd, capture_output=True, timeout=300, encoding='utf-8', errors='replace')
-            if result.returncode == 0:
-                self._docker_available = True
-                print("✅ Docker container built successfully")
-                return True
-            else:
-                print("❌ Docker container build failed")
-                return False
-        except:
-            return False
+        if self.dcker_mngr and not self.dcker_mngr.is_available():
+            logger.info("Docker backend not available - using native encoding only")
 
     def add_chunks(self, chunks: List[str]):
         """
@@ -194,7 +65,7 @@ class MemvidEncoder:
 
         Args:
             pdf_path: Path to PDF file
-            chunk_size: Target chunk size (default larger for books)
+            chunk_size: Target chunk size
             overlap: Overlap between chunks
         """
         try:
@@ -229,7 +100,7 @@ class MemvidEncoder:
 
         Args:
             epub_path: Path to EPUB file
-            chunk_size: Target chunk size (default larger for books)
+            chunk_size: Target chunk size
             overlap: Overlap between chunks
         """
         try:
@@ -282,11 +153,270 @@ class MemvidEncoder:
             logger.error(f"Error processing EPUB {epub_path}: {e}")
             raise
 
+    def create_video_writer(self, output_path: str, codec: str = "mp4v") -> cv2.VideoWriter:
+        """
+        Create OpenCV video writer for native encoding
+
+        Args:
+            output_path: Path to output video file
+            codec: Video codec for OpenCV
+
+        Returns:
+            cv2.VideoWriter instance
+        """
+        from .config import codec_parameters
+
+        if codec not in codec_parameters:  # FIXED
+            raise ValueError(f"Unsupported codec: {codec}")
+
+        codec_config = codec_parameters[codec]  # FIXED
+
+        # OpenCV codec mapping
+        opencv_codec_map = {
+            "mp4v": "mp4v",
+            "xvid": "XVID",
+            "mjpg": "MJPG"
+        }
+
+        opencv_codec = opencv_codec_map.get(codec, codec)
+        fourcc = cv2.VideoWriter_fourcc(*opencv_codec)
+
+        return cv2.VideoWriter(
+            output_path,
+            fourcc,
+            codec_config["video_fps"],
+            (codec_config["frame_width"], codec_config["frame_height"])
+        )
+
+    def _generate_qr_frames(self, temp_dir: Path, show_progress: bool = True) -> Path:
+        """
+        Generate QR code frames to temporary directory
+        
+        Args:
+            temp_dir: Temporary directory for frame storage
+            show_progress: Show progress bar
+            
+        Returns:
+            Path to frames directory
+        """
+        frames_dir = temp_dir / "frames"
+        frames_dir.mkdir()
+
+        chunks_iter = enumerate(self.chunks)
+        if show_progress:
+            chunks_iter = tqdm(chunks_iter, total=len(self.chunks), desc="Generating QR frames")
+
+        for frame_num, chunk in chunks_iter:
+            chunk_data = {"id": frame_num, "text": chunk, "frame": frame_num}
+            qr_image = encode_to_qr(json.dumps(chunk_data))
+            frame_path = frames_dir / f"frame_{frame_num:06d}.png"
+            qr_image.save(frame_path)
+
+        created_frames = list(frames_dir.glob("frame_*.png"))
+        print(f"🐛 FRAMES: {len(created_frames)} files in {frames_dir}")
+
+        logger.info(f"Generated {len(self.chunks)} QR frames in {frames_dir}")
+        return frames_dir
+
+    def _build_ffmpeg_command(self, frames_dir: Path, output_file: Path, codec: str) -> List[str]:
+        """Build optimized FFmpeg command - FIXED for QR compatibility"""
+
+        from .config import codec_parameters
+
+        if codec not in codec_parameters:
+            raise ValueError(f"Unsupported codec: {codec}")
+
+        codec_config = codec_parameters[codec]
+
+        ffmpeg_codec_map = {
+            "h265": "libx265", "hevc": "libx265",
+            "h264": "libx264", "avc": "libx264",
+            "av1": "libaom-av1", "vp9": "libvpx-vp9"
+        }
+
+        ffmpeg_codec = ffmpeg_codec_map.get(codec, codec)
+
+        # Ensure output file has correct extension
+        expected_ext = codec_config["video_file_type"]
+        if not str(output_file).endswith(expected_ext):
+            output_file = output_file.with_suffix(expected_ext)
+
+        cmd = [
+            'ffmpeg', '-y',
+            '-framerate', str(codec_config["video_fps"]),
+            '-i', str(frames_dir / 'frame_%06d.png'),
+            '-c:v', ffmpeg_codec,
+            '-preset', codec_config["video_preset"],
+            '-crf', str(codec_config["video_crf"]),
+        ]
+
+        # FIXED: Handle QR code specific issues
+        if ffmpeg_codec == 'libx265':
+            # Fix resolution to even dimensions for yuv420p
+            cmd.extend(['-vf', 'scale=720:720'])  # Force even dimensions
+            cmd.extend(['-pix_fmt', 'yuv420p'])
+
+            # Add profile if specified
+            if "video_profile" in codec_config and codec_config["video_profile"]:
+                cmd.extend(['-profile:v', codec_config["video_profile"]])
+
+            # FIXED: Limit threads and remove unsupported tune
+            import os
+            thread_count = min(os.cpu_count() or 4, 16)  # Max 16 threads
+            cmd.extend(['-threads', str(thread_count)])
+
+            # FIXED: Remove tune=stillimage, just use keyint
+            cmd.extend(['-x265-params', f'keyint=1:threads={thread_count}:crf={codec_config["video_crf"]}:preset={codec_config["video_preset"]}'])
+
+        elif ffmpeg_codec == 'libx264':
+            cmd.extend(['-vf', 'scale=720:720'])
+            cmd.extend(['-pix_fmt', 'yuv420p'])
+
+            # FIXED: Use valid H.264 profile
+            cmd.extend(['-profile:v', 'high'])  # NOT "mainstillpicture"
+
+            thread_count = 4
+            cmd.extend(['-threads', str(thread_count)])
+            cmd.extend(['-x264-params', f'keyint=1:threads={thread_count}'])
+
+        else:
+            # Generic codec
+            cmd.extend(['-pix_fmt', codec_config["pix_fmt"]])
+
+        # General optimizations
+        cmd.extend(['-movflags', '+faststart', '-avoid_negative_ts', 'make_zero'])
+
+        cmd.append(str(output_file))
+        return cmd
+
+    def _encode_with_opencv(self, frames_dir: Path, output_file: Path, codec: str,
+                            show_progress: bool = True) -> Dict[str, Any]:
+        """
+        Encode video using native OpenCV
+        
+        Args:
+            frames_dir: Directory containing PNG frames
+            output_file: Output video file path
+            codec: Video codec
+            show_progress: Show progress bar
+            
+        Returns:
+            Encoding statistics
+        """
+        from .config import codec_parameters
+
+        if codec not in codec_parameters:  # FIXED: Check against codec names
+            raise ValueError(f"Unsupported codec: {codec}")
+
+        codec_config = codec_parameters[codec]  # FIXED: Get specific codec config
+
+        if show_progress:
+            logger.info(f"Encoding with OpenCV using {codec} codec...")
+
+        # Create video writer
+        writer = self.create_video_writer(str(output_file), codec)
+        frame_numbers = []
+
+        try:
+            # Load and write frames
+            frame_files = sorted(frames_dir.glob("frame_*.png"))
+            frame_iter = enumerate(frame_files)
+
+            if show_progress:
+                frame_iter = tqdm(frame_iter, total=len(frame_files), desc="Writing video frames")
+
+            for frame_num, frame_file in frame_iter:
+                # Load frame
+                frame = cv2.imread(str(frame_file))
+                if frame is None:
+                    logger.warning(f"Could not load frame: {frame_file}")
+                    continue
+
+                # Resize if needed
+                target_size = (codec_config["frame_width"], codec_config["frame_height"])
+                if frame.shape[:2][::-1] != target_size:
+                    frame = cv2.resize(frame, target_size)
+
+                # Write frame
+                writer.write(frame)
+                frame_numbers.append(frame_num)
+
+            return {
+                "backend": "opencv",
+                "codec": codec,
+                "total_frames": len(frame_numbers),
+                "video_size_mb": output_file.stat().st_size / (1024 * 1024) if output_file.exists() else 0,
+                "fps": codec_config["video_fps"],
+                "duration_seconds": len(frame_numbers) / codec_config["video_fps"]
+            }
+
+        finally:
+            writer.release()
+
+    def _encode_with_ffmpeg(self, frames_dir: Path, output_file: Path, codec: str,
+                            show_progress: bool = True, auto_build_docker: bool = True) -> Dict[str, Any]:
+        """
+        Encode video using FFmpeg (native or Docker)
+        
+        Args:
+            frames_dir: Directory containing PNG frames
+            output_file: Output video file path
+            codec: Video codec
+            show_progress: Show progress bar
+            auto_build_docker: Whether to auto-build Docker container if needed
+            
+        Returns:
+            Encoding statistics
+        """
+        # Use full codec mapping
+        from .config import codec_parameters
+
+        print(f"🐛 FFMPEG: frames={frames_dir} → docker_mount={frames_dir.parent}")
+
+        cmd = self._build_ffmpeg_command(frames_dir, output_file, codec)
+
+        if self.dcker_mngr and self.dcker_mngr.should_use_docker(codec):
+            if show_progress:
+                logger.info(f"Encoding with Docker FFmpeg using {codec} codec...")
+
+            result = self.dcker_mngr.execute_ffmpeg(
+                cmd, frames_dir.parent, output_file, auto_build=auto_build_docker
+            )
+
+            frame_count = len(list(frames_dir.glob("frame_*.png")))
+            result.update({
+                "codec": codec,
+                "total_frames": frame_count,
+                "fps": codec_parameters[codec]["video_fps"],
+                "duration_seconds": frame_count / codec_parameters[codec]["video_fps"]
+            })
+
+            return result
+
+        else:
+            if show_progress:
+                logger.info(f"Encoding with native FFmpeg using {codec} codec...")
+
+            result = subprocess.run(cmd, capture_output=True, text=True)
+
+            if result.returncode != 0:
+                raise RuntimeError(f"Native FFmpeg failed: {result.stderr}")
+
+            frame_count = len(list(frames_dir.glob("frame_*.png")))
+            return {
+                "backend": "native_ffmpeg",
+                "codec": codec,
+                "total_frames": frame_count,
+                "video_size_mb": output_file.stat().st_size / (1024 * 1024) if output_file.exists() else 0,
+                "fps": codec_parameters[codec]["video_fps"],
+                "duration_seconds": frame_count / codec_parameters[codec]["video_fps"]
+            }
+
     def build_video(self, output_file: str, index_file: str,
                     codec: str = "mp4v", show_progress: bool = True,
                     auto_build_docker: bool = True, allow_fallback: bool = True) -> Dict[str, Any]:
         """
-        Build QR code video and index from chunks with smart codec routing
+        Build QR code video and index from chunks with unified codec handling
 
         Args:
             output_file: Path to output video file
@@ -294,7 +424,7 @@ class MemvidEncoder:
             codec: Video codec ('mp4v', 'h265', 'h264', etc.)
             show_progress: Show progress bar
             auto_build_docker: Whether to auto-build Docker if needed
-            allow_fallback: Whether to fall back to MP4V if Docker fails
+            allow_fallback: Whether to fall back to MP4V if advanced codec fails
 
         Returns:
             Dictionary with build statistics
@@ -311,143 +441,60 @@ class MemvidEncoder:
 
         logger.info(f"Building video with {len(self.chunks)} chunks using {codec} codec")
 
-        # Route based on codec
-        if self._should_use_docker(codec):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
 
-            # Try Docker backend
-            if self._docker_available:
-                try:
-                    self._build_with_docker(output_file, index_file, show_progress)
+            # Generate QR frames (always local)
+            frames_dir = self._generate_qr_frames(temp_path, show_progress)
 
-                    # Get file stats for return
-                    stats = {
-                        "backend": "docker",
-                        "codec": codec,
-                        "total_chunks": len(self.chunks),
-                        "video_file": str(output_path),
-                        "index_file": str(index_path),
-                        "video_size_mb": output_path.stat().st_size / (1024 * 1024) if output_path.exists() else 0,
-                    }
+            try:
 
-                    if show_progress:
-                        print(f"✅ H.265 encoding complete: {output_path}")
-                        print(f"   File size: {stats['video_size_mb']:.2f} MB")
+                print(f"🐛 DEBUG: Requested codec: '{codec}'")
+                print(f"🐛 DEBUG: Available in config: {list(self.config['codec_parameters'].keys())}")
 
-                    return stats
-
-                except Exception as e:
-                    if allow_fallback:
-                        warnings.warn(f"Docker encoding failed: {e}. Falling back to MP4V.", UserWarning)
-                    else:
-                        raise RuntimeError(f"Docker H.265 encoding failed: {e}")
-
-            # Docker not available or failed - try to build
-            elif auto_build_docker and self._docker_cmd:
-                if self._try_build_container():
-                    try:
-                        self._build_with_docker(output_file, index_file, show_progress)
-
-                        stats = {
-                            "backend": "docker",
-                            "codec": codec,
-                            "total_chunks": len(self.chunks),
-                            "video_file": str(output_path),
-                            "index_file": str(index_path),
-                            "video_size_mb": output_path.stat().st_size / (1024 * 1024) if output_path.exists() else 0,
-                        }
-
-                        if show_progress:
-                            print(f"✅ H.265 encoding complete: {output_path}")
-
-                        return stats
-
-                    except Exception as e:
-                        if allow_fallback:
-                            warnings.warn(f"Docker encoding failed after build: {e}. Falling back to MP4V.", UserWarning)
-                        else:
-                            raise RuntimeError(f"Docker H.265 encoding failed after build: {e}")
-
-            # Show helpful message and either fall back or fail
-            if not allow_fallback:
-                if not self._docker_cmd:
-                    raise RuntimeError(f"Codec '{codec}' requires Docker but Docker not found. Install Docker Desktop.")
+                # Import full mapping for comparison
+                from .config import codec_parameters
+                print(f"🐛 DEBUG: Available in full mapping: {list(codec_parameters.keys())}")
+                # Choose encoding method based on codec
+                if codec == "mp4v":
+                    # Always use OpenCV for MP4V
+                    stats = self._encode_with_opencv(frames_dir, output_path, codec, show_progress)
                 else:
-                    raise RuntimeError(f"Codec '{codec}' requires Docker backend. Run 'make build' first.")
+                    # Use FFmpeg for advanced codecs
+                    stats = self._encode_with_ffmpeg(frames_dir, output_path, codec,
+                                                     show_progress, auto_build_docker)
 
-            # Fallback warnings
-            if not self._docker_cmd:
-                warnings.warn(f"Codec '{codec}' requires Docker but Docker not found. Install Docker Desktop. Using MP4V fallback.", UserWarning)
-            else:
-                warnings.warn(f"Codec '{codec}' requires Docker backend. Run 'make build' or use MP4V. Using MP4V fallback.", UserWarning)
+            except Exception as e:
+                if allow_fallback and codec != "mp4v":
+                    warnings.warn(f"{codec} encoding failed: {e}. Falling back to MP4V.", UserWarning)
+                    stats = self._encode_with_opencv(frames_dir, output_path, "mp4v", show_progress)
+                else:
+                    raise
 
-            # Fall back to native MP4V
-            codec = "mp4v"
-
-        # Native encoding
-        if show_progress:
-            print(f"🏠 Using native OpenCV encoding for {codec}...")
-
-        # Create video writer
-        video_config = self.config.get("codec_parameters")
-        writer = create_video_writer(str(output_path), video_config)
-
-        frame_numbers = []
-
-        try:
-            # Generate QR codes and write to video
-            chunks_iter = enumerate(self.chunks)
-            if show_progress:
-                chunks_iter = tqdm(chunks_iter, total=len(self.chunks), desc="Encoding chunks to video")
-
-            for frame_num, chunk in chunks_iter:
-                # Create metadata for chunk
-                chunk_data = {
-                    "id": frame_num,
-                    "text": chunk,
-                    "frame": frame_num
-                }
-
-                # Encode to QR
-                qr_image = encode_to_qr(json.dumps(chunk_data))
-
-                # Convert to video frame
-                frame = qr_to_frame(qr_image, (video_config["frame_width"], video_config["frame_height"]))
-
-                # Write frame
-                writer.write(frame)
-                frame_numbers.append(frame_num)
-
-            # Add chunks to index
+            # Build search index
             if show_progress:
                 logger.info("Building search index...")
+
+            frame_numbers = list(range(len(self.chunks)))
             self.index_manager.add_chunks(self.chunks, frame_numbers, show_progress)
 
             # Save index
             self.index_manager.save(str(index_path.with_suffix('')))
 
-            # Get statistics
-            stats = {
-                "backend": "native",
-                "codec": codec,
+            # Finalize statistics
+            stats.update({
                 "total_chunks": len(self.chunks),
-                "total_frames": len(frame_numbers),
                 "video_file": str(output_path),
                 "index_file": str(index_path),
-                "video_size_mb": output_path.stat().st_size / (1024 * 1024) if output_path.exists() else 0,
-                "fps": video_config["video_fps"],
-                "duration_seconds": len(frame_numbers) / video_config["video_fps"],
                 "index_stats": self.index_manager.get_stats()
-            }
+            })
 
             if show_progress:
                 logger.info(f"Successfully built video: {output_path}")
-                logger.info(f"Video duration: {stats['duration_seconds']:.1f} seconds")
-                logger.info(f"Video size: {stats['video_size_mb']:.1f} MB")
+                logger.info(f"Video duration: {stats.get('duration_seconds', 0):.1f} seconds")
+                logger.info(f"Video size: {stats.get('video_size_mb', 0):.1f} MB")
 
             return stats
-
-        finally:
-            writer.release()
 
     def clear(self):
         """Clear all chunks"""
@@ -457,24 +504,24 @@ class MemvidEncoder:
 
     def get_stats(self) -> Dict[str, Any]:
         """Get encoder statistics"""
+        docker_status = "disabled"
+        if self.dcker_mngr:
+            docker_status = "available" if self.dcker_mngr.is_available() else "unavailable"
+
         return {
             "total_chunks": len(self.chunks),
             "total_characters": sum(len(chunk) for chunk in self.chunks),
             "avg_chunk_size": np.mean([len(chunk) for chunk in self.chunks]) if self.chunks else 0,
-            "docker_available": self._docker_available,
+            "docker_status": docker_status,
+            "supported_codecs": list(self.config["codec_parameters"].keys()),
             "config": self.config
         }
 
     def get_docker_status(self) -> str:
-        """Get Docker backend status message."""
-        if not self.enable_docker:
+        """Get Docker backend status message"""
+        if not self.dcker_mngr:
             return "Docker backend disabled"
-        elif self._docker_available:
-            return "✅ Docker H.265 backend ready"
-        elif self._docker_cmd:
-            return "⚠️  Docker found but memvid-h265 container missing"
-        else:
-            return "ℹ️  Docker not found - native encoding only"
+        return self.dcker_mngr.get_status_message()
 
     @classmethod
     def from_file(cls, file_path: str, chunk_size: int = DEFAULT_CHUNK_SIZE, overlap: int = DEFAULT_OVERLAP,

@@ -1,23 +1,6 @@
 #!/usr/bin/env python3
 """
-Codec Comparison Tool - See how YOUR data compresses with H.265 vs MP4V
-
-This script takes your actual files/folders and shows you the real compression
-differences between native MP4V and Docker H.265 encoding.
-
-Usage:
-    # Single file
-    python examples/codec_comparison.py path/to/your/file.pdf
-
-    # Whole folder (recursive)
-    python examples/codec_comparison.py path/to/your/zotero/library/
-    python examples/codec_comparison.py ~/Documents/PDFs/ --file-types pdf epub
-
-    # Pre-made chunks
-    python examples/codec_comparison.py --chunks path/to/chunks.json
-
-Perfect for testing your entire Zotero library, document collections, etc.
-No sample data, no boilerplate - just YOUR files and real numbers.
+Multi-Codec Comparison Tool - Compare ALL available codecs on YOUR data
 """
 
 import sys
@@ -26,14 +9,31 @@ import time
 from pathlib import Path
 import json
 
-# Add parent directory to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# Add project root to Python path - works from anywhere
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
+# Also try adding current directory if script is in project root
+sys.path.insert(0, str(Path.cwd()))
 
 try:
     from memvid.encoder import MemvidEncoder
-except ImportError:
-    print("❌ Could not import MemvidEncoder. Make sure you're running from the project root.")
+    from memvid.config import codec_parameters
+    print(f"✅ Imported MemvidEncoder from: {project_root}")
+except ImportError as e:
+    print(f"❌ Could not import MemvidEncoder from {project_root}")
+    print(f"   Error: {e}")
+    print(f"   Current working directory: {Path.cwd()}")
+    print(f"   Python path includes:")
+    for p in sys.path[:5]:  # Show first 5 paths
+        print(f"     {p}")
+    print()
+    print("Solutions:")
+    print("1. Run from project root: cd memvid && python examples/codec_comparison.py ...")
+    print("2. Install package: pip install -e .")
+    print("3. Set PYTHONPATH: export PYTHONPATH=/path/to/memvid:$PYTHONPATH")
     sys.exit(1)
+
 
 def format_size(bytes_size):
     """Format file size in human readable format."""
@@ -43,189 +43,122 @@ def format_size(bytes_size):
         bytes_size /= 1024.0
     return f"{bytes_size:.1f} TB"
 
-def find_files_in_directory(dir_path, file_types=None, max_files=None):
-    """Find all supported files in directory recursively."""
+def get_available_codecs(encoder):
+    """Get list of available codecs and their backends - FIXED"""
+    # Import the full codec mapping, not just the default config
+    from memvid.config import codec_parameters
 
-    dir_path = Path(dir_path)
-    if not dir_path.is_dir():
-        return []
+    available_codecs = {}
 
-    # Default supported file types
-    if file_types is None:
-        file_types = ['pdf', 'epub', 'txt', 'md', 'json']
-
-    files = []
-
-    print(f"🔍 Scanning directory: {dir_path}")
-    print(f"   Looking for: {', '.join(file_types)} files")
-
-    for file_type in file_types:
-        pattern = f"**/*.{file_type}"
-        found = list(dir_path.glob(pattern))
-        files.extend(found)
-        if found:
-            print(f"   Found {len(found)} .{file_type} files")
-
-    # Remove duplicates and sort
-    files = sorted(list(set(files)))
-
-    if max_files and len(files) > max_files:
-        print(f"⚠️  Found {len(files)} files, limiting to first {max_files}")
-        files = files[:max_files]
-
-    print(f"📁 Total files to process: {len(files)}")
-    return files
-
-def load_multiple_files(file_paths, chunk_size=512, show_progress=True):
-    """Load data from multiple files into a single encoder."""
-
-    encoder = MemvidEncoder()
-    file_stats = []
-
-    if show_progress:
-        from tqdm import tqdm
-        file_iter = tqdm(file_paths, desc="Loading files")
-    else:
-        file_iter = file_paths
-
-    total_files_processed = 0
-    total_files_failed = 0
-
-    for file_path in file_iter:
-        try:
-            file_encoder = MemvidEncoder()
-
-            if file_path.suffix.lower() == '.pdf':
-                file_encoder.add_pdf(str(file_path), chunk_size=chunk_size)
-            elif file_path.suffix.lower() == '.epub':
-                file_encoder.add_epub(str(file_path), chunk_size=chunk_size)
-            elif file_path.suffix.lower() == '.json':
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    chunks = json.load(f)
-                if isinstance(chunks, list):
-                    file_encoder.add_chunks(chunks)
+    for codec in codec_parameters.keys():
+        if codec == "mp4v":
+            available_codecs[codec] = "native"
+        else:
+            if encoder.dcker_mngr and encoder.dcker_mngr.should_use_docker(codec):
+                available_codecs[codec] = "docker"
             else:
-                # Text file
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    text = f.read()
-                file_encoder.add_text(text, chunk_size=chunk_size)
+                available_codecs[codec] = "native_ffmpeg"
 
-            if file_encoder.chunks:
-                # Add to main encoder
-                encoder.chunks.extend(file_encoder.chunks)
+    return available_codecs
 
-                file_stats.append({
-                    'name': file_path.name,
-                    'path': str(file_path),
-                    'chunks': len(file_encoder.chunks),
-                    'size_bytes': file_path.stat().st_size,
-                    'characters': sum(len(chunk) for chunk in file_encoder.chunks)
-                })
-                total_files_processed += 1
-            else:
-                print(f"⚠️  No content extracted from {file_path.name}")
-                total_files_failed += 1
-
-        except Exception as e:
-            print(f"❌ Error processing {file_path.name}: {e}")
-            total_files_failed += 1
-
-    total_chars = sum(len(chunk) for chunk in encoder.chunks)
-    total_size = sum(stat['size_bytes'] for stat in file_stats)
-
-    summary = {
-        'files_processed': total_files_processed,
-        'files_failed': total_files_failed,
-        'total_chunks': len(encoder.chunks),
-        'total_characters': total_chars,
-        'total_file_size': total_size,
-        'file_stats': file_stats
-    }
-
-    print(f"\n📊 Collection Summary:")
-    print(f"   ✅ Files processed: {total_files_processed}")
-    if total_files_failed > 0:
-        print(f"   ❌ Files failed: {total_files_failed}")
-    print(f"   📋 Total chunks: {len(encoder.chunks)}")
-    print(f"   📄 Total content: {format_size(total_chars)} characters")
-    print(f"   💾 Total file size: {format_size(total_size)}")
-
-    return encoder, summary
-def load_user_data(input_path, chunk_size=512, file_types=None, max_files=None):
-    """Load data from user's file or directory."""
-
+def load_user_data(input_path, chunk_size=512):
+    """Load data from user's file or directory - FIXED VERSION"""
     input_path = Path(input_path)
 
     if not input_path.exists():
         print(f"❌ Path not found: {input_path}")
         return None, None
 
+    encoder = MemvidEncoder()
+
     # Handle directory vs single file
     if input_path.is_dir():
         print(f"📂 Loading directory: {input_path}")
 
-        # Find all files in directory
-        files = find_files_in_directory(input_path, file_types, max_files)
+        # Find supported files in directory
+        supported_extensions = ['.pdf', '.epub', '.txt', '.md', '.json']
+        files = []
+
+        for ext in supported_extensions:
+            found = list(input_path.rglob(f"*{ext}"))
+            files.extend(found)
 
         if not files:
             print(f"❌ No supported files found in {input_path}")
+            print(f"   Looking for: {', '.join(supported_extensions)}")
             return None, None
 
+        print(f"📁 Found {len(files)} supported files")
+
         # Load all files
-        encoder, summary = load_multiple_files(files, chunk_size, show_progress=True)
+        total_files_processed = 0
+        total_files_failed = 0
+
+        for file_path in files:
+            try:
+                if file_path.suffix.lower() == '.pdf':
+                    encoder.add_pdf(str(file_path), chunk_size=chunk_size)
+                elif file_path.suffix.lower() == '.epub':
+                    encoder.add_epub(str(file_path), chunk_size=chunk_size)
+                elif file_path.suffix.lower() == '.json':
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        chunks = json.load(f)
+                    if isinstance(chunks, list):
+                        encoder.add_chunks(chunks)
+                else:
+                    # Text file
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        text = f.read()
+                    encoder.add_text(text, chunk_size=chunk_size)
+
+                total_files_processed += 1
+                print(f"   ✅ Processed: {file_path.name}")
+
+            except Exception as e:
+                print(f"   ❌ Failed to process {file_path.name}: {e}")
+                total_files_failed += 1
 
         if not encoder.chunks:
             print("❌ No content extracted from any files")
             return None, None
 
-        # Create summary info
+        total_chars = sum(len(chunk) for chunk in encoder.chunks)
+
         info = {
             'type': 'directory',
             'path': str(input_path),
-            'files_processed': summary['files_processed'],
-            'files_failed': summary['files_failed'],
-            'chunks': summary['total_chunks'],
-            'total_chars': summary['total_characters'],
-            'total_file_size': summary['total_file_size'],
-            'avg_chunk_size': summary['total_characters'] / summary['total_chunks'] if summary['total_chunks'] > 0 else 0,
-            'file_stats': summary['file_stats']
+            'files_processed': total_files_processed,
+            'files_failed': total_files_failed,
+            'chunks': len(encoder.chunks),
+            'total_chars': total_chars,
+            'avg_chunk_size': total_chars / len(encoder.chunks)
         }
+
+        print(f"📊 Summary: {total_files_processed} files processed, {len(encoder.chunks)} chunks extracted")
 
         return encoder, info
 
     else:
-        # Single file
-        print(f"📂 Loading file: {input_path.name}")
-
-        encoder = MemvidEncoder()
+        # Single file - your existing logic
+        print(f"📄 Loading file: {input_path.name}")
 
         try:
             if input_path.suffix.lower() == '.pdf':
-                print("   📄 Detected PDF file")
                 encoder.add_pdf(str(input_path), chunk_size=chunk_size)
-
             elif input_path.suffix.lower() == '.epub':
-                print("   📚 Detected EPUB file")
                 encoder.add_epub(str(input_path), chunk_size=chunk_size)
-
             elif input_path.suffix.lower() == '.json':
-                print("   📋 Detected JSON chunks file")
                 with open(input_path, 'r', encoding='utf-8') as f:
                     chunks = json.load(f)
-
                 if isinstance(chunks, list):
                     encoder.add_chunks(chunks)
-                    print(f"   ✅ Loaded {len(chunks)} pre-made chunks")
                 else:
                     print("❌ JSON file must contain a list of text chunks")
                     return None, None
-
             else:
-                print("   📝 Treating as text file")
                 with open(input_path, 'r', encoding='utf-8') as f:
                     text = f.read()
                 encoder.add_text(text, chunk_size=chunk_size)
-
         except Exception as e:
             print(f"❌ Error loading file: {e}")
             return None, None
@@ -235,252 +168,217 @@ def load_user_data(input_path, chunk_size=512, file_types=None, max_files=None):
             return None, None
 
         total_chars = sum(len(chunk) for chunk in encoder.chunks)
-        avg_chunk_size = total_chars / len(encoder.chunks)
-
-        print(f"   ✅ Extracted {len(encoder.chunks)} chunks")
-        print(f"   📊 Total content: {format_size(total_chars)} characters")
-        print(f"   📏 Average chunk size: {avg_chunk_size:.0f} characters")
 
         info = {
             'type': 'file',
             'file_name': input_path.name,
-            'file_size': format_size(input_path.stat().st_size),
+            'file_size': input_path.stat().st_size,
             'chunks': len(encoder.chunks),
             'total_chars': total_chars,
-            'avg_chunk_size': avg_chunk_size
+            'avg_chunk_size': total_chars / len(encoder.chunks)
         }
 
         return encoder, info
 
-def run_codec_comparison(encoder, data_info, output_dir="output"):
-    """Run comparison between MP4V and H.265 codecs."""
+def test_codec(encoder, codec, name_stem, output_dir):
+    """Test encoding with a specific codec - FIXED"""
+    print(f"\n🎬 Testing {codec.upper()} encoding...")
+
+    # Create fresh encoder copy to avoid state issues
+    test_encoder = MemvidEncoder()
+    test_encoder.chunks = encoder.chunks.copy()
+
+    # Determine file extension from full codec mapping - FIXED
+    file_ext = codec_parameters[codec]["video_file_type"]
+
+    output_path = output_dir / f"{name_stem}_{codec}{file_ext}"
+    index_path = output_dir / f"{name_stem}_{codec}.json"
+
+    start_time = time.time()
+
+    try:
+        stats = test_encoder.build_video(
+            str(output_path),
+            str(index_path),
+            codec=codec,
+            show_progress=False,  # Keep output clean
+            auto_build_docker=True,
+            allow_fallback=False  # Fail rather than fallback for comparison
+        )
+
+        encoding_time = time.time() - start_time
+        file_size = output_path.stat().st_size
+
+        result = {
+            'success': True,
+            'codec': codec,
+            'backend': stats.get('backend', 'unknown'),
+            'file_size': file_size,
+            'file_size_mb': file_size / (1024 * 1024),
+            'encoding_time': encoding_time,
+            'chunks_per_mb': len(encoder.chunks) / (file_size / (1024 * 1024)) if file_size > 0 else 0,
+            'path': output_path,
+            'file_ext': file_ext
+        }
+
+        print(f"   ✅ Success: {format_size(file_size)} in {encoding_time:.1f}s via {result['backend']}")
+        return result
+
+    except Exception as e:
+        print(f"   ❌ Failed: {e}")
+        return {
+            'success': False,
+            'codec': codec,
+            'error': str(e)
+        }
+
+def run_multi_codec_comparison(encoder, data_info, codecs, output_dir="output"):
+    """Run comparison across multiple codecs - FIXED for directories"""
 
     output_path = Path(output_dir)
     output_path.mkdir(exist_ok=True)
 
-    if data_info['type'] == 'directory':
-        # Use directory name for output files
-        name_stem = Path(data_info['path']).name
-    else:
-        # Use file name for output files
-        name_stem = Path(data_info['file_name']).stem
-
-    # Add timestamp to prevent file conflicts
+    # Generate output name based on input type - FIXED
     timestamp = int(time.time())
-    name_stem = f"{name_stem}_{timestamp}"
 
-    print(f"\n🏁 Starting codec comparison")
+    if data_info['type'] == 'directory':
+        # Use directory name for collections
+        dir_name = Path(data_info['path']).name
+        name_stem = f"{dir_name}_{data_info['files_processed']}files_{timestamp}"
+    else:
+        # Use file name for single files
+        name_stem = f"{Path(data_info['file_name']).stem}_{timestamp}"
+
+    print(f"\n🏁 Multi-Codec Comparison Starting")
     print("=" * 60)
+    print(f"📁 Output prefix: {name_stem}")
 
     results = {}
 
-    # Test 1: Native MP4V encoding
-    print("\n🏠 Test 1: Native MP4V Encoding")
-    print("-" * 30)
-
-    mp4v_path = output_path / f"{name_stem}_mp4v.mp4"
-    mp4v_index = output_path / f"{name_stem}_mp4v.json"
-
-    start_time = time.time()
-    try:
-        mp4v_stats = encoder.build_video(
-            str(mp4v_path),
-            str(mp4v_index),
-            codec="mp4v",
-            show_progress=True
-        )
-        mp4v_time = time.time() - start_time
-
-        results['mp4v'] = {
-            'success': True,
-            'file_size': mp4v_path.stat().st_size,
-            'file_size_mb': mp4v_stats.get('video_size_mb', 0),
-            'encoding_time': mp4v_time,
-            'backend': mp4v_stats.get('backend', 'native'),
-            'path': mp4v_path
-        }
-
-        print(f"✅ MP4V encoding complete")
-        print(f"   File size: {format_size(results['mp4v']['file_size'])}")
-        print(f"   Encoding time: {mp4v_time:.1f} seconds")
-
-    except Exception as e:
-        print(f"❌ MP4V encoding failed: {e}")
-        results['mp4v'] = {'success': False, 'error': str(e)}
-
-    # Test 2: Docker H.265 encoding
-    print("\n🐳 Test 2: Docker H.265 Encoding")
-    print("-" * 30)
-
-    # Create a fresh encoder to avoid any state issues
-    encoder2 = MemvidEncoder()
-    encoder2.chunks = encoder.chunks.copy()
-
-    h265_path = output_path / f"{name_stem}_h265.mp4"
-    h265_index = output_path / f"{name_stem}_h265.json"
-
-    start_time = time.time()
-    try:
-        h265_stats = encoder2.build_video(
-            str(h265_path),
-            str(h265_index),
-            codec="h265",
-            show_progress=True,
-            auto_build_docker=True,
-            allow_fallback=False  # Fail instead of falling back for comparison
-        )
-        h265_time = time.time() - start_time
-
-        results['h265'] = {
-            'success': True,
-            'file_size': h265_path.stat().st_size,
-            'file_size_mb': h265_stats.get('video_size_mb', 0),
-            'encoding_time': h265_time,
-            'backend': h265_stats.get('backend', 'unknown'),
-            'path': h265_path
-        }
-
-        print(f"✅ H.265 encoding complete")
-        print(f"   File size: {format_size(results['h265']['file_size'])}")
-        print(f"   Encoding time: {h265_time:.1f} seconds")
-        print(f"   Backend used: {results['h265']['backend']}")
-
-    except Exception as e:
-        print(f"❌ H.265 encoding failed: {e}")
-        print("   Docker backend is required for H.265 comparison.")
-        print("   Run 'make build' to set up Docker container, then try again.")
-        results['h265'] = {'success': False, 'error': str(e)}
+    for codec in codecs:
+        results[codec] = test_codec(encoder, codec, name_stem, output_path)
 
     return results
 
-def print_comparison_results(data_info, results):
-    """Print detailed comparison results."""
+def print_comparison_table(data_info, results, codecs):
+    """Print detailed comparison table"""
 
-    print(f"\n📊 COMPRESSION COMPARISON RESULTS")
-    print("=" * 60)
+    print(f"\n📊 MULTI-CODEC COMPARISON RESULTS")
+    print("=" * 80)
 
     if data_info['type'] == 'directory':
         print(f"📁 Source: {data_info['path']} ({data_info['files_processed']} files)")
-        print(f"📋 Content: {data_info['chunks']} chunks, {format_size(data_info['total_chars'])} characters")
-        print(f"💾 Original size: {format_size(data_info['total_file_size'])}")
     else:
-        print(f"📁 Source: {data_info['file_name']} ({data_info['file_size']})")
-        print(f"📋 Content: {data_info['chunks']} chunks, {format_size(data_info['total_chars'])} characters")
+        print(f"📄 Source: {data_info['file_name']}")
+
+    print(f"📋 Content: {data_info['chunks']} chunks, {format_size(data_info['total_chars'])} characters")
     print()
+    # Prepare table data
+    successful_results = [(codec, result) for codec, result in results.items() if result['success']]
+    failed_results = [(codec, result) for codec, result in results.items() if not result['success']]
 
-    if results['mp4v']['success'] and results['h265']['success']:
-        # Both succeeded - show comparison
-        mp4v_size = results['mp4v']['file_size']
-        h265_size = results['h265']['file_size']
+    if successful_results:
+        print("✅ SUCCESSFUL ENCODINGS:")
+        print("-" * 80)
+        print(f"{'Codec':<8} {'Backend':<12} {'Size':<12} {'Chunks/MB':<10} {'Time':<8} {'Ratio':<8}")
+        print("-" * 80)
 
-        compression_ratio = mp4v_size / h265_size if h265_size > 0 else float('inf')
-        space_saved = ((mp4v_size - h265_size) / mp4v_size) * 100 if mp4v_size > 0 else 0
+        # Sort by file size (smallest first)
+        successful_results.sort(key=lambda x: x[1]['file_size'])
+        baseline_size = successful_results[0][1]['file_size']  # Smallest file as baseline
 
+        for codec, result in successful_results:
+            size_str = format_size(result['file_size'])
+            chunks_per_mb = f"{result['chunks_per_mb']:.0f}"
+            time_str = f"{result['encoding_time']:.1f}s"
+            backend = result['backend']
+            ratio = result['file_size'] / baseline_size
+            ratio_str = f"{ratio:.1f}x" if ratio != 1.0 else "baseline"
+
+            print(f"{codec:<8} {backend:<12} {size_str:<12} {chunks_per_mb:<10} {time_str:<8} {ratio_str:<8}")
+
+        # Find best compression and best speed
+        best_compression = min(successful_results, key=lambda x: x[1]['file_size'])
+        fastest = min(successful_results, key=lambda x: x[1]['encoding_time'])
+
+        print()
+        print(f"🏆 Best Compression: {best_compression[0].upper()} ({format_size(best_compression[1]['file_size'])})")
+        print(f"⚡ Fastest Encoding: {fastest[0].upper()} ({fastest[1]['encoding_time']:.1f}s)")
+
+        # Calculate storage efficiency
         chunks_count = data_info['chunks']
-        chunks_per_mb_mp4v = chunks_count / (mp4v_size / (1024*1024)) if mp4v_size > 0 else 0
-        chunks_per_mb_h265 = chunks_count / (h265_size / (1024*1024)) if h265_size > 0 else 0
+        print(f"\n💾 Storage Efficiency (chunks per MB):")
+        for codec, result in successful_results:
+            chunks_per_mb = result['chunks_per_mb']
+            print(f"   {codec.upper()}: {chunks_per_mb:.0f} chunks/MB")
 
-        print(f"🏠 MP4V (Native):  {format_size(mp4v_size):>10} ({chunks_per_mb_mp4v:.0f} chunks/MB)")
-        print(f"🐳 H.265 (Docker): {format_size(h265_size):>10} ({chunks_per_mb_h265:.0f} chunks/MB)")
-        print()
-        print(f"🎯 H.265 is {compression_ratio:.1f}x smaller than MP4V")
-        print(f"💾 Space saved: {space_saved:.1f}%")
-        print(f"⚡ Density improvement: {chunks_per_mb_h265/chunks_per_mb_mp4v:.1f}x more chunks per MB")
+    if failed_results:
+        print(f"\n❌ FAILED ENCODINGS:")
+        print("-" * 40)
+        for codec, result in failed_results:
+            print(f"   {codec.upper()}: {result['error']}")
 
-        # Encoding time comparison
-        mp4v_time = results['mp4v']['encoding_time']
-        h265_time = results['h265']['encoding_time']
-        time_ratio = h265_time / mp4v_time if mp4v_time > 0 else float('inf')
-
-        print()
-        print(f"⏱️  Encoding Times:")
-        print(f"   MP4V:  {mp4v_time:.1f} seconds")
-        print(f"   H.265: {h265_time:.1f} seconds ({time_ratio:.1f}x {'slower' if time_ratio > 1 else 'faster'})")
-
-    else:
-        # One or both failed
-        print("⚠️  Partial Results:")
-
-        if results['mp4v']['success']:
-            mp4v_size = results['mp4v']['file_size']
-            chunks_per_mb = data_info['chunks'] / (mp4v_size / (1024*1024)) if mp4v_size > 0 else 0
-            print(f"✅ MP4V: {format_size(mp4v_size)} ({chunks_per_mb:.0f} chunks/MB)")
-        else:
-            print(f"❌ MP4V failed: {results['mp4v']['error']}")
-
-        if results['h265']['success']:
-            h265_size = results['h265']['file_size']
-            chunks_per_mb = data_info['chunks'] / (h265_size / (1024*1024)) if h265_size > 0 else 0
-            backend = results['h265']['backend']
-            print(f"✅ H.265: {format_size(h265_size)} ({chunks_per_mb:.0f} chunks/MB) via {backend}")
-        else:
-            print(f"❌ H.265 failed: {results['h265']['error']}")
-
-    print()
-    print(f"📁 Output files saved to: {Path('output').absolute()}")
+    print(f"\n📁 Output files saved to: {Path('output').absolute()}")
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Compare H.265 vs MP4V compression on YOUR data",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  # Single file
-  python examples/codec_comparison.py my_document.pdf
-  python examples/codec_comparison.py my_book.epub  
-  python examples/codec_comparison.py my_notes.txt
-  
-  # Whole directory (recursive)
-  python examples/codec_comparison.py ~/Documents/Zotero/
-  python examples/codec_comparison.py ~/my_pdf_library/ --max-files 50
-  python examples/codec_comparison.py ~/research/ --file-types pdf epub
-  
-  # Pre-made chunks
-  python examples/codec_comparison.py --chunks my_chunks.json
-
-Perfect for testing your entire Zotero library, document collections, etc.
-This tool shows you real compression differences on YOUR files.
-        """
+        description="Compare multiple video codecs on YOUR data",
+        formatter_class=argparse.RawDescriptionHelpFormatter
     )
 
-    parser.add_argument('input_path', help='Path to your file or directory (PDF, EPUB, TXT, JSON, or folder)')
+    parser.add_argument('input_path', help='Path to your file (PDF, EPUB, TXT, JSON)')
+    parser.add_argument('--codecs', nargs='+', default=['mp4v', 'h265'],
+                        help='Codecs to test (default: mp4v h265). Use "all" for all available.')
     parser.add_argument('--chunk-size', type=int, default=512,
                         help='Chunk size for text splitting (default: 512)')
     parser.add_argument('--output-dir', default='output',
-                        help='Output directory for encoded videos (default: output)')
-    parser.add_argument('--file-types', nargs='+', default=['pdf', 'epub', 'txt', 'md', 'json'],
-                        help='File types to process in directories (default: pdf epub txt md json)')
-    parser.add_argument('--max-files', type=int,
-                        help='Maximum number of files to process from directory')
-    parser.add_argument('--chunks', action='store_true',
-                        help='Treat input file as pre-made JSON chunks')
+                        help='Output directory (default: output)')
 
     args = parser.parse_args()
 
-    print("🎥 Memvid Codec Comparison Tool")
-    print("Compare H.265 vs MP4V compression on YOUR data")
-    print()
+    print("🎥 Memvid Multi-Codec Comparison Tool")
+    print("=" * 50)
 
-    # Load user's data
-    encoder, data_info = load_user_data(args.input_path, args.chunk_size, args.file_types, args.max_files)
+    # Load user data
+    encoder, data_info = load_user_data(args.input_path, args.chunk_size)
     if not encoder:
         sys.exit(1)
 
+    # Determine available codecs
+    available_codecs = get_available_codecs(encoder)
+
+    print(f"\n🎛️  Available Codecs:")
+    for codec, backend in available_codecs.items():
+        print(f"   {codec.upper()}: {backend}")
+
+    # Parse codec selection
+    if args.codecs == ['all']:
+        test_codecs = list(available_codecs.keys())
+    else:
+        test_codecs = []
+        for codec in args.codecs:
+            if codec in available_codecs:
+                test_codecs.append(codec)
+            else:
+                print(f"⚠️  Codec '{codec}' not available, skipping")
+
+        if not test_codecs:
+            print("❌ No valid codecs specified")
+            sys.exit(1)
+
+    print(f"\n🧪 Testing Codecs: {', '.join(test_codecs)}")
+
     # Show Docker status
     docker_status = encoder.get_docker_status()
-    print(f"\n🐳 Docker Status: {docker_status}")
+    print(f"🐳 Docker Status: {docker_status}")
 
-    if "not found" in docker_status:
-        print("\n⚠️  H.265 encoding requires Docker. Install Docker Desktop for best results.")
-        print("   H.265 test will attempt auto-build or fall back to MP4V.")
-
-    # Run the comparison
-    results = run_codec_comparison(encoder, data_info, args.output_dir)
+    # Run comparison
+    results = run_multi_codec_comparison(encoder, data_info, test_codecs, args.output_dir)
 
     # Show results
-    print_comparison_results(data_info, results)
+    print_comparison_table(data_info, results, test_codecs)
 
-    print(f"\n🎉 Comparison complete! Now you know how YOUR data compresses.")
+    print(f"\n🎉 Multi-codec comparison complete!")
 
 if __name__ == '__main__':
     main()

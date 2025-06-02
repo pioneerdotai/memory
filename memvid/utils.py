@@ -84,32 +84,6 @@ def decode_qr(image: np.ndarray) -> Optional[str]:
     return None
 
 
-def create_video_writer(output_path: str, config: Optional[Dict[str, Any]] = None) -> cv2.VideoWriter:
-    """
-    Create OpenCV video writer
-    
-    Args:
-        output_path: Path to output video file
-        config: Optional video configuration
-        
-    Returns:
-        cv2.VideoWriter instance
-    """
-    if config is None:
-        config = get_default_config()
-
-    codec = config["codec"]
-    codec_parameters = config["codec_parameters"]
-    
-    fourcc = cv2.VideoWriter_fourcc(*codec)
-    return cv2.VideoWriter(
-        output_path,
-        fourcc,
-        codec_parameters["video_fps"],
-        (codec_parameters["frame_width"], codec_parameters["frame_height"])
-    )
-
-
 def qr_to_frame(qr_image: Image.Image, frame_size: Tuple[int, int]) -> np.ndarray:
     """
     Convert QR PIL image to video frame
