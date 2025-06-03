@@ -6,14 +6,14 @@ from typing import Dict, Any
 
 # QR Code settings
 QR_VERSION = 30  # 1-40, higher = more data capacity
-QR_ERROR_CORRECTION = 'M'  # L, M, Q, H
+QR_ERROR_CORRECTION = 'L'  # L, M, Q, H
 QR_BOX_SIZE = 4    # QR_BOX_SIZE * QR_VERSION dimensions (1 = 21 x 21, 20 = 97 x 97, 40 = 177×177) + QR_BORDER must be < frame height/width
 QR_BORDER = 2
 QR_FILL_COLOR = "black"
 QR_BACK_COLOR = "white"
 
 # Chunking settings - SIMPLIFIED
-DEFAULT_CHUNK_SIZE = 2048
+DEFAULT_CHUNK_SIZE = 4096
 DEFAULT_OVERLAP = 16
 
 # Codec Settings
@@ -30,29 +30,29 @@ MP4V_PARAMETERS= {"video_file_type": ".mp4",
 
 H265_PARAMETERS = {"video_file_type": ".mkv", # AKA HEVC
                    "video_fps": 60,
+                   "video_crf": 28,
                    "frame_height": 720,
                    "frame_width": 720,
-                   "video_crf": 24,
-                   "video_preset": "medium",
+                   "video_preset": "slow",
                    "video_profile": "main",
                    "pix_fmt": "yuv420p",
                    "extra_ffmpeg_args": "-x265-params keyint=1:tune=stillimage"}
 
 H264_PARAMETERS = {"video_file_type": ".mkv", # AKA AVC
+                   "video_fps": 60,
                    "video_crf": 22,
-                   "video_fps": 30,
                    "frame_height": 512,
                    "frame_width": 512,
-                   "video_preset": "medium",
-                   "video_profile": "medium",
+                   "video_preset": "slow",
+                   "video_profile": "main",
                    "pix_fmt": "yuv420p",
                    "extra_ffmpeg_args": "-x264-params keyint=1"}
 
 AV1_PARAMETERS = {"video_file_type": ".mkv",
+                  "video_crf": 28,
                   "video_fps": 60,
                   "frame_height": 720,
                   "frame_width": 720,
-                  "video_crf": 28,
                   "video_preset": "slow",
                   "video_profile": "mainstillpicture",
                   "pix_fmt": "yuv420p",
@@ -74,7 +74,7 @@ EMBEDDING_MODEL = "all-MiniLM-L6-v2"  # Fast and good quality
 EMBEDDING_DIMENSION = 384
 
 # Index settings
-INDEX_TYPE = "Flat"  # Can be "IVF" for larger datasets
+INDEX_TYPE = "IVF"  # Can be "IVF" for larger datasets
 NLIST = 100  # Number of clusters for IVF index
 
 # LLM settings
