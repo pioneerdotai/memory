@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path.cwd()))
 
 try:
     from memvid.encoder import MemvidEncoder
-    from memvid.config import codec_parameters
+    from memvid.config import codec_parameters, DEFAULT_CHUNK_SIZE, DEFAULT_OVERLAP
     print(f"✅ Imported MemvidEncoder from: {project_root}")
 except ImportError as e:
     print(f"❌ Could not import MemvidEncoder from {project_root}")
@@ -61,7 +61,7 @@ def get_available_codecs(encoder):
 
     return available_codecs
 
-def load_user_data(input_path, chunk_size=512):
+def load_user_data(input_path, chunk_size=DEFAULT_CHUNK_SIZE, overlap=DEFAULT_OVERLAP):
     """Load data from user's file or directory - FIXED VERSION"""
     input_path = Path(input_path)
 
@@ -97,9 +97,9 @@ def load_user_data(input_path, chunk_size=512):
         for file_path in files:
             try:
                 if file_path.suffix.lower() == '.pdf':
-                    encoder.add_pdf(str(file_path), chunk_size=chunk_size)
+                    encoder.add_pdf(str(file_path), chunk_size=chunk_size, overlap=overlap)
                 elif file_path.suffix.lower() == '.epub':
-                    encoder.add_epub(str(file_path), chunk_size=chunk_size)
+                    encoder.add_epub(str(file_path), chunk_size=chunk_size, overlap=overlap)
                 elif file_path.suffix.lower() == '.json':
                     with open(file_path, 'r', encoding='utf-8') as f:
                         chunks = json.load(f)
@@ -109,7 +109,7 @@ def load_user_data(input_path, chunk_size=512):
                     # Text file
                     with open(file_path, 'r', encoding='utf-8') as f:
                         text = f.read()
-                    encoder.add_text(text, chunk_size=chunk_size)
+                    encoder.add_text(text, chunk_size=chunk_size, overlap=overlap)
 
                 total_files_processed += 1
                 print(f"   ✅ Processed: {file_path.name}")
@@ -144,9 +144,9 @@ def load_user_data(input_path, chunk_size=512):
 
         try:
             if input_path.suffix.lower() == '.pdf':
-                encoder.add_pdf(str(input_path), chunk_size=chunk_size)
+                encoder.add_pdf(str(input_path), chunk_size=chunk_size, overlap=overlap)
             elif input_path.suffix.lower() == '.epub':
-                encoder.add_epub(str(input_path), chunk_size=chunk_size)
+                encoder.add_epub(str(input_path), chunk_size=chunk_size, overlap=overlap)
             elif input_path.suffix.lower() == '.json':
                 with open(input_path, 'r', encoding='utf-8') as f:
                     chunks = json.load(f)
@@ -158,7 +158,7 @@ def load_user_data(input_path, chunk_size=512):
             else:
                 with open(input_path, 'r', encoding='utf-8') as f:
                     text = f.read()
-                encoder.add_text(text, chunk_size=chunk_size)
+                encoder.add_text(text, chunk_size=chunk_size, overlap=overlap)
         except Exception as e:
             print(f"❌ Error loading file: {e}")
             return None, None
@@ -297,7 +297,7 @@ def print_comparison_table(data_info, results, codecs):
 
             print(f"{codec:<8} {backend:<12} {size_str:<12} {chunks_per_mb:<10} {time_str:<8} {ratio_str:<8}")
 
-        # Find best compression and best speed
+        # Find the best compression ratio and best speed
         best_compression = min(successful_results, key=lambda x: x[1]['file_size'])
         fastest = min(successful_results, key=lambda x: x[1]['encoding_time'])
 
@@ -306,11 +306,29 @@ def print_comparison_table(data_info, results, codecs):
         print(f"⚡ Fastest Encoding: {fastest[0].upper()} ({fastest[1]['encoding_time']:.1f}s)")
 
         # Calculate storage efficiency
-        chunks_count = data_info['chunks']
+        total_chunks = data_info['chunks']
         print(f"\n💾 Storage Efficiency (chunks per MB):")
+        print(f"📦 Total chunks in dataset: {total_chunks}")
+
+        storage_efficiency = []
         for codec, result in successful_results:
-            chunks_per_mb = result['chunks_per_mb']
-            print(f"   {codec.upper()}: {chunks_per_mb:.0f} chunks/MB")
+            # Get file size in MB
+            file_size_mb = result['file_size'] / (1024 * 1024)  # Convert bytes to MB
+
+            # Calculate chunks per MB
+            chunks_per_mb = total_chunks / file_size_mb if file_size_mb > 0 else 0
+
+            storage_efficiency.append((codec, chunks_per_mb, file_size_mb))
+            print(f"   {codec.upper()}: {chunks_per_mb:.1f} chunks/MB ({file_size_mb:.1f} MB total)")
+
+        # Sort by efficiency (highest chunks per MB first)
+        storage_efficiency.sort(key=lambda x: x[1], reverse=True)
+
+        print(f"\n🏆 Storage Efficiency Ranking:")
+        for i, (codec, chunks_per_mb, file_size_mb) in enumerate(storage_efficiency, 1):
+            efficiency_vs_best = chunks_per_mb / storage_efficiency[0][1] if storage_efficiency[0][1] > 0 else 0
+            print(f"   {i}. {codec.upper()}: {chunks_per_mb:.1f} chunks/MB ({efficiency_vs_best:.1%} of best)")
+
 
     if failed_results:
         print(f"\n❌ FAILED ENCODINGS:")
@@ -329,8 +347,10 @@ def main():
     parser.add_argument('input_path', help='Path to your file (PDF, EPUB, TXT, JSON)')
     parser.add_argument('--codecs', nargs='+', default=['mp4v', 'h265'],
                         help='Codecs to test (default: mp4v h265). Use "all" for all available.')
-    parser.add_argument('--chunk-size', type=int, default=512,
-                        help='Chunk size for text splitting (default: 512)')
+    parser.add_argument('--chunk-size', type=int, default=DEFAULT_CHUNK_SIZE,
+                        help='Chunk size for text splitting')
+    parser.add_argument('--overlap', type=int, default=DEFAULT_OVERLAP,
+                        help='Overlap for text splitting')
     parser.add_argument('--output-dir', default='output',
                         help='Output directory (default: output)')
 
