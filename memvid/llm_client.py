@@ -6,6 +6,8 @@ import json
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional, Iterator
 
+from memvid.config import DEFAULT_LLM_MODELS
+
 # Optional imports with availability checking
 try:
     from openai import OpenAI
@@ -45,7 +47,7 @@ class LLMProvider(ABC):
 class OpenAIProvider(LLMProvider):
     """OpenAI provider implementation"""
 
-    def __init__(self, api_key: str, model: str = "gpt-4"):
+    def __init__(self, api_key: str, model: str = "gpt-4o"):
         self.client = OpenAI(api_key=api_key)
         self.model = model
 
@@ -368,12 +370,8 @@ class LLMClient:
 
     def _get_default_model(self, provider: str) -> str:
         """Get default model for each provider"""
-        defaults = {
-            'openai': 'gpt-4',
-            'google': 'gemini-2.0-flash-exp',
-            'anthropic': 'claude-3-5-sonnet-20241022',
-        }
-        return defaults.get(provider.lower(), 'gpt-4')
+
+        return DEFAULT_LLM_MODELS.get(provider)
 
     def chat(self, messages: List[Dict[str, str]], stream: bool = False, **kwargs) -> Any:
         """Send chat messages using the configured provider"""

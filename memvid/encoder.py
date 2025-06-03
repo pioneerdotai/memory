@@ -15,7 +15,7 @@ import numpy as np
 
 from .utils import encode_to_qr, qr_to_frame, chunk_text
 from .index import IndexManager
-from .config import get_default_config, DEFAULT_CHUNK_SIZE, DEFAULT_OVERLAP
+from .config import get_default_config, DEFAULT_CHUNK_SIZE, DEFAULT_OVERLAP, VIDEO_CODEC, get_codec_parameters
 from .docker_manager import DockerManager
 
 logger = logging.getLogger(__name__)
@@ -153,7 +153,7 @@ class MemvidEncoder:
             logger.error(f"Error processing EPUB {epub_path}: {e}")
             raise
 
-    def create_video_writer(self, output_path: str, codec: str = "mp4v") -> cv2.VideoWriter:
+    def create_video_writer(self, output_path: str, codec: str = VIDEO_CODEC) -> cv2.VideoWriter:
         """
         Create OpenCV video writer for native encoding
 
@@ -221,8 +221,6 @@ class MemvidEncoder:
     def _build_ffmpeg_command(self, frames_dir: Path, output_file: Path, codec: str) -> List[str]:
         """Build optimized FFmpeg command using codec configuration"""
 
-        from .config import get_codec_parameters
-
         # Get codec-specific configuration
         codec_config = get_codec_parameters(codec.lower())
 
@@ -269,6 +267,18 @@ class MemvidEncoder:
         import os
         thread_count = min(os.cpu_count() or 4, 16)
         cmd.extend(['-threads', str(thread_count)])
+
+        print(f"🎬 FFMPEG ENCODING SUMMARY:")
+        print(f"   🎥 Codec Config:")
+        print(f"      • codec: {codec}")
+        print(f"      • file_type: {codec_config.get('video_file_type', 'unknown')}")
+        print(f"      • fps: {codec_config.get('fps', 'default')}")
+        print(f"      • crf: {codec_config.get('crf', 'default')}")
+        print(f"      • height: {codec_config.get('frame_height', 'default')}")
+        print(f"      • width: {codec_config.get('frame_width', 'default')}")
+        print(f"      • preset: {codec_config.get('video_preset', 'default')}")
+        print(f"      • pix_fmt: {codec_config.get('pix_fmt', 'default')}")
+        print(f"      • extra_ffmpeg_args: {codec_config.get('extra_ffmpeg_args', 'default')}")
 
         # Add codec-specific parameters from config
         if codec_config.get("extra_ffmpeg_args"):
@@ -414,8 +424,9 @@ class MemvidEncoder:
                 "duration_seconds": frame_count / codec_parameters[codec]["video_fps"]
             }
 
+
     def build_video(self, output_file: str, index_file: str,
-                    codec: str = "mp4v", show_progress: bool = True,
+                    codec: str = VIDEO_CODEC, show_progress: bool = True,
                     auto_build_docker: bool = True, allow_fallback: bool = True) -> Dict[str, Any]:
         """
         Build QR code video and index from chunks with unified codec handling
@@ -451,8 +462,6 @@ class MemvidEncoder:
 
             try:
                 from .config import codec_parameters
-                print(f"🐛 DEBUG: Requested codec: '{codec}'")
-                print(f"🐛 DEBUG: Available in full mapping: {list(codec_parameters.keys())}")
                 # Choose encoding method based on codec
                 if codec == "mp4v":
                     # Always use OpenCV for MP4V
