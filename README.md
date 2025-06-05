@@ -92,7 +92,7 @@ pip install PyPDF2
 from memvid import MemvidEncoder, MemvidChat
 
 # Create video memory from text chunks
-chunks = ["Important fact 1", "Important fact 2", "Historical event details", ...]
+chunks = ["Important fact 1", "Important fact 2", "Historical event details"]
 encoder = MemvidEncoder()
 encoder.add_chunks(chunks)
 encoder.build_video("memory.mp4", "memory_index.json")
