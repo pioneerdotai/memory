@@ -38,10 +38,6 @@ def chat_with_memory(
         - 'clear': Clear conversation history
         - 'help': Show commands
         - 'exit' or 'quit': End session
-        
-    Example:
-        >>> from memvid import chat_with_memory
-        >>> chat_with_memory("knowledge.mp4", "knowledge_index.json")
     """
     # Set tokenizers parallelism to avoid warning
     os.environ['TOKENIZERS_PARALLELISM'] = 'false'
@@ -172,7 +168,7 @@ def quick_chat(video_file: str, index_file: str, query: str, api_key: Optional[s
         
     Example:
         >>> from memvid import quick_chat
-        >>> response = quick_chat("knowledge.mp4", "knowledge_index.json", "What is quantum computing?")
+        >>> response = quick_chat(f"knowledge.{VIDEO_FILE_TYPE}", "knowledge_index.json", "What is quantum computing?")
         >>> print(response)
     """
     os.environ['TOKENIZERS_PARALLELISM'] = 'false'

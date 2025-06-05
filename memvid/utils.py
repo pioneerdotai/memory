@@ -16,12 +16,12 @@ from tqdm import tqdm
 import base64
 import gzip
 
-from .config import get_default_config
+from .config import get_default_config, codec_parameters
 
 logger = logging.getLogger(__name__)
 
 
-def encode_to_qr(data: str, config: Optional[Dict[str, Any]] = None) -> Image.Image:
+def encode_to_qr(data: str) -> Image.Image:
     """
     Encode data to QR code image
     
@@ -32,13 +32,9 @@ def encode_to_qr(data: str, config: Optional[Dict[str, Any]] = None) -> Image.Im
     Returns:
         PIL Image of QR code
     """
-    if config is None:
-        config = get_default_config()["qr"]
-    else:
-        # If config is provided but incomplete, merge with defaults
-        default_qr_config = get_default_config()["qr"]
-        config = {**default_qr_config, **config.get("qr", config)}
-    
+
+    config = get_default_config()["qr"]
+
     # Compress data if it's large
     if len(data) > 100:
         compressed = gzip.compress(data.encode())
@@ -86,29 +82,6 @@ def decode_qr(image: np.ndarray) -> Optional[str]:
     except Exception as e:
         logger.warning(f"QR decode failed: {e}")
     return None
-
-
-def create_video_writer(output_path: str, config: Optional[Dict[str, Any]] = None) -> cv2.VideoWriter:
-    """
-    Create OpenCV video writer
-    
-    Args:
-        output_path: Path to output video file
-        config: Optional video configuration
-        
-    Returns:
-        cv2.VideoWriter instance
-    """
-    if config is None:
-        config = get_default_config()["video"]
-    
-    fourcc = cv2.VideoWriter_fourcc(*config["codec"])
-    return cv2.VideoWriter(
-        output_path,
-        fourcc,
-        config["fps"],
-        (config["frame_width"], config["frame_height"])
-    )
 
 
 def qr_to_frame(qr_image: Image.Image, frame_size: Tuple[int, int]) -> np.ndarray:
