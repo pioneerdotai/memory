@@ -3,7 +3,6 @@
 **The lightweight, game-changing solution for AI memory at scale**
 
 [![PyPI version](https://badge.fury.io/py/memvid.svg)](https://pypi.org/project/memvid/)
-[![Downloads](https://pepy.tech/badge/memvid)](https://pepy.tech/project/memvid)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
@@ -153,6 +152,26 @@ interactive = MemvidInteractive("knowledge_base.mp4", "knowledge_index.json")
 interactive.run()  # Opens web interface at http://localhost:7860
 ```
 
+### Testing with file_chat.py
+The `examples/file_chat.py` script provides a comprehensive way to test Memvid with your own documents:
+
+```bash
+# Process a directory of documents
+python examples/file_chat.py --input-dir /path/to/documents --provider google
+
+# Process specific files
+python examples/file_chat.py --files doc1.txt doc2.pdf --provider openai
+
+# Use H.265 compression (requires Docker)
+python examples/file_chat.py --input-dir docs/ --codec h265 --provider google
+
+# Custom chunking for large documents
+python examples/file_chat.py --files large.pdf --chunk-size 2048 --overlap 32 --provider google
+
+# Load existing memory
+python examples/file_chat.py --load-existing output/my_memory --provider google
+```
+
 ### Complete Example: Chat with a PDF Book
 ```bash
 # 1. Create a new directory and set up environment
@@ -185,53 +204,6 @@ EOF
 # 4. Run it
 export OPENAI_API_KEY="your-api-key"  # Optional
 python book_chat.py
-```
-
-
-## 🔧 API Reference
-
-### MemvidEncoder
-```python
-encoder = MemvidEncoder(
-    chunk_size=512,      # Characters per chunk
-    overlap=50,          # Character overlap between chunks
-    model_name='all-MiniLM-L6-v2'  # Sentence transformer model
-)
-
-# Methods
-encoder.add_chunks(chunks: List[str], metadata: List[dict] = None)
-encoder.add_text(text: str, metadata: dict = None)
-encoder.build_video(video_path: str, index_path: str, fps: int = 30, qr_size: int = 512)
-```
-
-### MemvidRetriever
-```python
-retriever = MemvidRetriever(
-    video_path: str,
-    index_path: str,
-    cache_size: int = 100  # Number of frames to cache
-)
-
-# Methods
-results = retriever.search(query: str, top_k: int = 5)
-context = retriever.get_context(query: str, max_tokens: int = 2000)
-chunks = retriever.get_chunks_by_ids(chunk_ids: List[int])
-```
-
-### MemvidChat
-```python
-chat = MemvidChat(
-    video_path: str,
-    index_path: str,
-    llm_backend: str = 'openai',  # 'openai', 'anthropic', 'local'
-    model: str = 'gpt-4'
-)
-
-# Methods
-chat.start_session(system_prompt: str = None)
-response = chat.chat(message: str, stream: bool = False)
-chat.clear_history()
-chat.export_conversation(path: str)
 ```
 
 ## 🛠️ Advanced Configuration
@@ -282,12 +254,12 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install PyPDF2
 ```
 
-**OpenAI API Key Issues**
+**LLM API Key Issues**
 ```bash
 # Set your API key (get one at https://platform.openai.com)
-export OPENAI_API_KEY="sk-..."  # macOS/Linux
+export GOOGLE_API_KEY="AIzaSyB1-..."  # macOS/Linux
 # Or on Windows:
-set OPENAI_API_KEY=sk-...
+set GOOGLE_API_KEY=AIzaSyB1-...
 ```
 
 **Large PDF Processing**
@@ -324,13 +296,6 @@ black memvid/
 | Scalability | Millions | Millions | Billions |
 | Cost | Free | $$$$ | $$$ |
 
-## 🗺️ Roadmap
-
-- [ ] **v0.2.0** - Multi-language support
-- [ ] **v0.3.0** - Real-time memory updates
-- [ ] **v0.4.0** - Distributed video sharding
-- [ ] **v0.5.0** - Audio and image support
-- [ ] **v1.0.0** - Production-ready with enterprise features
 
 ## 📚 Examples
 

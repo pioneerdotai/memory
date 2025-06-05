@@ -7,3 +7,21 @@ prompt.memvid
 USAGE.md
 
 CLAUDE.md
+
+# Ignore built distributions and old package versions
+dist/
+memvid.egg-info/
+*.egg-info/
+*.whl
+*.tar.gz
+
+# Ignore Python cache files
+__pycache__/
+*.pyc
+
+# Ignore build artifacts from previous versions
+memvid/__pycache__/
+memvid.egg-info/
+memvid.egg-info/*
+dist/memvid-*/
+
