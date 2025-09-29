@@ -17,8 +17,7 @@ except ImportError:
     print("Warning: OpenAI library not available. OpenAI provider will be disabled.")
 
 try:
-    import google.generativeai as genai
-    from google.generativeai import GenerationConfig
+    import google as genai
     GOOGLE_AVAILABLE = True
 except ImportError:
     GOOGLE_AVAILABLE = False
@@ -83,9 +82,9 @@ class OpenAIProvider(LLMProvider):
 class GoogleProvider(LLMProvider):
     """Google provider implementation based on your working code"""
 
-    def __init__(self, api_key: str, model: str = "gemini-2.0-flash-exp"):
-        genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel(model)
+    def __init__(self, api_key: str, model: str = "gemini-2.0-flash"):
+        from google import genai
+        self.llm_client = genai.Client(api_key=api_key)
         self.model_name = model
         self.api_key = api_key
 
@@ -95,30 +94,28 @@ class GoogleProvider(LLMProvider):
             # Convert to Google message format
             gemini_messages = self._convert_messages_to_gemini(messages)
 
+            # Safety settings (from your working code)
+            if 'safety_settings' not in kwargs:
+                kwargs['safety_settings'] = {
+                    'HARASSMENT': 'block_none',
+                    'DANGEROUS': 'block_none',
+                    'SEXUAL': 'block_none',
+                    'HATE_SPEECH': 'block_none'
+                }
+            
             # Get generation config
             generation_config = self._extract_generation_config(kwargs)
 
-            # Safety settings (from your working code)
-            safety_settings = {
-                'HARASSMENT': 'block_none',
-                'DANGEROUS': 'block_none',
-                'SEXUAL': 'block_none',
-                'HATE_SPEECH': 'block_none'
-            }
-
             if stream:
-                response = self.model.generate_content(
+                response = self.llm_client.models.generate_content_stream(
                     gemini_messages,
                     generation_config=generation_config,
-                    safety_settings=safety_settings,
-                    stream=True
                 )
                 return self._stream_response(response)
             else:
-                response = self.model.generate_content(
+                response = self.llm_client.models.generate_content(
                     gemini_messages,
                     generation_config=generation_config,
-                    safety_settings=safety_settings
                 )
                 return response.text
 
@@ -161,8 +158,7 @@ class GoogleProvider(LLMProvider):
 
     def _extract_generation_config(self, kwargs: Dict[str, Any]):
         """Extract Google-compatible generation config from kwargs"""
-        from google.generativeai import GenerationConfig
-
+        from google.genai.types import GenerateContentConfig
         config_params = {}
 
         # Map common parameters to Google format
@@ -174,8 +170,10 @@ class GoogleProvider(LLMProvider):
             config_params['top_p'] = kwargs['top_p']
         if 'stop_sequences' in kwargs:
             config_params['stop_sequences'] = kwargs['stop_sequences']
+        if 'safety_settings' in kwargs:
+            config_params['safety_settings'] = kwargs['safety_settings']
 
-        return GenerationConfig(**config_params) if config_params else None
+        return GenerateContentConfig(**config_params) if config_params else None
 
     def _stream_response(self, response) -> Iterator[str]:
         """Process streaming response from Google using your working approach"""
