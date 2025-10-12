@@ -83,7 +83,6 @@ class GoogleProvider(LLMProvider):
     """Google provider implementation based on your working code"""
 
     def __init__(self, api_key: str, model: str = "gemini-2.0-flash"):
-        from google import genai
         self.llm_client = genai.Client(api_key=api_key)
         self.model_name = model
         self.api_key = api_key
@@ -108,14 +107,16 @@ class GoogleProvider(LLMProvider):
 
             if stream:
                 response = self.llm_client.models.generate_content_stream(
-                    gemini_messages,
-                    generation_config=generation_config,
+                    model=self.model_name,
+                    contents=gemini_messages,
+                    config=generation_config,
                 )
                 return self._stream_response(response)
             else:
                 response = self.llm_client.models.generate_content(
-                    gemini_messages,
-                    generation_config=generation_config,
+                    model=self.model_name,
+                    contents=gemini_messages,
+                    config=generation_config,
                 )
                 return response.text
 
