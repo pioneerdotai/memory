@@ -36,13 +36,11 @@
 
 ## What is Memvid?
 
-Memvid turns knowledge into **living memory capsules** using video compression.
+Memvid is a portable AI memory system that packages your data, embeddings, search structure, and metadata into a single file. 
 
-Instead of storing context in vector databases, Memvid encodes memory into
-**video-native formats** that are compact, fast to recall, offline-first,
-and future-proof through modern codecs.
+Instead of running complex RAG pipelines or server-based vector databases, Memvid enables fast retrieval directly from the file. 
 
-Think of Memvid as **long-term memory infrastructure for LLMs**.
+The result is a model-agnostic, infrastructure-free memory layer that gives AI agents persistent, long-term memory they can carry anywhere.
 
 ---
 
