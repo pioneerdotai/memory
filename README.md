@@ -113,9 +113,9 @@ Memvid is a portable, serverless memory layer that gives AI agents persistent me
 ## Support
 
 Have questions or feedback? 
-Email: scontact@memvid.com
+Email: contact@memvid.com
   
-**Drop a STAR to show support**
+**Drop a ⭐ to show support**
 
 ---
 
