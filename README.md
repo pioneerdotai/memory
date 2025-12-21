@@ -46,23 +46,20 @@ The result is a model-agnostic, infrastructure-free memory layer that gives AI a
 
 ## Why Video Frames?
 
-Memvid borrows ideas from video encoding — not to store video, but to store
-**memory as an append-only sequence of frames**.
+Memvid draws inspiration from video encoding, not to store video, but to **organize AI memory as an append-only, ultra-efficient sequence of Smart Frames.**
 
-Each frame contains content plus metadata, timestamps, and checksums. Frames
-are grouped into segments for efficient compression, indexing, and parallel
-access.
+A Smart Frame is an immutable unit that stores content along with timestamps, checksums and basic metadata.
+Frames are grouped in a way that allows efficient compression, indexing, and parallel reads.
 
 This frame-based design enables:
 
-- Append-only writes that never corrupt existing data  
-- Time-travel queries over historical memory states  
-- Timeline-style browsing of knowledge evolution  
-- Crash safety via committed, immutable frames  
-- Efficient compression using proven video techniques  
+- Append-only writes without modifying or corrupting existing data
+- Queries over past memory states
+- Timeline-style inspection of how knowledge evolves
+- Crash safety through committed, immutable frames
+- Efficient compression using techniques adapted from video encoding
 
-The result is a **single `.mv2` file** that behaves like a rewindable memory
-timeline for AI systems. 
+The result is a single file that behaves like a rewindable memory timeline for AI systems.
 
 ---
 
