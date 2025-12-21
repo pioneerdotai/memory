@@ -110,6 +110,15 @@ Memvid is a portable, serverless memory layer that gives AI agents persistent me
 
 ---
 
+## Support
+
+Have questions or feedback? 
+Email: scontact@memvid.com
+  
+**Drop a STAR to show support**
+
+---
+
 ## License
 
 Apache License 2.0 — see the [LICENSE](LICENSE) file for details.
