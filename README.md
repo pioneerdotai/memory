@@ -27,7 +27,7 @@
 <h2 align="center">⭐️ Leave a star to support the project ⭐️</h2>
 
 
-##  Memvid v2 Launching On: **January 5, 2026**
+## 🚀 Memvid v2 Launching On: **January 5, 2026**
 
 > **Note**  
 > Memvid v1 has been removed to avoid confusion. This repository represents **Memvid v2**, a revised and improved version of the project.
