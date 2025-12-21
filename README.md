@@ -29,8 +29,7 @@
 ## 🚀 Memvid v2 launches **January 5, 2026**
 
 > **Note**  
-> Memvid v1 has been removed to avoid confusion.  
-> This repository represents **Memvid v2**, a revised and improved version of the project.
+> Memvid v1 has been removed to avoid confusion. This repository represents **Memvid v2**, a revised and improved version of the project.
 > Thanks to everyone who provided feedback on V1. The comments and issues helped shape the improvements included in V2.
 
 ---
