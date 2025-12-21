@@ -24,8 +24,8 @@
   <img src="https://img.shields.io/badge/status-v2%20in%20progress-blue?style=flat-square" />
 </p>
 
-<h2 align="center">⭐️ Leave a star to support the project ⭐️</h2>
-
+<h2 align="center">⭐️ Leave a STAR to support the project ⭐️</h2>
+  
 
 ## 🚀 Memvid v2 Launching On: **January 5, 2026**
 
