@@ -1,6 +1,7 @@
 
 
-<img width="2000" height="600" alt="Social Cover (5)" src="https://github.com/user-attachments/assets/30f09325-a138-47d8-acf1-345e849dece0" />
+<img width="2000" height="600" alt="Social Cover (6)" src="https://github.com/user-attachments/assets/5cea9973-c401-4463-b4d6-a96998ccc319" />
+
 
 
 <p align="center">
