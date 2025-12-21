@@ -45,17 +45,25 @@ Think of Memvid as **long-term memory infrastructure for LLMs**.
 
 ---
 
-## Why Video?
+## Why Video Frames?
 
-Modern video codecs (H.265, AV1, and future standards) are among the most
-optimized compression systems ever built.
+Memvid borrows ideas from video encoding — not to store video, but to store
+**memory as an append-only sequence of frames**.
 
-Memvid leverages this ecosystem to deliver:
+Each frame contains content plus metadata, timestamps, and checksums. Frames
+are grouped into segments for efficient compression, indexing, and parallel
+access.
 
-- Massive compression for large knowledge bases  
-- Deterministic, reproducible recall  
-- Zero infrastructure — just files  
-- Automatic improvements as codecs evolve  
+This frame-based design enables:
+
+- Append-only writes that never corrupt existing data  
+- Time-travel queries over historical memory states  
+- Timeline-style browsing of knowledge evolution  
+- Crash safety via committed, immutable frames  
+- Efficient compression using proven video techniques  
+
+The result is a **single `.mv2` file** that behaves like a rewindable memory
+timeline for AI systems. 
 
 ---
 
