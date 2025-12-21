@@ -1,4 +1,4 @@
-Memvid.ai Library Structure
+memvid.com Library Structure
 Project Root Structure
 graphql
 Copy
