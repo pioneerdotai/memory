@@ -25,7 +25,7 @@
 </p>
 
 <h2 align="center">⭐️ Leave a STAR to support the project ⭐️</h2>
-  
+</p>
 
 ## 🚀 Memvid v2 Launching On: **January 5, 2026**
 
