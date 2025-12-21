@@ -1,8 +1,7 @@
-<p align="center">
-  <a href="https://github.com/memvid/memvid">
-    <img src="assets/banner.png" width="800px" alt="Memvid — Living Memory for AI">
-  </a>
-</p>
+
+
+<img width="2000" height="600" alt="Social Cover (5)" src="https://github.com/user-attachments/assets/30f09325-a138-47d8-acf1-345e849dece0" />
+
 
 <p align="center">
   <strong>Memvid is a video-native memory engine for AI.</strong><br/>
