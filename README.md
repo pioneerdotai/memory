@@ -6,7 +6,7 @@
 
 
 <p align="center">
-  <strong>Memvid is a memory layer for AI agents that replaces complex RAG pipelines with a serverless, single-file system for instant retrieval and long-term memory.</strong><br/>
+  <strong>Memvid is a single-file memory layer for AI agents with instant retrieval and long-term memory.</strong><br/>
   Persistent, versioned, and portable memory, without databases.
 </p>
 
