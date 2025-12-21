@@ -83,20 +83,29 @@ The result is a single file that behaves like a rewindable memory timeline for A
 ---
 
 ## Use Cases
+Memvid is a portable, serverless memory layer that gives AI agents persistent memory and fast recall. Because it’s model-agnostic, multi-modal, and works fully offline, developers are using Memvid across a wide range of real-world applications.
 
-- Long-running AI agents  
-- Knowledge assistants  
-- Offline-first AI systems  
-- Auditable and debuggable AI workflows  
+- Long-Running AI Agents
+- Enterprise Knowledge Bases
+- Offline-First AI Systems
+- Codebase Understanding
+- Customer Support Agents
+- Workflow Automation
+- Sales and Marketing Copilots
+- Personal Knowledge Assistants
+- Medical, Legal, and Financial Agents
+- Auditable and Debuggable AI Workflows
+- Custom Applications 
 
 ---
 
 ## Status
 
-- Architecture locked  
-- APIs stabilizing  
-- Docs and SDKs coming soon  
-- **Public v2 release: January 5, 2026**
+- Core architecture finalized  
+- APIs stabilized
+- Docs and SDKs coming soon
+  
+**Official v2 public release: January 5, 2026**
 
 ---
 
