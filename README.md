@@ -20,7 +20,6 @@
 <p align="center">
   <a href="https://crates.io/crates/memvid-core"><img src="https://img.shields.io/crates/v/memvid-core?style=flat-square&logo=rust" alt="Crates.io" /></a>
   <a href="https://docs.rs/memvid-core"><img src="https://img.shields.io/docsrs/memvid-core?style=flat-square&logo=docs.rs" alt="docs.rs" /></a>
-  <a href="https://github.com/memvid/memvid/actions"><img src="https://img.shields.io/github/actions/workflow/status/memvid/memvid/ci.yml?style=flat-square&logo=github" alt="CI" /></a>
   <a href="https://github.com/memvid/memvid/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue?style=flat-square" alt="License" /></a>
 </p>
 
