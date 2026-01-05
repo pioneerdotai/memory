@@ -2,125 +2,145 @@
 
 Thank you for your interest in contributing to Memvid! We welcome contributions from everyone.
 
-## 🚀 Getting Started
+## Getting Started
+
+### Prerequisites
+
+- **Rust 1.85.0+** — Install from [rustup.rs](https://rustup.rs)
+- **Git** — For version control
+
+### Setup
 
 1. **Fork the repository** on GitHub
-2. **Clone your fork** locally:
+
+2. **Clone your fork**:
    ```bash
    git clone https://github.com/YOUR_USERNAME/memvid.git
    cd memvid
    ```
-3. **Create a virtual environment**:
+
+3. **Build the project**:
    ```bash
-   python -m venv .memvid
-   source .memvid/bin/activate  # On Windows: .memvid\Scripts\activate
-   ```
-4. **Install development dependencies**:
-   ```bash
-   pip install -e ".[dev]"
-   pip install PyPDF2  # For PDF support
+   cargo build
    ```
 
-## 🔧 Development Workflow
-
-1. **Create a new branch** for your feature or fix:
+4. **Run tests**:
    ```bash
-   git checkout -b feature/your-feature-name
+   cargo test
    ```
 
-2. **Make your changes** and ensure:
-   - Code follows existing style patterns
-   - New features have tests
-   - All tests pass: `pytest tests/`
-   - Code is properly formatted
+## Development Workflow
 
-3. **Run tests**:
-   ```bash
-   pytest tests/
-   pytest --cov=memvid tests/  # With coverage
-   ```
+### Creating a Branch
 
-4. **Commit your changes**:
-   ```bash
-   git add .
-   git commit -m "Add: brief description of your changes"
-   ```
+```bash
+git checkout -b feature/your-feature-name
+# or
+git checkout -b fix/your-bug-fix
+```
 
-5. **Push to your fork**:
+### Making Changes
+
+1. Write your code following the [code style guidelines](#code-style)
+2. Add tests for new functionality
+3. Ensure all tests pass: `cargo test`
+4. Run clippy: `cargo clippy`
+5. Format code: `cargo fmt`
+
+### Committing
+
+Write clear, concise commit messages:
+
+```bash
+git commit -m "feat: add support for XYZ"
+git commit -m "fix: resolve issue with ABC"
+git commit -m "docs: update README examples"
+```
+
+### Submitting a Pull Request
+
+1. Push to your fork:
    ```bash
    git push origin feature/your-feature-name
    ```
 
-6. **Create a Pull Request** on GitHub
+2. Open a Pull Request on GitHub
 
-## 📝 Code Style
+3. Fill out the PR template completely
 
-- Follow PEP 8 guidelines
-- Use meaningful variable and function names
-- Add docstrings to all functions and classes
-- Keep functions focused and small
-- No commented-out code
+4. Wait for review and address feedback
 
-## 🧪 Testing
+## Code Style
 
-- Write tests for new features
-- Ensure all tests pass before submitting PR
-- Aim for high test coverage
-- Test edge cases
+### Rust Guidelines
 
-## 📚 Documentation
+- Follow standard Rust idioms and conventions
+- Use `rustfmt` for formatting (`cargo fmt`)
+- Use `clippy` for linting (`cargo clippy`)
+- Prefer explicit types for public APIs
+- Use `thiserror` for error definitions
 
-- Update README.md if adding new features
-- Add docstrings following Google style
-- Include usage examples for new functionality
-- Update CLAUDE.md if changing core architecture
+### Documentation
 
-## 🐛 Reporting Issues
+- Add doc comments (`///`) to all public functions, structs, and modules
+- Include examples in doc comments where helpful
+- Keep comments concise and up-to-date
 
-When reporting issues, please include:
-- Python version
+### Testing
+
+- Write unit tests for new functionality
+- Place tests in the same file using `#[cfg(test)]` module
+- Integration tests go in the `tests/` directory
+- Aim for high coverage of edge cases
+
+## Project Structure
+
+```
+memvid/
+├── src/              # Source code
+│   ├── lib.rs        # Public API
+│   ├── memvid/       # Core implementation
+│   ├── io/           # File I/O
+│   └── types/        # Type definitions
+├── tests/            # Integration tests
+├── examples/         # Example code
+├── benchmarks/       # Benchmarks
+└── data/             # Required data files
+```
+
+## Feature Flags
+
+When adding new functionality, consider if it should be behind a feature flag:
+
+```toml
+[features]
+my_feature = ["dep:some-dependency"]
+```
+
+This keeps the default build lean and fast.
+
+## Reporting Issues
+
+When reporting bugs, please include:
+
+- Rust version (`rustc --version`)
 - Operating system
-- Complete error messages
-- Steps to reproduce
+- Memvid version
+- Minimal code to reproduce
 - Expected vs actual behavior
 
-## 💡 Feature Requests
+## Getting Help
 
-We love new ideas! When proposing features:
-- Explain the use case
-- Describe the expected behavior
-- Consider backward compatibility
-- Discuss implementation approach
+- Open a [Discussion](https://github.com/memvid/memvid/discussions) for questions
+- Check existing [Issues](https://github.com/memvid/memvid/issues) for similar problems
+- Email: contact@memvid.com
 
-## 🤝 Code of Conduct
+## Recognition
 
-- Be respectful and inclusive
-- Welcome newcomers and help them get started
-- Focus on constructive feedback
-- Celebrate diversity of ideas and approaches
-
-## 📞 Getting Help
-
-- Open an issue for bugs or features
-- Join discussions in existing issues
-- Tag @olow304 for urgent matters
-
-## ✅ Checklist Before Submitting PR
-
-- [ ] Tests pass locally
-- [ ] Code follows project style
-- [ ] Commit messages are clear
-- [ ] Documentation is updated
-- [ ] PR description explains changes
-- [ ] Related issue is linked (if any)
-
-## 🎉 Recognition
-
-Contributors will be:
-- Added to the project's contributor list
-- Mentioned in release notes
-- Part of the amazing Memvid community!
+Contributors are:
+- Listed in release notes
+- Part of the Memvid community
 
 ---
 
-**Thank you for making Memvid better!** 🙏
+**Thank you for making Memvid better!**

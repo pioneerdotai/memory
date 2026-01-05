@@ -1,27 +1,43 @@
-.env
+doc.mv2
+*.mv2
+*.mv2-wal
+*.mv2-shm
+*.mv2-lock
+*.mv2-journal
+*.mv2.*
+*.mv2-wal.*
+*.mv2-shm.*
+*.mv2-lock.*
+*.mv2-journal.*
+
 .DS_Store
-.memvid/
-output/
-prompt.memvid
+*.bk
+.idea
 
-USAGE.md
 
-CLAUDE.md
+/target
+**/*.rs.bk
+Cargo.lock
+.idea
 
-# Ignore built distributions and old package versions
-dist/
-memvid.egg-info/
-*.egg-info/
-*.whl
-*.tar.gz
 
-# Ignore Python cache files
-__pycache__/
-*.pyc
+entry2.json
+entry1.txt
+vector_entry.txt
+vector_embedding.txt
 
-# Ignore build artifacts from previous versions
-memvid/__pycache__/
-memvid.egg-info/
-memvid.egg-info/*
-dist/memvid-*/
+*.pdf
+*.txt
+# Exception: SymSpell dictionary files needed for PDF text cleanup
+!crates/memvid-core/data/*.txt
+*.docx
+*.doc
+*.pptx
+*.ppt
+*.xlsx
+*.xls
+*.csv
+*.json
 
+models/
+*.DS_Store

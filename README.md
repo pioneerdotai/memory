@@ -1,6 +1,3 @@
-
-
-
 <img width="2000" height="491" alt="Social Cover (6)" src="https://github.com/user-attachments/assets/4e256804-53ac-4173-bcff-81994d52bf5c" />
 
 
@@ -13,33 +10,36 @@
 <p align="center">
   <a href="https://www.memvid.com">Website</a>
   ·
+  <a href="https://sandbox.memvid.com">Try Sandbox</a>
+  ·
   <a href="https://docs.memvid.com">Docs</a>
   ·
   <a href="https://github.com/memvid/memvid/discussions">Discussions</a>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/github/stars/memvid/memvid?style=flat-square" />
-  <img src="https://img.shields.io/github/issues/memvid/memvid?style=flat-square" />
-  <img src="https://img.shields.io/badge/status-v2%20in%20progress-blue?style=flat-square" />
+  <a href="https://crates.io/crates/memvid-core"><img src="https://img.shields.io/crates/v/memvid-core?style=flat-square&logo=rust" alt="Crates.io" /></a>
+  <a href="https://docs.rs/memvid-core"><img src="https://img.shields.io/docsrs/memvid-core?style=flat-square&logo=docs.rs" alt="docs.rs" /></a>
+  <a href="https://github.com/memvid/memvid/actions"><img src="https://img.shields.io/github/actions/workflow/status/memvid/memvid/ci.yml?style=flat-square&logo=github" alt="CI" /></a>
+  <a href="https://github.com/memvid/memvid/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue?style=flat-square" alt="License" /></a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/memvid/memvid/stargazers"><img src="https://img.shields.io/github/stars/memvid/memvid?style=flat-square&logo=github" alt="Stars" /></a>
+  <a href="https://github.com/memvid/memvid/network/members"><img src="https://img.shields.io/github/forks/memvid/memvid?style=flat-square&logo=github" alt="Forks" /></a>
+  <a href="https://github.com/memvid/memvid/issues"><img src="https://img.shields.io/github/issues/memvid/memvid?style=flat-square&logo=github" alt="Issues" /></a>
+  <a href="https://discord.gg/memvid"><img src="https://img.shields.io/discord/1234567890?style=flat-square&logo=discord&label=discord" alt="Discord" /></a>
 </p>
 
 <h2 align="center">⭐️ Leave a STAR to support the project ⭐️</h2>
 </p>
 
-## 🚀 Memvid v2 Launching On: **January 5, 2026**
-
-> **Note**  
-> Memvid v1 has been removed to avoid confusion. This repository represents **Memvid v2**, a revised and improved version of the project.
-> Thanks to everyone who provided feedback on V1. The comments and issues helped shape the improvements included in V2.
-
----
 
 ## What is Memvid?
 
-Memvid is a portable AI memory system that packages your data, embeddings, search structure, and metadata into a single file. 
+Memvid is a portable AI memory system that packages your data, embeddings, search structure, and metadata into a single file.
 
-Instead of running complex RAG pipelines or server-based vector databases, Memvid enables fast retrieval directly from the file. 
+Instead of running complex RAG pipelines or server-based vector databases, Memvid enables fast retrieval directly from the file.
 
 The result is a model-agnostic, infrastructure-free memory layer that gives AI agents persistent, long-term memory they can carry anywhere.
 
@@ -64,27 +64,27 @@ The result is a single file that behaves like a rewindable memory timeline for A
 
 ---
 
-## Core Concepts (v2)
+## Core Concepts
 
-- **Living Memory Engine**  
+- **Living Memory Engine**
   Continuously append, branch, and evolve memory across sessions.
 
-- **Capsule Context (`.mv2`)**  
+- **Capsule Context (`.mv2`)**
   Self-contained, shareable memory capsules with rules and expiry.
 
-- **Time-Travel Debugging**  
+- **Time-Travel Debugging**
   Rewind, replay, or branch any memory state.
 
-- **Smart Recall**  
+- **Smart Recall**
   Sub-5ms local memory access with predictive caching.
 
-- **Codec Intelligence**  
+- **Codec Intelligence**
   Auto-selects and upgrades compression over time.
 
 ---
 
 ## Use Cases
-Memvid is a portable, serverless memory layer that gives AI agents persistent memory and fast recall. Because it’s model-agnostic, multi-modal, and works fully offline, developers are using Memvid across a wide range of real-world applications.
+Memvid is a portable, serverless memory layer that gives AI agents persistent memory and fast recall. Because it's model-agnostic, multi-modal, and works fully offline, developers are using Memvid across a wide range of real-world applications.
 
 - Long-Running AI Agents
 - Enterprise Knowledge Bases
@@ -96,25 +96,224 @@ Memvid is a portable, serverless memory layer that gives AI agents persistent me
 - Personal Knowledge Assistants
 - Medical, Legal, and Financial Agents
 - Auditable and Debuggable AI Workflows
-- Custom Applications 
+- Custom Applications
 
 ---
 
-## Status
+## SDKs & CLI
 
-- Core architecture finalized  
-- APIs stabilized
-- Docs and SDKs coming soon
-  
-**Official v2 public release: January 5, 2026**
+Use Memvid in your preferred language:
+
+| Package | Install | Links |
+|---------|---------|-------|
+| **CLI** | `npm install -g memvid-cli` | [![npm](https://img.shields.io/npm/v/memvid-cli?style=flat-square)](https://www.npmjs.com/package/memvid-cli) |
+| **Node.js SDK** | `npm install @memvid/sdk` | [![npm](https://img.shields.io/npm/v/@memvid/sdk?style=flat-square)](https://www.npmjs.com/package/@memvid/sdk) |
+| **Python SDK** | `pip install memvid-sdk` | [![PyPI](https://img.shields.io/pypi/v/memvid-sdk?style=flat-square)](https://pypi.org/project/memvid-sdk/) |
+| **Rust** | `cargo add memvid-core` | [![Crates.io](https://img.shields.io/crates/v/memvid-core?style=flat-square)](https://crates.io/crates/memvid-core) |
+
+---
+
+## Installation (Rust)
+
+### Requirements
+
+- **Rust 1.85.0+** — Install from [rustup.rs](https://rustup.rs)
+
+### Add to Your Project
+
+```toml
+[dependencies]
+memvid-core = "2.0"
+```
+
+### Feature Flags
+
+| Feature | Description |
+|---------|-------------|
+| `lex` | Full-text search with BM25 ranking (Tantivy) |
+| `pdf_extract` | Pure Rust PDF text extraction |
+| `vec` | Vector similarity search (HNSW + ONNX) |
+| `clip` | CLIP visual embeddings for image search |
+| `whisper` | Audio transcription with Whisper |
+| `temporal_track` | Natural language date parsing ("last Tuesday") |
+| `parallel_segments` | Multi-threaded ingestion |
+| `encryption` | Password-based encryption capsules (.mv2e) |
+
+Enable features as needed:
+
+```toml
+[dependencies]
+memvid-core = { version = "2.0", features = ["lex", "vec", "temporal_track"] }
+```
+
+---
+
+## Quick Start
+
+```rust
+use memvid_core::{Memvid, PutOptions, SearchRequest};
+
+fn main() -> memvid_core::Result<()> {
+    // Create a new memory file
+    let mut mem = Memvid::create("knowledge.mv2")?;
+
+    // Add documents with metadata
+    let opts = PutOptions::builder()
+        .title("Meeting Notes")
+        .uri("mv2://meetings/2024-01-15")
+        .tag("project", "alpha")
+        .build();
+    mem.put_bytes_with_options(b"Q4 planning discussion...", opts)?;
+    mem.commit()?;
+
+    // Search
+    let response = mem.search(SearchRequest {
+        query: "planning".into(),
+        top_k: 10,
+        snippet_chars: 200,
+        ..Default::default()
+    })?;
+
+    for hit in response.hits {
+        println!("{}: {}", hit.title.unwrap_or_default(), hit.text);
+    }
+
+    Ok(())
+}
+```
+
+---
+
+## Build
+
+Clone the repository:
+
+```bash
+git clone https://github.com/memvid/memvid.git
+cd memvid
+```
+
+Build in debug mode:
+
+```bash
+cargo build
+```
+
+Build in release mode (optimized):
+
+```bash
+cargo build --release
+```
+
+Build with specific features:
+
+```bash
+cargo build --release --features "lex,vec,temporal_track"
+```
+
+---
+
+## Run Tests
+
+Run all tests:
+
+```bash
+cargo test
+```
+
+Run tests with output:
+
+```bash
+cargo test -- --nocapture
+```
+
+Run a specific test:
+
+```bash
+cargo test test_name
+```
+
+Run integration tests only:
+
+```bash
+cargo test --test lifecycle
+cargo test --test search
+cargo test --test mutation
+```
+
+---
+
+## Examples
+
+The `examples/` directory contains working examples:
+
+### Basic Usage
+
+Demonstrates create, put, search, and timeline operations:
+
+```bash
+cargo run --example basic_usage
+```
+
+### PDF Ingestion
+
+Ingest and search PDF documents (uses the "Attention Is All You Need" paper):
+
+```bash
+cargo run --example pdf_ingestion
+```
+
+### CLIP Visual Search
+
+Image search using CLIP embeddings (requires `clip` feature):
+
+```bash
+cargo run --example clip_visual_search --features clip
+```
+
+### Whisper Transcription
+
+Audio transcription (requires `whisper` feature):
+
+```bash
+cargo run --example test_whisper --features whisper
+```
+
+---
+
+## File Format
+
+Everything lives in a single `.mv2` file:
+
+```
+┌────────────────────────────┐
+│ Header (4KB)               │  Magic, version, capacity
+├────────────────────────────┤
+│ Embedded WAL (1-64MB)      │  Crash recovery
+├────────────────────────────┤
+│ Data Segments              │  Compressed frames
+├────────────────────────────┤
+│ Lex Index                  │  Tantivy full-text
+├────────────────────────────┤
+│ Vec Index                  │  HNSW vectors
+├────────────────────────────┤
+│ Time Index                 │  Chronological ordering
+├────────────────────────────┤
+│ TOC (Footer)               │  Segment offsets
+└────────────────────────────┘
+```
+
+No `.wal`, `.lock`, `.shm`, or sidecar files. Ever.
+
+See [MV2_SPEC.md](MV2_SPEC.md) for the complete file format specification.
 
 ---
 
 ## Support
 
-Have questions or feedback? 
+Have questions or feedback?
 Email: contact@memvid.com
-  
+
 **Drop a ⭐ to show support**
 
 ---

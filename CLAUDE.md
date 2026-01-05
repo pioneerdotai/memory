@@ -1,62 +1,119 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code and other AI assistants working with this repository.
 
 ## Project Overview
 
-Memvid is a Python library for QR code video-based AI memory that enables:
-- Chunking and encoding text data into QR code videos
-- Fast semantic search and retrieval from QR videos
-- Conversational AI interface with context-aware memory
+Memvid is a Rust library that provides a single-file memory layer for AI agents. It packages documents, embeddings, search indices, and metadata into a portable `.mv2` file.
 
-## Key Architecture
+## Architecture
 
 ### Core Components
-- **MemvidEncoder** (memvid/encoder.py): Handles text chunking and QR video creation
-- **MemvidRetriever** (memvid/retriever.py): Fast semantic search, QR frame extraction, context assembly
-- **MemvidChat** (memvid/chat.py): Manages conversations, context retrieval, and LLM interface
-- **IndexManager** (memvid/index.py): Embedding generation, storage, and vector search
 
-### Data Flow
-1. Text chunks → Embeddings → QR codes → Video frames
-2. Query → Semantic search → Frame extraction → QR decode → Context
-3. Context + History → LLM → Response
+```
+src/
+├── lib.rs              # Public API exports
+├── memvid/             # Main Memvid struct and operations
+│   ├── mod.rs          # Memvid implementation
+│   ├── mutation.rs     # Write operations (put, commit, delete)
+│   ├── search/         # Search implementations
+│   └── ask.rs          # RAG query handling
+├── io/                 # File I/O layer
+│   ├── header.rs       # File header (4KB)
+│   ├── wal.rs          # Write-ahead log
+│   └── time_index.rs   # Chronological index
+├── lex.rs              # Full-text search (Tantivy)
+├── vec.rs              # Vector search (HNSW)
+├── clip.rs             # CLIP embeddings
+├── whisper.rs          # Audio transcription
+└── types/              # Type definitions
+```
+
+### File Format (.mv2)
+
+```
+┌────────────────────────────┐
+│ Header (4KB)               │
+├────────────────────────────┤
+│ Embedded WAL (1-64MB)      │
+├────────────────────────────┤
+│ Data Segments              │
+├────────────────────────────┤
+│ Lex Index (Tantivy)        │
+├────────────────────────────┤
+│ Vec Index (HNSW)           │
+├────────────────────────────┤
+│ Time Index                 │
+├────────────────────────────┤
+│ TOC (Footer)               │
+└────────────────────────────┘
+```
 
 ## Development Commands
 
 ```bash
-# Create and activate virtual environment
-python -m venv .memvid
-source .memvid/bin/activate  # On macOS/Linux
+# Build
+cargo build
+cargo build --release
 
-# Install dependencies
-pip install -r requirements.txt
+# Test
+cargo test
+cargo test --test lifecycle
+cargo test -- --nocapture
 
-# Run tests
-pytest tests/
+# Lint
+cargo clippy
+cargo fmt
 
-# Run specific test
-pytest tests/test_encoder.py::TestSpecificFunction
+# Run examples
+cargo run --example basic_usage
+cargo run --example pdf_ingestion
 
-# Install package in development mode
-pip install -e .
+# Benchmarks
+cargo bench
 ```
 
-## Key Dependencies
-- qrcode, Pillow: QR generation
-- opencv-python: Video processing
-- pyzbar: QR decoding
-- sentence-transformers: Semantic embeddings
-- numpy: Vector operations
-- openai: LLM integration (pluggable)
+## Key APIs
 
-## Performance Requirements
-- Retrieval (search + QR decode) must be < 2 seconds for 1M chunks
-- Use batching and parallel processing for frame extraction
-- Implement caching for hot frames and common queries
+```rust
+// Create/Open
+let mut mem = Memvid::create("file.mv2")?;
+let mut mem = Memvid::open("file.mv2")?;
 
-## Implementation Notes
-- Vector DB options: FAISS, Annoy, or Chroma for scalability
-- LLM backend should be pluggable (OpenAI, Claude, Gemini, local)
-- Thread/process pools for parallel QR decoding
-- Disk-based index for large-scale deployments
+// Write
+mem.put_bytes(content)?;
+mem.put_bytes_with_options(content, options)?;
+mem.commit()?;
+
+// Search
+mem.search(SearchRequest { query, top_k, .. })?;
+mem.timeline(TimelineQuery::default())?;
+
+// Verify
+Memvid::verify("file.mv2", deep)?;
+```
+
+## Feature Flags
+
+| Feature | Purpose |
+|---------|---------|
+| `lex` | Full-text search (default) |
+| `vec` | Vector similarity search |
+| `clip` | CLIP image embeddings |
+| `whisper` | Audio transcription |
+| `encryption` | AES-256-GCM encryption |
+
+## Code Style
+
+- Follow Rust idioms and best practices
+- Use `thiserror` for error types
+- Use `tracing` for logging
+- Add doc comments for public APIs
+- Write tests for new functionality
+
+## Important Notes
+
+- Single-file design: Never create sidecar files
+- Crash safety: All writes go through WAL
+- Append-only: Frames are immutable once committed
+- No async: Library is synchronous for simplicity
