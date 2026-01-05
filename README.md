@@ -28,7 +28,7 @@
   <a href="https://github.com/memvid/memvid/stargazers"><img src="https://img.shields.io/github/stars/memvid/memvid?style=flat-square&logo=github" alt="Stars" /></a>
   <a href="https://github.com/memvid/memvid/network/members"><img src="https://img.shields.io/github/forks/memvid/memvid?style=flat-square&logo=github" alt="Forks" /></a>
   <a href="https://github.com/memvid/memvid/issues"><img src="https://img.shields.io/github/issues/memvid/memvid?style=flat-square&logo=github" alt="Issues" /></a>
-  <a href="https://discord.gg/memvid"><img src="https://img.shields.io/discord/1234567890?style=flat-square&logo=discord&label=discord" alt="Discord" /></a>
+  <a href="https://discord.gg/memvid"><img src="https://img.shields.io/discord/1442910055233224745?style=flat-square&logo=discord&label=discord" alt="Discord" /></a>
 </p>
 
 <h2 align="center">⭐️ Leave a STAR to support the project ⭐️</h2>
