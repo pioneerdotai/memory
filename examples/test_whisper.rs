@@ -1,10 +1,16 @@
-// Test script to run whisper transcription
-// Run with: cargo run -p memvid-core --features whisper --example test_whisper --release
+//! Whisper transcription example demonstrating audio transcription.
+//!
+//! Run with:
+//! ```bash
+//! cargo run --example test_whisper --features whisper -- /path/to/audio
+//! ```
 
 #[cfg(feature = "whisper")]
 use memvid_core::{WhisperConfig, WhisperTranscriber};
 #[cfg(feature = "whisper")]
-use std::path::Path;
+use std::env;
+#[cfg(feature = "whisper")]
+use std::path::PathBuf;
 #[cfg(feature = "whisper")]
 use std::time::Instant;
 
@@ -13,14 +19,32 @@ fn main() {
     eprintln!(
         "This example requires the `whisper` feature.\n\
          Re-run with:\n\
-         cargo run -p memvid-core --features whisper --example test_whisper --release"
+         cargo run --example test_whisper --features whisper -- /path/to/audio"
     );
 }
 
 #[cfg(feature = "whisper")]
 fn main() {
-    let audio_path = Path::new("/Users/olow/Desktop/memvid-org/call_sale.mp3");
+    // Get audio path from args
+    let args: Vec<String> = env::args().collect();
+    if args.len() < 2 {
+        eprintln!("Usage: cargo run --example test_whisper --features whisper -- /path/to/audio");
+        eprintln!("\nExample:");
+        eprintln!(
+            "  cargo run --example test_whisper --features whisper -- examples/call_sale.mp3"
+        );
+        return;
+    }
 
+    let audio_path = PathBuf::from(&args[1]);
+
+    if !audio_path.exists() {
+        eprintln!("ERROR: Audio file not found at {:?}", audio_path);
+        eprintln!("Usage: cargo run --example test_whisper --features whisper -- /path/to/audio");
+        return;
+    }
+
+    println!("=== Whisper Transcription Example ===\n");
     println!("Creating Whisper transcriber...");
     let start = Instant::now();
     let config = WhisperConfig::default();
@@ -33,7 +57,7 @@ fn main() {
     println!("\nTranscribing audio file: {}", audio_path.display());
     let start = Instant::now();
 
-    match transcriber.transcribe_file(audio_path) {
+    match transcriber.transcribe_file(&audio_path) {
         Ok(result) => {
             println!("Transcription completed in {:?}", start.elapsed());
             println!("\n=== Transcription Result ===");
@@ -52,4 +76,6 @@ fn main() {
             eprintln!("Transcription failed: {}", e);
         }
     }
+
+    println!("\n=== Transcription example completed! ===");
 }

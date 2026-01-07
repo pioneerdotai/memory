@@ -1,24 +1,39 @@
 //! PDF ingestion example demonstrating how to ingest and search PDF documents.
 //!
-//! This example uses the "Attention Is All You Need" paper (1706.03762v7.pdf)
-//! to demonstrate PDF text extraction, chunking, and semantic search.
+//! This example demonstrates PDF text extraction, chunking, and semantic search.
 //!
-//! Run with: cargo run --example pdf_ingestion
+//! Run with:
+//! ```bash
+//! cargo run --example pdf_ingestion -- /path/to/pdf
+//! ```
 
+use std::env;
 use std::path::PathBuf;
 use tempfile::tempdir;
 
 use memvid_core::{Memvid, PutOptions, Result, SearchRequest};
 
 fn main() -> Result<()> {
+    // Get PDF path from args
+    let args: Vec<String> = env::args().collect();
+    if args.len() < 2 {
+        eprintln!("Usage: cargo run --example pdf_ingestion -- /path/to/pdf");
+        eprintln!("\nExample:");
+        eprintln!("  cargo run --example pdf_ingestion -- examples/1706.03762v7.pdf");
+        return Ok(());
+    }
+
+    let pdf_path = PathBuf::from(&args[1]);
+
+    if !pdf_path.exists() {
+        eprintln!("ERROR: PDF file not found at {:?}", pdf_path);
+        eprintln!("Usage: cargo run --example pdf_ingestion -- /path/to/pdf");
+        return Ok(());
+    }
+
     // Create a temporary directory for our memory file
     let dir = tempdir().expect("failed to create temp dir");
     let mv2_path: PathBuf = dir.path().join("paper.mv2");
-
-    // Path to the PDF file (relative to the examples directory)
-    let pdf_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("examples")
-        .join("1706.03762v7.pdf");
 
     println!("=== Memvid PDF Ingestion Example ===\n");
 
@@ -34,23 +49,24 @@ fn main() -> Result<()> {
     // ========================================
     println!("2. Ingesting PDF: {:?}", pdf_path);
 
-    if !pdf_path.exists() {
-        eprintln!("   ERROR: PDF file not found at {:?}", pdf_path);
-        eprintln!("   Make sure you're running from the project root.");
-        return Ok(());
-    }
-
     // Read the PDF file
     let pdf_bytes = std::fs::read(&pdf_path)?;
     println!("   PDF size: {} bytes", pdf_bytes.len());
 
     // Put the PDF with metadata
+    // Extract filename for title
+    let title = pdf_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("PDF Document")
+        .to_string();
+
     let options = PutOptions::builder()
-        .title("Attention Is All You Need")
-        .uri("mv2://papers/transformer.pdf")
-        .tag("author", "Vaswani et al.")
-        .tag("year", "2017")
-        .tag("topic", "transformer")
+        .title(&title)
+        .uri(&format!(
+            "mv2://pdfs/{}",
+            pdf_path.file_name().unwrap_or_default().to_string_lossy()
+        ))
         .build();
 
     let frame_id = mem.put_bytes_with_options(&pdf_bytes, options)?;
