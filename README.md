@@ -30,17 +30,16 @@
   <a href="https://discord.gg/2mynS7fcK7"><img src="https://img.shields.io/discord/1442910055233224745?style=flat-square&logo=discord&label=discord" alt="Discord" /></a>
 </p>
 
-<div style="text-align: center;">
+<p align="center">
   <a href="https://trendshift.io/repositories/14946" target="_blank">
     <img
       src="https://trendshift.io/api/badge/repositories/14946"
-      alt="memvid/memvid | Trendshift"
+      alt="Olow304/memvid | Trendshift"
       width="250"
       height="55"
-      style="width:250px;height:55px;"
     />
   </a>
-</div>
+</p>
 
 <h2 align="center">⭐️ Leave a STAR to support the project ⭐️</h2>
 </p>
