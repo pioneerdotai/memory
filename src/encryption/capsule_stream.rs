@@ -1,8 +1,8 @@
+use rand::RngCore;
+use rand::rngs::OsRng;
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
-use rand::RngCore;
-use rand::rngs::OsRng;
 use zeroize::Zeroize;
 
 use crate::encryption::capsule::{validate_mv2_file, write_atomic};
@@ -13,7 +13,7 @@ use crate::encryption::types::{CipherAlgorithm, KdfAlgorithm, Mv2eHeader};
 
 const CHUNK_SIZE: usize = 1024 * 1024;
 
-// Format: [header][len0][chunk0][len1][chunk1]...
+// format: [header][len0][chunk0][len1][chunk1]...
 // reserved[0] == 0x01 => streaming framed format
 
 pub fn lock_file_stream(
@@ -136,4 +136,3 @@ pub fn unlock_file_stream(
     key.zeroize();
     Ok(output_path)
 }
-

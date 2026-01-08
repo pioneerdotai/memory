@@ -19,7 +19,6 @@ pub fn lock_file(
     lock_file_stream(input, output, password)
 }
 
-
 /// Unlock (decrypt) an `.mv2e` capsule into an `.mv2` file.
 pub fn unlock_file(
     input: impl AsRef<Path>,
