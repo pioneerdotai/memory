@@ -43,3 +43,9 @@ pub enum EncryptionError {
     #[error("Corrupted decryption - output is not a valid MV2 file")]
     CorruptedDecryption,
 }
+
+impl From<std::io::Error> for EncryptionError {
+    fn from(source: std::io::Error) -> Self {
+        EncryptionError::Io { source, path: None }
+    }
+}

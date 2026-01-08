@@ -89,7 +89,7 @@ fn unlock_file_oneshot(
         .map(PathBuf::from)
         .unwrap_or_else(|| input.with_extension("mv2"));
 
-    write_atomic(&output_path, |writer| {
+    write_atomic(&output_path, |writer| -> Result<(), EncryptionError> {
         writer.write_all(&plaintext)?;
         Ok(())
     })?;
@@ -127,42 +127,21 @@ fn validate_mv2_bytes(bytes: &[u8]) -> Result<(), EncryptionError> {
     Ok(())
 }
 
-pub fn write_atomic<F>(path: &Path, write_fn: F) -> Result<(), EncryptionError>
+pub fn write_atomic<F, E>(path: &Path, write_fn: F) -> Result<(), E>
 where
-    F: FnOnce(&mut File) -> std::io::Result<()>,
+    F: FnOnce(&mut File) -> Result<(), E>,
+    E: From<std::io::Error>,
 {
     let mut options = AtomicWriteFile::options();
     options.read(false);
-    let mut atomic = options.open(path).map_err(|source| EncryptionError::Io {
-        source,
-        path: Some(path.to_path_buf()),
-    })?;
+    let mut atomic = options.open(path)?;
 
     let file = atomic.as_file_mut();
-    file.set_len(0).map_err(|source| EncryptionError::Io {
-        source,
-        path: Some(path.to_path_buf()),
-    })?;
-    file.seek(SeekFrom::Start(0))
-        .map_err(|source| EncryptionError::Io {
-            source,
-            path: Some(path.to_path_buf()),
-        })?;
-    write_fn(file).map_err(|source| EncryptionError::Io {
-        source,
-        path: Some(path.to_path_buf()),
-    })?;
-    file.flush().map_err(|source| EncryptionError::Io {
-        source,
-        path: Some(path.to_path_buf()),
-    })?;
-    file.sync_all().map_err(|source| EncryptionError::Io {
-        source,
-        path: Some(path.to_path_buf()),
-    })?;
-    atomic.commit().map_err(|source| EncryptionError::Io {
-        source,
-        path: Some(path.to_path_buf()),
-    })?;
+    file.set_len(0)?;
+    file.seek(SeekFrom::Start(0))?;
+    write_fn(file)?;
+    file.flush()?;
+    file.sync_all()?;
+    atomic.commit()?;
     Ok(())
 }
