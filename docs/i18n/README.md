@@ -25,7 +25,9 @@ docs/i18n/
 
 ## Contributing Translations
 
-We welcome contributions of README translations! Here's how to contribute:
+We welcome contributions of README translations! For detailed guidelines, see [Contributing Translations](CONTRIBUTING_TRANSLATIONS.md).
+
+Here's a quick overview:
 
 ### 1. Check Existing Translations
 
@@ -78,6 +80,7 @@ Translations should be updated when the main README is significantly changed. Co
 ## Questions?
 
 If you have questions about translations or want to coordinate with other translators, please:
+- See [Contributing Translations](CONTRIBUTING_TRANSLATIONS.md) for detailed guidelines
 - Open an issue on GitHub
 - Join our [Discussions](https://github.com/memvid/memvid/discussions)
 - Contact: contact@memvid.com

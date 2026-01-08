@@ -129,6 +129,10 @@ When reporting bugs, please include:
 - Minimal code to reproduce
 - Expected vs actual behavior
 
+## Translations
+
+Interested in translating Memvid's documentation? See [Contributing Translations](docs/i18n/CONTRIBUTING_TRANSLATIONS.md) for guidelines on translating the README and other documentation.
+
 ## Getting Help
 
 - Open a [Discussion](https://github.com/memvid/memvid/discussions) for questions
