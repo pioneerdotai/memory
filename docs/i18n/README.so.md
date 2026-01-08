@@ -33,11 +33,11 @@
 </p>
 
 <p align="center">
-    <a href="https://trendshift.io/repositories/17293" target="_blank"><img src="https://trendshift.io/api/badge/repositories/17293" alt="memvid%2Fmemvid | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/</a>
+    <a href="https://trendshift.io/repositories/17293" target="_blank"><img src="https://trendshift.io/api/badge/repositories/17293" alt="memvid%2Fmemvid | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"></a>
 </p>
 
 <h2 align="center">⭐️ Noo saar STAR si aad mashruuca u taageerto ⭐️</h2>
-</p>
+
 
 ## Waa maxay Memvid?
 
@@ -79,10 +79,10 @@ Natiijadu waa hal fayl oo u dhaqmaya sidii jadwal xusuuseed oo dib loo celin kar
   Dib u celi, ama qabeey xaalad kasta oo xusuusta ah.
 
 -   **Smart Recall**
-    Sub-5ms local memory access with predictive caching.
+    Soo-celinta xusuusta gudaha wax ka yar 5ms iyadoo la adeegsanayo kaydinta saadaalinta (predictive caching).
 
 -   **Codec Intelligence**
-    Auto-selects and upgrades compression over time.
+    Si otomaatig ah u doorta una casriyeeya isku-duubnida (compression) waqtiga ka dib.
 
 ---
 
@@ -117,7 +117,7 @@ Ku isticmaal Memvid luuqadda aad doorbidi lahayd:
 
 ---
 
-## Kushubashada(Installation) (Rust)
+## Kushubashada (Installation) (Rust)
 
 ### Shuruudaha
 
@@ -138,9 +138,9 @@ memvid-core = "2.0"
 | `pdf_extract`       | Soo saarista qoraalka PDF oo saafi ah                  |
 | `vec`               | Raadinta isku-midka ah ee Vector (HNSW + ONNX)         |
 | `clip`              | CLIP visual embeddings oo loogu talagalay raadinta sawirka        |
-| `whisper`           | Beddelka codka oo lo beddelayo qoraal iyadoo la adeegsanayo Whisper               |
+| `whisper`           | Beddelka codka iyadoo loo baddelayo qoraal lana adeegsanayo Whisper               |
 | `temporal_track`    | Turjumidda taariikhda ee luuqadda caadiga ah ("Salaasadii hore") |
-| `parallel_segments` | Soo gelinta xogta iaydo la adeegsanayo dhowr nuuc (Multi-threaded)                       |
+| `parallel_segments` | Soo gelinta xogta iyadoo la adeegsanayo dhowr nuuc (Multi-threaded)                       |
 | `encryption`        | capsules-ka xusuusta ee ku xidhan sirta (password) (.mv2e)     |
 
 U furo sifooyinka (features) sida aad ugu baahan tahay:
@@ -190,7 +190,7 @@ fn main() -> memvid_core::Result<()> {
 
 ## Dhisid (Build)
 
-Qeyb ka soo qaado (Clone) kaydka(Repository):
+Qeyb ka soo qaado (Clone) kaydka (Repository):
 
 ```bash
 git clone https://github.com/memvid/memvid.git
@@ -219,7 +219,7 @@ cargo build --release --features "lex,vec,temporal_track"
 
 ## Tijaabi iskudayga (Run Tests)
 
-Tijaabi iskudayda oo dahn:
+Tijaabi iskudayada oo dhan:
 
 ```bash
 cargo test
@@ -231,7 +231,7 @@ Tijaabi iskudayga iyadoo natiijada la arkayo:
 cargo test -- --nocapture
 ```
 
-Tijaab iiskuday gaar ah:
+Tijaab iskuday gaar ah:
 
 ```bash
 cargo test test_name
