@@ -31,14 +31,7 @@
 </p>
 
 <p align="center">
-  <a href="https://trendshift.io/repositories/14946" target="_blank">
-    <img
-      src="https://trendshift.io/api/badge/repositories/14946"
-      alt="Olow304/memvid | Trendshift"
-      width="250"
-      height="55"
-    />
-  </a>
+    <a href="https://trendshift.io/repositories/17293" target="_blank"><img src="https://trendshift.io/api/badge/repositories/17293" alt="memvid%2Fmemvid | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/</a>
 </p>
 
 <h2 align="center">⭐️ Leave a STAR to support the project ⭐️</h2>
