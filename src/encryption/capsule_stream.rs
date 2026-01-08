@@ -15,6 +15,8 @@ use crate::encryption::types::{CipherAlgorithm, KdfAlgorithm, Mv2eHeader};
 const CHUNK_SIZE: usize = 1024 * 1024;
 
 // updated format: [header][len0][c0][len1][c1][len2][c2]
+// will have to update error variant accordingly for streaming, currently using the previous ones
+// changes are updated in the mod 
 
 pub fn lock_file_stream(
     input: impl AsRef<Path>,
