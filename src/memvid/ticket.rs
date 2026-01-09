@@ -1,6 +1,8 @@
+use crate::constants::MEMVID_TICKET_PUBKEY;
 use crate::error::{MemvidError, Result};
 use crate::memvid::lifecycle::Memvid;
-use crate::types::{FrameStatus, Stats, Ticket, TicketRef};
+use crate::signature::{parse_ed25519_public_key_base64, verify_ticket_signature};
+use crate::types::{FrameStatus, SignedTicket, Stats, Ticket, TicketRef};
 
 impl Memvid {
     pub fn stats(&self) -> Result<Stats> {
@@ -124,6 +126,16 @@ impl Memvid {
         })
     }
 
+    /// Applies an unsigned ticket to this memory.
+    ///
+    /// # Deprecation
+    /// This method is deprecated and will be removed in a future release.
+    /// Use [`apply_signed_ticket`](Self::apply_signed_ticket) instead, which
+    /// verifies the ticket signature against the Memvid public key.
+    #[deprecated(
+        since = "0.3.0",
+        note = "Use apply_signed_ticket() for cryptographically verified tickets"
+    )]
     pub fn apply_ticket(&mut self, ticket: Ticket) -> Result<()> {
         self.ensure_writable()?;
         let current_seq = self.toc.ticket_ref.seq_no;
@@ -138,6 +150,95 @@ impl Memvid {
         self.toc.ticket_ref.issuer = ticket.issuer;
         self.toc.ticket_ref.seq_no = ticket.seq_no;
         self.toc.ticket_ref.expires_in_secs = ticket.expires_in_secs;
+        self.toc.ticket_ref.verified = false; // Unsigned tickets are not verified
+
+        self.generation = self.generation.wrapping_add(1);
+        self.rewrite_toc_footer()?;
+        self.header.toc_checksum = self.toc.toc_checksum;
+        crate::persist_header(&mut self.file, &self.header)?;
+        self.file.sync_all()?;
+        Ok(())
+    }
+
+    /// Applies a cryptographically signed ticket to this memory.
+    ///
+    /// This method verifies the ticket signature against the embedded Memvid
+    /// public key before applying. Only tickets signed by the official Memvid
+    /// control plane will be accepted.
+    ///
+    /// # Arguments
+    /// * `ticket` - A signed ticket obtained from the Memvid API
+    ///
+    /// # Errors
+    /// Returns an error if:
+    /// - The signature verification fails
+    /// - The memory ID doesn't match this memory
+    /// - The sequence number is not greater than the current one
+    ///
+    /// # Example
+    /// ```ignore
+    /// use memvid_core::types::SignedTicket;
+    ///
+    /// let ticket = SignedTicket::new(
+    ///     "memvid.com",
+    ///     1,
+    ///     86400,
+    ///     Some(100 * 1024 * 1024),
+    ///     memory_id,
+    ///     signature_bytes,
+    /// );
+    /// memory.apply_signed_ticket(ticket)?;
+    /// ```
+    pub fn apply_signed_ticket(&mut self, ticket: SignedTicket) -> Result<()> {
+        self.ensure_writable()?;
+
+        // 1. Parse the embedded public key
+        let verifying_key = parse_ed25519_public_key_base64(MEMVID_TICKET_PUBKEY)?;
+
+        // 2. Verify the memory is bound and get its memory_id
+        let binding = self.toc.memory_binding.as_ref().ok_or_else(|| {
+            MemvidError::TicketSignatureInvalid {
+                reason: "cannot apply signed ticket: memory is not bound to the Memvid API".into(),
+            }
+        })?;
+
+        // 3. Verify the memory ID matches
+        if ticket.memory_id != binding.memory_id {
+            return Err(MemvidError::TicketSignatureInvalid {
+                reason: format!(
+                    "ticket memory_id {} does not match this memory {}",
+                    ticket.memory_id, binding.memory_id
+                )
+                .into_boxed_str(),
+            });
+        }
+
+        // 4. Verify the signature
+        verify_ticket_signature(
+            &verifying_key,
+            &ticket.memory_id,
+            &ticket.issuer,
+            ticket.seq_no,
+            ticket.expires_in_secs,
+            ticket.capacity_bytes,
+            &ticket.signature,
+        )?;
+
+        // 5. Check sequence number (replay protection)
+        let current_seq = self.toc.ticket_ref.seq_no;
+        if ticket.seq_no <= current_seq {
+            return Err(MemvidError::TicketSequence {
+                expected: current_seq + 1,
+                actual: ticket.seq_no,
+            });
+        }
+
+        // 6. Apply the verified ticket
+        self.toc.ticket_ref.capacity_bytes = ticket.capacity_bytes.unwrap_or(0);
+        self.toc.ticket_ref.issuer = ticket.issuer;
+        self.toc.ticket_ref.seq_no = ticket.seq_no;
+        self.toc.ticket_ref.expires_in_secs = ticket.expires_in_secs;
+        self.toc.ticket_ref.verified = true; // Mark as cryptographically verified
 
         self.generation = self.generation.wrapping_add(1);
         self.rewrite_toc_footer()?;
@@ -154,5 +255,105 @@ impl Memvid {
     /// Returns a reference to the Logic-Mesh manifest, if present.
     pub fn logic_mesh_manifest(&self) -> Option<&crate::types::LogicMeshManifest> {
         self.toc.logic_mesh.as_ref()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_pubkey_parses() {
+        // Ensure the embedded public key is valid base64 and parses correctly
+        let result = parse_ed25519_public_key_base64(MEMVID_TICKET_PUBKEY);
+        assert!(result.is_ok(), "Failed to parse embedded public key");
+    }
+
+    #[test]
+    fn test_signed_ticket_struct() {
+        let memory_id = uuid::Uuid::new_v4();
+        let signature = vec![0u8; 64];
+
+        let ticket = SignedTicket::new(
+            "memvid.com",
+            1,
+            86400,
+            Some(100 * 1024 * 1024),
+            memory_id,
+            signature.clone(),
+        );
+
+        assert_eq!(ticket.issuer, "memvid.com");
+        assert_eq!(ticket.seq_no, 1);
+        assert_eq!(ticket.expires_in_secs, 86400);
+        assert_eq!(ticket.capacity_bytes, Some(100 * 1024 * 1024));
+        assert_eq!(ticket.memory_id, memory_id);
+        assert_eq!(ticket.signature, signature);
+    }
+
+    #[test]
+    fn test_signed_ticket_serialization() {
+        let memory_id = uuid::Uuid::nil();
+        let signature = vec![1u8; 64];
+
+        let ticket = SignedTicket::new("test", 5, 3600, None, memory_id, signature);
+
+        // Should serialize to JSON without errors
+        let json = serde_json::to_string(&ticket).expect("serialization failed");
+        assert!(json.contains("\"issuer\":\"test\""));
+        assert!(json.contains("\"seq_no\":5"));
+
+        // Should deserialize back
+        let parsed: SignedTicket = serde_json::from_str(&json).expect("deserialization failed");
+        assert_eq!(parsed.issuer, ticket.issuer);
+        assert_eq!(parsed.seq_no, ticket.seq_no);
+        assert_eq!(parsed.memory_id, ticket.memory_id);
+    }
+
+    #[test]
+    fn test_ticket_ref_verified_default() {
+        // New TicketRef should default verified to false
+        let ticket_ref: TicketRef = serde_json::from_str(
+            r#"{"issuer":"test","seq_no":1,"expires_in_secs":0,"capacity_bytes":0}"#,
+        )
+        .expect("deserialization failed");
+
+        assert!(!ticket_ref.verified, "verified should default to false");
+    }
+
+    #[test]
+    fn test_invalid_signature_rejected() {
+        // Create a ticket with an invalid signature (all zeros)
+        let memory_id = uuid::Uuid::new_v4();
+        let invalid_signature = vec![0u8; 64];
+
+        let ticket = SignedTicket::new(
+            "memvid.com",
+            1,
+            86400,
+            Some(100 * 1024 * 1024),
+            memory_id,
+            invalid_signature,
+        );
+
+        // Verify the signature fails
+        let verifying_key = parse_ed25519_public_key_base64(MEMVID_TICKET_PUBKEY).unwrap();
+        let result = verify_ticket_signature(
+            &verifying_key,
+            &ticket.memory_id,
+            &ticket.issuer,
+            ticket.seq_no,
+            ticket.expires_in_secs,
+            ticket.capacity_bytes,
+            &ticket.signature,
+        );
+
+        assert!(result.is_err(), "Invalid signature should be rejected");
+        if let Err(MemvidError::TicketSignatureInvalid { reason }) = result {
+            assert!(
+                reason.contains("signature"),
+                "Error should mention signature"
+            );
+        }
     }
 }

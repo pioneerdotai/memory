@@ -35,3 +35,8 @@ pub const WAL_SIZE_XLARGE: u64 = 64 * 1024 * 1024;
 pub const WAL_CHECKPOINT_THRESHOLD: f64 = 0.75;
 /// Additional checkpoint every N transactions (PRD default).
 pub const WAL_CHECKPOINT_PERIOD: u64 = 1_000;
+
+/// Memvid's Ed25519 public key for verifying signed tickets.
+/// This key is used to verify that tickets were issued by the official Memvid control plane.
+/// The corresponding private key is held securely on the Memvid dashboard.
+pub const MEMVID_TICKET_PUBKEY: &str = "DFKNhP/yO5i1b9aKL+aHeBaGunz9sMfOF736fzYws4Q=";

@@ -70,7 +70,7 @@ pub use temporal::{
     TemporalCapabilities, TemporalFilter, TemporalMention, TemporalMentionFlags,
     TemporalMentionKind, TemporalTrack,
 };
-pub use ticket::{Ticket, TicketRef};
+pub use ticket::{SignedTicket, Ticket, TicketRef};
 pub use verification::{
     DOCTOR_PLAN_VERSION, DoctorActionDetail, DoctorActionKind, DoctorActionPlan,
     DoctorActionReport, DoctorActionStatus, DoctorFinding, DoctorFindingCode, DoctorMetrics,

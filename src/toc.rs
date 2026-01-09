@@ -366,6 +366,7 @@ mod tests {
                 seq_no: 0,
                 expires_in_secs: 3600,
                 capacity_bytes: 0,
+                verified: false,
             },
             memory_binding: None,
             replay_manifest: None,

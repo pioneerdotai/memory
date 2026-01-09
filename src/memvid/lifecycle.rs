@@ -769,12 +769,13 @@ impl Memvid {
 
     /// Bind this file to a dashboard memory.
     ///
-    /// This stores the binding in the TOC and applies the ticket for capacity.
-    /// The caller (CLI/bindings) is responsible for fetching the ticket from the API.
+    /// This stores the binding in the TOC and applies a temporary ticket for initial binding.
+    /// The caller should follow up with `apply_signed_ticket` for cryptographic verification.
     ///
     /// # Errors
     ///
     /// Returns `MemoryAlreadyBound` if this file is already bound to a different memory.
+    #[allow(deprecated)]
     pub fn bind_memory(
         &mut self,
         binding: crate::types::MemoryBinding,
@@ -801,6 +802,36 @@ impl Memvid {
         Ok(())
     }
 
+    /// Set only the memory binding without applying a ticket.
+    ///
+    /// This is used when the caller will immediately follow up with `apply_signed_ticket`
+    /// to apply the cryptographically verified ticket. This avoids the sequence number
+    /// conflict that occurs when using `bind_memory` with a temporary ticket.
+    ///
+    /// # Errors
+    ///
+    /// Returns `MemoryAlreadyBound` if this file is already bound to a different memory.
+    pub fn set_memory_binding_only(&mut self, binding: crate::types::MemoryBinding) -> Result<()> {
+        self.ensure_writable()?;
+
+        // Check existing binding
+        if let Some(existing) = self.get_memory_binding() {
+            if existing.memory_id != binding.memory_id {
+                return Err(MemvidError::MemoryAlreadyBound {
+                    existing_memory_id: existing.memory_id,
+                    existing_memory_name: existing.memory_name.clone(),
+                    bound_at: existing.bound_at.to_rfc3339(),
+                });
+            }
+        }
+
+        // Store binding in TOC (without applying a ticket)
+        self.toc.memory_binding = Some(binding);
+        self.dirty = true;
+
+        Ok(())
+    }
+
     /// Unbind this file from its dashboard memory.
     ///
     /// This clears the binding and reverts to free tier capacity (1 GB).
@@ -812,6 +843,7 @@ impl Memvid {
             seq_no: 1,
             expires_in_secs: 0,
             capacity_bytes: crate::types::Tier::Free.capacity_bytes(),
+            verified: false,
         };
         self.dirty = true;
         Ok(())
@@ -1109,6 +1141,7 @@ pub(crate) fn empty_toc() -> Toc {
             seq_no: 1,
             expires_in_secs: 0,
             capacity_bytes: Tier::Free.capacity_bytes(),
+            verified: false,
         },
         memory_binding: None,
         replay_manifest: None,

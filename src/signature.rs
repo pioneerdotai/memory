@@ -140,6 +140,24 @@ mod tests {
         SigningKey::from_bytes(&seed)
     }
 
+    /// Verify the JSON format matches what the dashboard produces
+    #[test]
+    fn test_payload_json_format() {
+        let memory_id = Uuid::parse_str("123e4567-e89b-12d3-a456-426614174000").unwrap();
+        let payload = TicketSignaturePayload {
+            version: 1,
+            memory_id: &memory_id,
+            issuer: "memvid-dashboard",
+            seq_no: 2,
+            expires_in: 86400,
+            capacity_bytes: Some(10737418240),
+        };
+        let json = serde_json::to_string(&payload).unwrap();
+        // Must match dashboard format exactly for signature verification
+        let expected = r#"{"version":1,"memory_id":"123e4567-e89b-12d3-a456-426614174000","issuer":"memvid-dashboard","seq_no":2,"expires_in":86400,"capacity_bytes":10737418240}"#;
+        assert_eq!(json, expected, "JSON format must match dashboard");
+    }
+
     #[test]
     fn ticket_roundtrip() {
         let signing = test_signing_key();
@@ -183,5 +201,84 @@ mod tests {
         let encoded = BASE64_STANDARD.encode(verifying.as_bytes());
         let parsed = parse_ed25519_public_key_base64(&encoded).unwrap();
         assert_eq!(parsed.as_bytes(), verifying.as_bytes());
+    }
+
+    /// End-to-end test verifying the signature flow works correctly.
+    /// Uses a test keypair (NOT production keys).
+    #[test]
+    fn test_signature_flow_e2e() {
+        // Test keypair - NOT production keys
+        let signing_key = test_signing_key();
+        let verifying_key = signing_key.verifying_key();
+
+        // Create and sign a ticket payload (mimicking dashboard)
+        let memory_id = Uuid::parse_str("123e4567-e89b-12d3-a456-426614174000").unwrap();
+        let message = ticket_message_bytes(
+            &memory_id,
+            "memvid-dashboard",
+            2,
+            86400,
+            Some(10737418240),
+        )
+        .unwrap();
+        let signature = signing_key.sign(&message);
+
+        // Verify signature (mimicking CLI/core)
+        verify_ticket_signature(
+            &verifying_key,
+            &memory_id,
+            "memvid-dashboard",
+            2,
+            86400,
+            Some(10737418240),
+            &signature.to_bytes(),
+        )
+        .expect("signature verification should pass");
+    }
+
+    /// Verify the embedded public key constant is valid and parseable
+    #[test]
+    fn test_embedded_pubkey_valid() {
+        use crate::constants::MEMVID_TICKET_PUBKEY;
+        let key = parse_ed25519_public_key_base64(MEMVID_TICKET_PUBKEY);
+        assert!(key.is_ok(), "Embedded MEMVID_TICKET_PUBKEY must be valid");
+    }
+
+    /// Test verification with actual dashboard-signed data
+    #[test]
+    fn test_dashboard_signature_verification() {
+        use crate::constants::MEMVID_TICKET_PUBKEY;
+
+        // Parse embedded public key
+        let verifying_key = parse_ed25519_public_key_base64(MEMVID_TICKET_PUBKEY).unwrap();
+
+        // Exact payload from dashboard (must match byte-for-byte)
+        let memory_id = Uuid::parse_str("69601cef-bea5-7ba3-fec3-9b5c00000000").unwrap();
+        let message = ticket_message_bytes(
+            &memory_id,
+            "memvid-dashboard",
+            9,
+            86400,
+            Some(10737418240),
+        )
+        .unwrap();
+
+        println!("Rust payload: {}", String::from_utf8_lossy(&message));
+
+        // Signature from dashboard (seq_no=9)
+        let sig_base64 = "OUVSB4rKCSPDlP+rrZN1AlkI6k2zDdNaZb5HKPZDTjqhnCHBYKXg4lyEE4aevDN7rLpdFjINiCCaBEBaH35vDw==";
+        let sig_bytes = BASE64_STANDARD.decode(sig_base64).unwrap();
+
+        // Verify
+        verify_ticket_signature(
+            &verifying_key,
+            &memory_id,
+            "memvid-dashboard",
+            9,
+            86400,
+            Some(10737418240),
+            &sig_bytes,
+        )
+        .expect("Dashboard signature should verify");
     }
 }
