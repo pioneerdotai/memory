@@ -3,6 +3,7 @@
 <p align="center">
  <a href="docs/i18n/README.es.md">🇪🇸 Español</a>
  <a href="docs/i18n/README.fr.md">🇫🇷 Français</a>
+ <a href="docs/i18n/README.it.md">🇮🇹 Italiano</a>
  <a href="docs/i18n/README.so.md">🇸🇴 Soomaali</a>
 </p>
 
