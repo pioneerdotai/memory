@@ -213,14 +213,9 @@ mod tests {
 
         // Create and sign a ticket payload (mimicking dashboard)
         let memory_id = Uuid::parse_str("123e4567-e89b-12d3-a456-426614174000").unwrap();
-        let message = ticket_message_bytes(
-            &memory_id,
-            "memvid-dashboard",
-            2,
-            86400,
-            Some(10737418240),
-        )
-        .unwrap();
+        let message =
+            ticket_message_bytes(&memory_id, "memvid-dashboard", 2, 86400, Some(10737418240))
+                .unwrap();
         let signature = signing_key.sign(&message);
 
         // Verify signature (mimicking CLI/core)
@@ -254,14 +249,9 @@ mod tests {
 
         // Exact payload from dashboard (must match byte-for-byte)
         let memory_id = Uuid::parse_str("69601cef-bea5-7ba3-fec3-9b5c00000000").unwrap();
-        let message = ticket_message_bytes(
-            &memory_id,
-            "memvid-dashboard",
-            9,
-            86400,
-            Some(10737418240),
-        )
-        .unwrap();
+        let message =
+            ticket_message_bytes(&memory_id, "memvid-dashboard", 9, 86400, Some(10737418240))
+                .unwrap();
 
         println!("Rust payload: {}", String::from_utf8_lossy(&message));
 

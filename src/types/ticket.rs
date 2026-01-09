@@ -92,8 +92,8 @@ impl SignedTicket {
 
 /// Serde helper for base64-encoded byte vectors.
 mod base64_bytes {
-    use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
     use base64::Engine;
+    use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
     use serde::{Deserialize, Deserializer, Serializer};
 
     pub fn serialize<S: Serializer>(bytes: &Vec<u8>, serializer: S) -> Result<S::Ok, S::Error> {
@@ -102,8 +102,6 @@ mod base64_bytes {
 
     pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> {
         let s = String::deserialize(deserializer)?;
-        BASE64_STANDARD
-            .decode(&s)
-            .map_err(serde::de::Error::custom)
+        BASE64_STANDARD.decode(&s).map_err(serde::de::Error::custom)
     }
 }

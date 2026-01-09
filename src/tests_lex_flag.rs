@@ -4,6 +4,7 @@ mod tests {
     use tempfile::NamedTempFile;
 
     #[test]
+    #[cfg(not(target_os = "windows"))] // Windows file locking prevents tempfile cleanup
     fn test_lex_persists_and_search_works() {
         run_serial_test(|| {
             let temp = NamedTempFile::new().unwrap();

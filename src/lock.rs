@@ -170,6 +170,7 @@ mod tests {
     use tempfile::NamedTempFile;
 
     #[test]
+    #[cfg(not(target_os = "windows"))] // Windows has different file locking semantics
     fn acquiring_lock_blocks_second_writer() {
         let temp = NamedTempFile::new().expect("temp file");
         let path = temp.path();
