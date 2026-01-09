@@ -4,6 +4,7 @@ use std::io::{Seek, SeekFrom, Write};
 use memvid_core::{DoctorOptions, DoctorStatus, Memvid, MemvidError};
 
 #[test]
+#[cfg(not(target_os = "windows"))] // Windows file locking prevents proper corruption simulation
 fn doctor_recovers_from_corrupted_commit_footer_single_commit() {
     let dir = tempfile::tempdir().expect("tmp");
     let path = dir.path().join("corrupt-footer.mv2");
