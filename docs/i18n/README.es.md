@@ -1,20 +1,14 @@
 <img width="2000" height="491" alt="Social Cover (6)" src="https://github.com/user-attachments/assets/4e256804-53ac-4173-bcff-81994d52bf5c" />
 
 <p align="center">
- <a href="docs/i18n/README.es.md">🇪🇸 Español</a>
- <a href="docs/i18n/README.fr.md">🇫🇷 Français</a>
- <a href="docs/i18n/README.so.md">🇸🇴 Soomaali</a>
+  <strong>Memvid es una capa de memoria de un solo archivo para agentes de IA, con recuperación instantánea y memoria a largo plazo.</strong><br/>
+  Memoria persistente, versionada y portable, sin bases de datos.
 </p>
 
 <p align="center">
-  <strong>Memvid is a single-file memory layer for AI agents with instant retrieval and long-term memory.</strong><br/>
-  Persistent, versioned, and portable memory, without databases.
-</p>
-
-<p align="center">
-  <a href="https://www.memvid.com">Website</a>
+  <a href="https://www.memvid.com">Sitio web</a>
   ·
-  <a href="https://sandbox.memvid.com">Try Sandbox</a>
+  <a href="https://sandbox.memvid.com">Probar Sandbox</a>
   ·
   <a href="https://docs.memvid.com">Docs</a>
   ·
@@ -38,78 +32,78 @@
     <a href="https://trendshift.io/repositories/17293" target="_blank"><img src="https://trendshift.io/api/badge/repositories/17293" alt="memvid%2Fmemvid | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/</a>
 </p>
 
-<h2 align="center">⭐️ Leave a STAR to support the project ⭐️</h2>
+<h2 align="center">⭐️ Deja una STAR para apoyar el proyecto ⭐️</h2>
 </p>
 
-## What is Memvid?
+## ¿Qué es Memvid?
 
-Memvid is a portable AI memory system that packages your data, embeddings, search structure, and metadata into a single file.
+Memvid es un sistema de memoria portable para IA que empaqueta tus datos, embeddings, estructura de búsqueda y metadatos en un solo archivo.
 
-Instead of running complex RAG pipelines or server-based vector databases, Memvid enables fast retrieval directly from the file.
+En lugar de ejecutar pipelines RAG complejos o bases de datos vectoriales basadas en servidor, Memvid permite una recuperación rápida directamente desde el archivo.
 
-The result is a model-agnostic, infrastructure-free memory layer that gives AI agents persistent, long-term memory they can carry anywhere.
-
----
-
-## Why Video Frames?
-
-Memvid draws inspiration from video encoding, not to store video, but to **organize AI memory as an append-only, ultra-efficient sequence of Smart Frames.**
-
-A Smart Frame is an immutable unit that stores content along with timestamps, checksums and basic metadata.
-Frames are grouped in a way that allows efficient compression, indexing, and parallel reads.
-
-This frame-based design enables:
-
--   Append-only writes without modifying or corrupting existing data
--   Queries over past memory states
--   Timeline-style inspection of how knowledge evolves
--   Crash safety through committed, immutable frames
--   Efficient compression using techniques adapted from video encoding
-
-The result is a single file that behaves like a rewindable memory timeline for AI systems.
+El resultado es una capa de memoria agnóstica al modelo, sin infraestructura, que da a los agentes de IA una memoria persistente y a largo plazo que pueden llevar a cualquier parte.
 
 ---
 
-## Core Concepts
+## ¿Por qué fotogramas de vídeo?
+
+Memvid se inspira en la codificación de vídeo, no para almacenar vídeo, sino para **organizar la memoria de IA como una secuencia de Smart Frames ultrarrápida y append-only.**
+
+Un Smart Frame es una unidad inmutable que almacena contenido junto con marcas de tiempo (timestamps), checksums y metadatos básicos.
+Los frames se agrupan de una forma que permite una compresión, indexación y lecturas paralelas eficientes.
+
+Este diseño basado en frames permite:
+
+-   Escrituras append-only sin modificar ni corromper los datos existentes
+-   Consultas sobre estados pasados de la memoria
+-   Inspección estilo línea temporal (timeline) de cómo evoluciona el conocimiento
+-   Seguridad ante fallos (crash safety) mediante frames confirmados e inmutables
+-   Compresión eficiente usando técnicas adaptadas de la codificación de vídeo
+
+El resultado es un único archivo que se comporta como una línea temporal de memoria “rebobinable” para sistemas de IA.
+
+---
+
+## Conceptos principales
 
 -   **Living Memory Engine**
-    Continuously append, branch, and evolve memory across sessions.
+    Añade, ramifica (branch) y evoluciona la memoria de forma continua entre sesiones.
 
 -   **Capsule Context (`.mv2`)**
-    Self-contained, shareable memory capsules with rules and expiry.
+    Cápsulas de memoria autocontenidas y compartibles, con reglas y caducidad.
 
 -   **Time-Travel Debugging**
-    Rewind, replay, or branch any memory state.
+    Rebobina, reproduce (replay) o ramifica cualquier estado de memoria.
 
 -   **Smart Recall**
-    Sub-5ms local memory access with predictive caching.
+    Acceso local a memoria en menos de 5ms con caché predictiva.
 
 -   **Codec Intelligence**
-    Auto-selects and upgrades compression over time.
+    Selecciona y actualiza la compresión automáticamente con el tiempo.
 
 ---
 
-## Use Cases
+## Casos de uso
 
-Memvid is a portable, serverless memory layer that gives AI agents persistent memory and fast recall. Because it's model-agnostic, multi-modal, and works fully offline, developers are using Memvid across a wide range of real-world applications.
+Memvid es una capa de memoria portable y serverless que da a los agentes de IA memoria persistente y recuerdo rápido. Como es agnóstica al modelo, multi-modal y funciona totalmente offline, los desarrolladores están usando Memvid en una amplia gama de aplicaciones reales.
 
--   Long-Running AI Agents
--   Enterprise Knowledge Bases
--   Offline-First AI Systems
--   Codebase Understanding
--   Customer Support Agents
--   Workflow Automation
--   Sales and Marketing Copilots
--   Personal Knowledge Assistants
--   Medical, Legal, and Financial Agents
--   Auditable and Debuggable AI Workflows
--   Custom Applications
+-   Agentes de IA de larga duración
+-   Bases de conocimiento empresariales
+-   Sistemas de IA offline-first
+-   Comprensión de codebases
+-   Agentes de soporte al cliente
+-   Automatización de flujos de trabajo
+-   Copilotos de ventas y marketing
+-   Asistentes de conocimiento personal
+-   Agentes médicos, legales y financieros
+-   Flujos de trabajo de IA auditables y depurables
+-   Aplicaciones personalizadas
 
 ---
 
 ## SDKs & CLI
 
-Use Memvid in your preferred language:
+Usa Memvid en tu lenguaje preferido:
 
 | Package         | Install                     | Links                                                                                                               |
 | --------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------- |
@@ -120,13 +114,13 @@ Use Memvid in your preferred language:
 
 ---
 
-## Installation (Rust)
+## Instalación (Rust)
 
-### Requirements
+### Requisitos
 
--   **Rust 1.85.0+** — Install from [rustup.rs](https://rustup.rs)
+-   **Rust 1.85.0+** — Instálalo desde [rustup.rs](https://rustup.rs)
 
-### Add to Your Project
+### Añadir a tu proyecto
 
 ```toml
 [dependencies]
@@ -146,7 +140,7 @@ memvid-core = "2.0"
 | `parallel_segments` | Multi-threaded ingestion                       |
 | `encryption`        | Password-based encryption capsules (.mv2e)     |
 
-Enable features as needed:
+Activa las features según lo necesites:
 
 ```toml
 [dependencies]
@@ -155,7 +149,7 @@ memvid-core = { version = "2.0", features = ["lex", "vec", "temporal_track"] }
 
 ---
 
-## Quick Start
+## Inicio rápido
 
 ```rust
 use memvid_core::{Memvid, PutOptions, SearchRequest};
@@ -193,26 +187,26 @@ fn main() -> memvid_core::Result<()> {
 
 ## Build
 
-Clone the repository:
+Clona el repositorio:
 
 ```bash
 git clone https://github.com/memvid/memvid.git
 cd memvid
 ```
 
-Build in debug mode:
+Compila en modo debug:
 
 ```bash
 cargo build
 ```
 
-Build in release mode (optimized):
+Compila en modo release (optimizado):
 
 ```bash
 cargo build --release
 ```
 
-Build with specific features:
+Compila con features específicas:
 
 ```bash
 cargo build --release --features "lex,vec,temporal_track"
@@ -220,27 +214,27 @@ cargo build --release --features "lex,vec,temporal_track"
 
 ---
 
-## Run Tests
+## Ejecutar tests
 
-Run all tests:
+Ejecuta todos los tests:
 
 ```bash
 cargo test
 ```
 
-Run tests with output:
+Ejecuta los tests con salida:
 
 ```bash
 cargo test -- --nocapture
 ```
 
-Run a specific test:
+Ejecuta un test específico:
 
 ```bash
 cargo test test_name
 ```
 
-Run integration tests only:
+Ejecuta solo tests de integración:
 
 ```bash
 cargo test --test lifecycle
@@ -250,37 +244,37 @@ cargo test --test mutation
 
 ---
 
-## Examples
+## Ejemplos
 
-The `examples/` directory contains working examples:
+El directorio `examples/` contiene ejemplos funcionales:
 
-### Basic Usage
+### Uso básico
 
-Demonstrates create, put, search, and timeline operations:
+Demuestra operaciones de create, put, search y timeline:
 
 ```bash
 cargo run --example basic_usage
 ```
 
-### PDF Ingestion
+### Ingesta de PDF
 
-Ingest and search PDF documents (uses the "Attention Is All You Need" paper):
+Ingiere y busca documentos PDF (usa el paper “Attention Is All You Need”):
 
 ```bash
 cargo run --example pdf_ingestion
 ```
 
-### CLIP Visual Search
+### Búsqueda visual con CLIP
 
-Image search using CLIP embeddings (requires `clip` feature):
+Búsqueda de imágenes usando embeddings de CLIP (requiere la feature `clip`):
 
 ```bash
 cargo run --example clip_visual_search --features clip
 ```
 
-### Whisper Transcription
+### Transcripción con Whisper
 
-Audio transcription (requires `whisper` feature):
+Transcripción de audio (requiere la feature `whisper`):
 
 ```bash
 cargo run --example test_whisper --features whisper
@@ -288,9 +282,9 @@ cargo run --example test_whisper --features whisper
 
 ---
 
-## File Format
+## Formato de archivo
 
-Everything lives in a single `.mv2` file:
+Todo vive en un único archivo `.mv2`:
 
 ```
 ┌────────────────────────────┐
@@ -310,21 +304,23 @@ Everything lives in a single `.mv2` file:
 └────────────────────────────┘
 ```
 
-No `.wal`, `.lock`, `.shm`, or sidecar files. Ever.
+Sin archivos `.wal`, `.lock`, `.shm` ni sidecars. Nunca.
 
-See [MV2_SPEC.md](MV2_SPEC.md) for the complete file format specification.
+Consulta [MV2_SPEC.md](MV2_SPEC.md) para la especificación completa del formato de archivo.
 
 ---
 
-## Support
+## Soporte
 
-Have questions or feedback?
+¿Tienes preguntas o feedback?
 Email: contact@memvid.com
 
-**Drop a ⭐ to show support**
+**Deja una ⭐ para mostrar apoyo**
 
 ---
 
-## License
+## Licencia
 
-Apache License 2.0 — see the [LICENSE](LICENSE) file for details.
+Apache License 2.0 — consulta el archivo [LICENSE](LICENSE) para más detalles.
+
+
