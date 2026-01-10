@@ -181,3 +181,87 @@ fn wrong_password_fails_streaming() {
     assert!(matches!(err, EncryptionError::Decryption { .. }), "Expected Decryption error, got {:?}", err);
     println!("Wrong password correctly rejected for streaming format");
 }
+
+// ============================================================================
+// STREAMING ENCRYPTION SKELETON TESTS (TODO: implement)
+// ============================================================================
+
+#[test]
+#[cfg(feature = "encryption")]
+#[ignore] // Remove when implemented
+fn streaming_format_sets_reserved_flag() {
+    // TODO: Verify that new encryptions set reserved[0] = 0x01
+    todo!()
+}
+
+#[test]
+#[cfg(feature = "encryption")]
+#[ignore]
+fn streaming_roundtrip_medium_file() {
+    // TODO: Test encrypt/decrypt roundtrip with ~10MB file
+    todo!()
+}
+
+#[test]
+#[cfg(feature = "encryption")]
+#[ignore]
+fn decrypt_legacy_format_with_new_code() {
+    // TODO: Create a file with legacy format (reserved[0]=0), decrypt with current code
+    todo!()
+}
+
+#[test]
+#[cfg(feature = "encryption")]
+#[ignore]
+fn auto_detection_chooses_correct_decoder() {
+    // TODO: Verify unlock_file dispatches correctly based on reserved[0]
+    todo!()
+}
+
+#[test]
+#[cfg(feature = "encryption")]
+#[ignore]
+fn corrupted_chunk_fails_gracefully() {
+    // TODO: Corrupt a chunk in the middle, verify proper error
+    todo!()
+}
+
+#[test]
+#[cfg(feature = "encryption")]
+#[ignore]
+fn truncated_file_fails_gracefully() {
+    // TODO: Truncate encrypted file mid-chunk, verify proper error
+    todo!()
+}
+
+#[test]
+#[cfg(feature = "encryption")]
+#[ignore]
+fn empty_mv2_file_encryption() {
+    // TODO: Test encrypting an empty .mv2 file
+    todo!()
+}
+
+#[test]
+#[cfg(feature = "encryption")]
+#[ignore]
+fn exact_chunk_boundary_file() {
+    // TODO: Test file size that's exactly N * CHUNK_SIZE (1MB)
+    todo!()
+}
+
+#[test]
+#[cfg(feature = "encryption")]
+#[ignore]
+fn multiple_encrypt_decrypt_cycles() {
+    // TODO: Encrypt, decrypt, modify, encrypt again - verify no corruption
+    todo!()
+}
+
+#[test]
+#[cfg(feature = "encryption")]
+#[ignore]
+fn concurrent_encryption_different_files() {
+    // TODO: Test encrypting multiple files in parallel
+    todo!()
+}
