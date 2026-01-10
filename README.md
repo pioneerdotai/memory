@@ -1,4 +1,4 @@
-<img width="2000" height="491" alt="Social Cover (6)" src="https://github.com/user-attachments/assets/4e256804-53ac-4173-bcff-81994d52bf5c" />
+<img width="2000" height="524" alt="Social Cover (9)" src="https://github.com/user-attachments/assets/cf66f045-c8be-494b-b696-b8d7e4fb709c" />
 
 <p align="center">
  <a href="docs/i18n/README.es.md">🇪🇸 Español</a>
