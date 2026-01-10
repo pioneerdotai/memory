@@ -1,6 +1,7 @@
 <img width="2000" height="524" alt="Social Cover (9)" src="https://github.com/user-attachments/assets/cf66f045-c8be-494b-b696-b8d7e4fb709c" />
 
 <p align="center">
+<a href="docs/i18n/README.hi.md">🇮🇳 India</a>
  <a href="docs/i18n/README.es.md">🇪🇸 Español</a>
  <a href="docs/i18n/README.fr.md">🇫🇷 Français</a>
  <a href="docs/i18n/README.so.md">🇸🇴 Soomaali</a>
