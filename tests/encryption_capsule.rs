@@ -86,3 +86,98 @@ fn wrong_password_fails() {
     let err = unlock_file(&mv2e_path, None, b"password-b").expect_err("should fail");
     assert!(matches!(err, EncryptionError::Decryption { .. }));
 }
+
+/// Test streaming encryption with a large file (>1MB to trigger multiple chunks)
+/// Note: The mv2 file format includes a 64MB WAL by default, so even small content
+/// creates large files. This test focuses on verifying the streaming format works.
+#[test]
+#[cfg(feature = "encryption")]
+fn streaming_encryption_large_file() {
+    let dir = TempDir::new().expect("tmp");
+    let mv2_path = dir.path().join("large.mv2");
+    let mv2e_path = dir.path().join("large.mv2e");
+    let restored_path = dir.path().join("large_restored.mv2");
+
+    // Create a memory file with modest content (the file will be large due to WAL)
+    {
+        let mut mem = Memvid::create(&mv2_path).expect("create");
+
+        // Add 5 entries - this should create a file >1MB due to WAL overhead
+        for i in 0..5 {
+            let content = format!("Entry {} with content: {}", i, "x".repeat(10_000));
+            mem.put_bytes_with_options(
+                content.as_bytes(),
+                PutOptions {
+                    title: Some(format!("Entry {}", i)),
+                    labels: vec!["test".to_string()],
+                    ..Default::default()
+                },
+            )
+            .expect("put");
+        }
+        mem.commit().expect("commit");
+    }
+
+    // The file should be >1MB due to embedded WAL
+    let original_size = std::fs::metadata(&mv2_path).expect("metadata").len();
+    assert!(original_size > 1_000_000, "File should be >1MB, got {} bytes", original_size);
+    println!("Created test file: {} bytes ({:.2} MB)", original_size, original_size as f64 / 1_000_000.0);
+
+    // Encrypt using streaming
+    lock_file(&mv2_path, Some(mv2e_path.as_path()), b"streaming-test-password").expect("lock");
+
+    // Verify encrypted file has streaming marker (reserved[0] == 0x01)
+    let encrypted_bytes = read(&mv2e_path).expect("read encrypted");
+    let header_bytes: [u8; Mv2eHeader::SIZE] = encrypted_bytes[..Mv2eHeader::SIZE].try_into().expect("slice to array");
+    let header = Mv2eHeader::decode(&header_bytes).expect("decode header");
+    assert_eq!(header.reserved[0], 0x01, "Should use streaming format (reserved[0] == 0x01)");
+    println!("Encrypted file: {} bytes, streaming format confirmed", encrypted_bytes.len());
+
+    // Decrypt
+    unlock_file(&mv2e_path, Some(restored_path.as_path()), b"streaming-test-password").expect("unlock");
+
+    // Verify content matches
+    let original = read(&mv2_path).expect("read original");
+    let restored = read(&restored_path).expect("read restored");
+    assert_eq!(original.len(), restored.len(), "Size mismatch");
+    assert_eq!(original, restored, "Content mismatch");
+    println!("Decryption successful, {} bytes restored correctly", restored.len());
+
+    // Verify the restored file is valid and readable
+    let mem = Memvid::open(&restored_path).expect("open restored");
+    let stats = mem.stats().expect("stats");
+    assert!(stats.frame_count >= 5, "Should have at least 5 frames, got {}", stats.frame_count);
+    println!("Restored memory verified: {} frames", stats.frame_count);
+}
+
+/// Test that wrong password still fails with streaming format
+#[test]
+#[cfg(feature = "encryption")]
+fn wrong_password_fails_streaming() {
+    let dir = TempDir::new().expect("tmp");
+    let mv2_path = dir.path().join("test_stream.mv2");
+    let mv2e_path = dir.path().join("test_stream.mv2e");
+
+    // Create a file (will be >1MB due to WAL overhead)
+    {
+        let mut mem = Memvid::create(&mv2_path).expect("create");
+        for i in 0..3 {
+            let content = format!("Entry {} {}", i, "data".repeat(10_000));
+            mem.put_bytes(content.as_bytes()).expect("put");
+        }
+        mem.commit().expect("commit");
+    }
+
+    lock_file(&mv2_path, Some(mv2e_path.as_path()), b"correct-password").expect("lock");
+
+    // Verify streaming format (files >1MB use streaming)
+    let encrypted = read(&mv2e_path).expect("read");
+    let header_bytes: [u8; Mv2eHeader::SIZE] = encrypted[..Mv2eHeader::SIZE].try_into().expect("slice to array");
+    let header = Mv2eHeader::decode(&header_bytes).expect("decode");
+    assert_eq!(header.reserved[0], 0x01, "Should use streaming format");
+
+    // Wrong password should fail
+    let err = unlock_file(&mv2e_path, None, b"wrong-password").expect_err("should fail");
+    assert!(matches!(err, EncryptionError::Decryption { .. }), "Expected Decryption error, got {:?}", err);
+    println!("Wrong password correctly rejected for streaming format");
+}

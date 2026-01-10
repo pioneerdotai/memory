@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::cmp::min;
 use std::fs::OpenOptions;
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -21,6 +22,30 @@ use crate::types::{Header, Toc};
 #[cfg(feature = "lex")]
 use crate::lex::LexIndex;
 use crate::vec::VecIndex;
+
+// Thread-local flag to control doctor debug logging
+thread_local! {
+    static DOCTOR_QUIET: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Set quiet mode for doctor logging (suppresses debug output when true).
+fn set_doctor_quiet(quiet: bool) {
+    DOCTOR_QUIET.with(|q| q.set(quiet));
+}
+
+/// Check if doctor logging is suppressed.
+fn is_doctor_quiet() -> bool {
+    DOCTOR_QUIET.with(|q| q.get())
+}
+
+/// Conditionally print doctor debug messages based on quiet flag.
+macro_rules! doctor_log {
+    ($($arg:tt)*) => {
+        if !is_doctor_quiet() {
+            println!($($arg)*);
+        }
+    };
+}
 
 #[derive(Default)]
 struct IndexProbe {
@@ -47,7 +72,7 @@ struct PlanProbe {
 }
 
 pub(crate) fn doctor_plan(path: &Path, options: DoctorOptions) -> Result<DoctorPlan> {
-    println!(
+    doctor_log!(
         "doctor: planning for {:?} (options: rebuild_time={}, rebuild_lex={}, rebuild_vec={})",
         path, options.rebuild_time_index, options.rebuild_lex_index, options.rebuild_vec_index,
     );
@@ -60,16 +85,16 @@ pub(crate) fn doctor_plan(path: &Path, options: DoctorOptions) -> Result<DoctorP
 fn try_recover_from_wal_corruption(path: &Path) -> Result<Memvid> {
     use fs2::FileExt;
 
-    println!("doctor: opening file for WAL recovery");
+    doctor_log!("doctor: opening file for WAL recovery");
     let mut file = OpenOptions::new().read(true).write(true).open(path)?;
 
     // Acquire exclusive lock
     file.lock_exclusive()?;
 
-    println!("doctor: reading header");
+    doctor_log!("doctor: reading header");
     let mut header = HeaderCodec::read(&mut file)?;
 
-    println!(
+    doctor_log!(
         "doctor: zeroing out corrupted WAL region (offset: {}, size: {})",
         header.wal_offset, header.wal_size
     );
@@ -90,13 +115,13 @@ fn try_recover_from_wal_corruption(path: &Path) -> Result<Memvid> {
     header.wal_checkpoint_pos = 0;
     header.wal_sequence = 0;
 
-    println!("doctor: writing repaired header");
+    doctor_log!("doctor: writing repaired header");
     HeaderCodec::write(&mut file, &header)?;
 
     // Flush all changes to disk
     file.sync_all()?;
 
-    println!("doctor: WAL rebuilt, attempting to open memory");
+    doctor_log!("doctor: WAL rebuilt, attempting to open memory");
 
     // Now try to open the file normally - WAL should be clean
     // We need to release the lock first, then reopen
@@ -128,9 +153,10 @@ pub(crate) fn doctor_apply(path: &Path, plan: DoctorPlan) -> Result<DoctorReport
 }
 
 pub(crate) fn doctor_run(path: &Path, options: DoctorOptions) -> Result<DoctorReport> {
-    println!("doctor: doctor_run start");
+    set_doctor_quiet(options.quiet);
+    doctor_log!("doctor: doctor_run start");
     let plan = doctor_plan(path, options.clone())?;
-    println!("doctor: plan ready");
+    doctor_log!("doctor: plan ready");
     doctor_apply(path, plan)
 }
 
@@ -145,11 +171,10 @@ impl DoctorPlanner {
     }
 
     fn compute(mut self) -> Result<DoctorPlan> {
-        println!("doctor: planner.compute start");
+        doctor_log!("doctor: planner.compute start");
         let start = std::time::Instant::now();
         let mut probe = self.probe()?;
-        println!(
-            "doctor: probe complete in {:?} (wal_pending={}, findings={})",
+        doctor_log!("doctor: probe complete in {:?} (wal_pending={}, findings={})",
             start.elapsed(),
             probe.wal_pending,
             probe.findings.len()
@@ -327,7 +352,7 @@ impl DoctorPlanner {
     }
 
     fn probe(&mut self) -> Result<PlanProbe> {
-        println!("doctor: probe start");
+        doctor_log!("doctor: probe start");
         let mut probe = PlanProbe {
             header: None,
             toc: None,
@@ -343,9 +368,9 @@ impl DoctorPlanner {
 
         let mut file = OpenOptions::new().read(true).write(true).open(&self.path)?;
         probe.file_len = file.metadata()?.len();
-        println!("doctor: probe file len {}", probe.file_len);
+        doctor_log!("doctor: probe file len {}", probe.file_len);
 
-        println!("doctor: reading header");
+        doctor_log!("doctor: reading header");
         match HeaderCodec::read(&mut file) {
             Ok(header) => probe.header = Some(header),
             Err(err) => {
@@ -360,17 +385,16 @@ impl DoctorPlanner {
         let Some(header) = probe.header.as_ref() else {
             return Ok(probe);
         };
-        println!(
-            "doctor: header footer_offset={}, wal_offset={}, wal_size={}",
+        doctor_log!("doctor: header footer_offset={}, wal_offset={}, wal_size={}",
             header.footer_offset, header.wal_offset, header.wal_size
         );
 
-        println!("doctor: attempting read_toc");
+        doctor_log!("doctor: attempting read_toc");
         let (toc, toc_offset, recovered) = match read_toc(&mut file, header) {
             Ok(toc) => (toc, header.footer_offset, false),
             Err(_) => match recover_toc(&mut file, Some(header.footer_offset)) {
                 Ok((toc, offset)) => {
-                    println!("doctor: recover_toc succeeded at offset {}", offset);
+                    doctor_log!("doctor: recover_toc succeeded at offset {}", offset);
                     probe.findings.push(DoctorFinding::warning(
                         DoctorFindingCode::TocDecodeFailure,
                         "recovered toc from trailer",
@@ -378,7 +402,7 @@ impl DoctorPlanner {
                     (toc, offset, true)
                 }
                 Err(err) => {
-                    println!("doctor: recover_toc failed: {}", err);
+                    doctor_log!("doctor: recover_toc failed: {}", err);
                     probe.findings.push(DoctorFinding::error(
                         DoctorFindingCode::TocDecodeFailure,
                         err.to_string(),
@@ -390,8 +414,7 @@ impl DoctorPlanner {
         probe.toc_recovered = recovered;
         probe.toc = Some(toc.clone());
         probe.toc_offset = Some(toc_offset);
-        println!(
-            "doctor: toc entries frames={}, segments={}, segment_catalog(lex={}, vec={}, time={})",
+        doctor_log!("doctor: toc entries frames={}, segments={}, segment_catalog(lex={}, vec={}, time={})",
             toc.frames.len(),
             toc.segments.len(),
             toc.segment_catalog.lex_segments.len(),
@@ -425,7 +448,7 @@ impl DoctorPlanner {
 
         match EmbeddedWal::open(&file, header) {
             Ok(mut wal) => {
-                println!("doctor: embedded wal open success");
+                doctor_log!("doctor: embedded wal open success");
                 let stats = wal.stats();
                 probe.wal_from_sequence = header.wal_sequence;
                 probe.wal_to_sequence = stats.sequence;
@@ -467,8 +490,7 @@ impl DoctorPlanner {
             return;
         };
         if let Some(manifest) = toc.time_index.clone() {
-            println!(
-                "doctor: inspect_time_index offset={} length={} entries={}",
+            doctor_log!("doctor: inspect_time_index offset={} length={} entries={}",
                 manifest.bytes_offset, manifest.bytes_length, manifest.entry_count
             );
             let span_end = manifest.bytes_offset.saturating_add(manifest.bytes_length);
@@ -493,7 +515,7 @@ impl DoctorPlanner {
             }
             match read_track(file, manifest.bytes_offset, manifest.bytes_length) {
                 Ok(entries) => {
-                    println!("doctor: time index read {} entries", entries.len());
+                    doctor_log!("doctor: time index read {} entries", entries.len());
                     probe.index.time_expected_entries = manifest.entry_count;
                     if entries.len() as u64 != manifest.entry_count {
                         probe.index.needs_time = true;
@@ -516,7 +538,7 @@ impl DoctorPlanner {
                     }
                 }
                 Err(err) => {
-                    println!("doctor: read_track failed: {}", err);
+                    doctor_log!("doctor: read_track failed: {}", err);
                     probe.index.needs_time = true;
                     probe.findings.push(DoctorFinding::warning(
                         DoctorFindingCode::TimeIndexChecksumMismatch,
@@ -541,8 +563,7 @@ impl DoctorPlanner {
         // CRITICAL FIX (Bug #10): Check for Tantivy segments first
         // Tantivy indexes have NO manifest but have lex_segments instead
         if !toc.indexes.lex_segments.is_empty() {
-            println!(
-                "doctor: detected Tantivy-based lex index with {} segments, skipping old validation",
+            doctor_log!("doctor: detected Tantivy-based lex index with {} segments, skipping old validation",
                 toc.indexes.lex_segments.len()
             );
             // Tantivy index is valid, no further validation needed
@@ -559,8 +580,7 @@ impl DoctorPlanner {
 
         #[cfg(feature = "lex")]
         {
-            println!(
-                "doctor: inspect_lex_index offset={} length={} docs={}",
+            doctor_log!("doctor: inspect_lex_index offset={} length={} docs={}",
                 manifest.bytes_offset, manifest.bytes_length, manifest.doc_count
             );
 
@@ -602,8 +622,7 @@ impl DoctorPlanner {
                 Ok(mut index) => {
                     let doc_count = index.documents_mut().len() as u64;
                     if doc_count != manifest.doc_count {
-                        println!(
-                            "doctor: lex doc count mismatch manifest {} actual {}",
+                        doctor_log!("doctor: lex doc count mismatch manifest {} actual {}",
                             manifest.doc_count, doc_count
                         );
                         probe.index.needs_lex = true;
@@ -655,8 +674,7 @@ impl DoctorPlanner {
                 .map(|s| s.dimension)
                 .unwrap_or(0);
 
-            println!(
-                "doctor: inspect_vec_index (segment_catalog) segments={} total_vectors={} dim={}",
+            doctor_log!("doctor: inspect_vec_index (segment_catalog) segments={} total_vectors={} dim={}",
                 toc.segment_catalog.vec_segments.len(),
                 total_vectors,
                 dimension
@@ -734,8 +752,7 @@ impl DoctorPlanner {
         };
         probe.index.vec_expected_vectors = manifest.vector_count;
         probe.index.vec_dimension = manifest.dimension;
-        println!(
-            "doctor: inspect_vec_index (monolithic) offset={} length={} vectors={} dim={}",
+        doctor_log!("doctor: inspect_vec_index (monolithic) offset={} length={} vectors={} dim={}",
             manifest.bytes_offset, manifest.bytes_length, manifest.vector_count, manifest.dimension
         );
 
@@ -807,7 +824,7 @@ impl DoctorExecutor {
     }
 
     fn run(self) -> Result<DoctorReport> {
-        println!("doctor: starting executor");
+        doctor_log!("doctor: starting executor");
         let DoctorExecutor { path, plan } = self;
         let mut metrics = DoctorMetrics::default();
         let mut phase_reports = Vec::new();
@@ -832,7 +849,7 @@ impl DoctorExecutor {
             });
         }
 
-        println!("doctor: trying to open memory");
+        doctor_log!("doctor: trying to open memory");
 
         // Check if WAL is corrupted - if so, attempt recovery
         let has_wal_corruption = plan
@@ -841,10 +858,10 @@ impl DoctorExecutor {
             .any(|f| matches!(f.code, DoctorFindingCode::WalChecksumMismatch));
 
         let mut mem = if has_wal_corruption {
-            println!("doctor: WAL corrupted, attempting recovery by rebuilding WAL");
+            doctor_log!("doctor: WAL corrupted, attempting recovery by rebuilding WAL");
             match try_recover_from_wal_corruption(&path) {
                 Ok(recovered_mem) => {
-                    println!("doctor: successfully recovered from WAL corruption");
+                    doctor_log!("doctor: successfully recovered from WAL corruption");
                     additional_findings.push(DoctorFinding::warning(
                         DoctorFindingCode::WalChecksumMismatch,
                         "WAL was corrupted but successfully rebuilt".to_string(),
@@ -852,7 +869,7 @@ impl DoctorExecutor {
                     Some(recovered_mem)
                 }
                 Err(err) => {
-                    println!("doctor: WAL recovery failed: {}", err);
+                    doctor_log!("doctor: WAL recovery failed: {}", err);
                     additional_findings.push(DoctorFinding::error(
                         DoctorFindingCode::WalChecksumMismatch,
                         format!("WAL corrupted and recovery failed: {}", err),
@@ -874,12 +891,12 @@ impl DoctorExecutor {
                 Err(err) => {
                     // Check if this is TOC/header corruption that aggressive repair can fix
                     if Self::is_toc_corruption_error(&err) {
-                        println!("doctor: file unopenable due to TOC/header corruption");
-                        println!("doctor: attempting aggressive repair (Tier 2)");
+                        doctor_log!("doctor: file unopenable due to TOC/header corruption");
+                        doctor_log!("doctor: attempting aggressive repair (Tier 2)");
 
                         match Self::aggressive_header_repair(&path) {
                             Ok(()) => {
-                                println!("doctor: aggressive repair successful, retrying open");
+                                doctor_log!("doctor: aggressive repair successful, retrying open");
                                 additional_findings.push(DoctorFinding::warning(
                                     DoctorFindingCode::HeaderFooterOffsetMismatch,
                                     "Header footer_offset was corrupted but repaired via aggressive scan".to_string(),
@@ -889,8 +906,7 @@ impl DoctorExecutor {
                                 match Memvid::try_open(&path) {
                                     Ok(mem) => Some(mem),
                                     Err(retry_err) => {
-                                        println!(
-                                            "doctor: file still unopenable after aggressive repair: {}",
+                                        doctor_log!("doctor: file still unopenable after aggressive repair: {}",
                                             retry_err
                                         );
                                         additional_findings.push(DoctorFinding::error(
@@ -909,7 +925,7 @@ impl DoctorExecutor {
                                 }
                             }
                             Err(repair_err) => {
-                                println!("doctor: aggressive repair failed: {}", repair_err);
+                                doctor_log!("doctor: aggressive repair failed: {}", repair_err);
                                 additional_findings.push(DoctorFinding::error(
                                     DoctorFindingCode::InternalError,
                                     format!("Aggressive repair failed: {}", repair_err),
@@ -951,12 +967,12 @@ impl DoctorExecutor {
         let start = Instant::now();
 
         for phase in &plan.phases {
-            println!("doctor: entering phase {:?}", phase.phase);
+            doctor_log!("doctor: entering phase {:?}", phase.phase);
             let phase_start = Instant::now();
             let mut actions = Vec::new();
             let mut phase_status = DoctorPhaseStatus::Skipped;
             for action in &phase.actions {
-                println!("doctor: executing action {:?}", action.action);
+                doctor_log!("doctor: executing action {:?}", action.action);
                 if mem.is_none() {
                     overall_failed = true;
                     phase_status = DoctorPhaseStatus::Failed;
@@ -1098,15 +1114,15 @@ impl DoctorExecutor {
                     // CRITICAL: Clear WAL before verification
                     // This ensures a clean slate even if doctor's own operations had WAL issues
                     if let Some(ref mut held) = mem {
-                        println!("doctor: performing final WAL cleanup before verification");
+                        doctor_log!("doctor: performing final WAL cleanup before verification");
                         if let Err(err) = Self::reset_wal(held) {
-                            println!("doctor: WARNING - final WAL cleanup failed: {}", err);
+                            doctor_log!("doctor: WARNING - final WAL cleanup failed: {}", err);
                             additional_findings.push(DoctorFinding::warning(
                                 DoctorFindingCode::InternalError,
                                 format!("final WAL cleanup failed: {}", err),
                             ));
                         } else {
-                            println!("doctor: final WAL cleanup successful");
+                            doctor_log!("doctor: final WAL cleanup successful");
                         }
                     }
 
@@ -1372,8 +1388,7 @@ impl DoctorExecutor {
         lex: bool,
         vec: bool,
     ) -> Result<DoctorActionReport> {
-        println!(
-            "doctor: apply pending rebuilds (time={}, lex={}, vec={})",
+        doctor_log!("doctor: apply pending rebuilds (time={}, lex={}, vec={})",
             time, lex, vec
         );
         if !(time || lex || vec) {
@@ -1399,21 +1414,20 @@ impl DoctorExecutor {
             // Otherwise build_vec_artifact reads from self.vec_index (which is None)
             // and the vectors are lost.
             if mem.vec_index.is_none() && mem.toc.indexes.vec.is_some() {
-                println!("doctor: loading existing vec index to preserve it");
+                doctor_log!("doctor: loading existing vec index to preserve it");
                 if let Err(e) = mem.ensure_vec_index() {
-                    println!("doctor: warning: failed to load vec index: {e}");
+                    doctor_log!("doctor: warning: failed to load vec index: {e}");
                 }
             }
         }
 
-        println!("doctor: rebuild_indexes start");
+        doctor_log!("doctor: rebuild_indexes start");
         mem.rebuild_indexes(&[])?;
-        println!("doctor: rebuild_indexes done");
+        doctor_log!("doctor: rebuild_indexes done");
 
         // Preserve footer_offset that was just set by rebuild_indexes
         let footer_offset_after_rebuild = mem.header.footer_offset;
-        println!(
-            "doctor: footer_offset after rebuild: {}",
+        doctor_log!("doctor: footer_offset after rebuild: {}",
             footer_offset_after_rebuild
         );
 
@@ -1436,8 +1450,7 @@ impl DoctorExecutor {
                 reason: "footer_offset corrupted during doctor repair".into(),
             });
         }
-        println!(
-            "doctor: footer_offset preserved: {}",
+        doctor_log!("doctor: footer_offset preserved: {}",
             mem.header.footer_offset
         );
 
@@ -1449,8 +1462,7 @@ impl DoctorExecutor {
     }
 
     fn reset_wal(mem: &mut Memvid) -> Result<()> {
-        println!(
-            "doctor: reset_wal - zeroing {} bytes at offset {}",
+        doctor_log!("doctor: reset_wal - zeroing {} bytes at offset {}",
             mem.header.wal_size, mem.header.wal_offset
         );
         let mut remaining = mem.header.wal_size;
@@ -1465,7 +1477,7 @@ impl DoctorExecutor {
             offset += write_len as u64;
         }
         mem.file.sync_all()?;
-        println!("doctor: reset_wal - WAL region zeroed and synced");
+        doctor_log!("doctor: reset_wal - WAL region zeroed and synced");
 
         // CRITICAL: Update and persist header BEFORE reopening WAL
         // EmbeddedWal::open will read the header, so it must have the correct values
@@ -1473,11 +1485,11 @@ impl DoctorExecutor {
         mem.header.wal_sequence = 0;
         crate::persist_header(&mut mem.file, &mem.header)?;
         mem.file.sync_all()?;
-        println!("doctor: reset_wal - header updated with wal_sequence=0, wal_checkpoint_pos=0");
+        doctor_log!("doctor: reset_wal - header updated with wal_sequence=0, wal_checkpoint_pos=0");
 
         // Now reopen the WAL with the clean state
         mem.wal = EmbeddedWal::open(&mem.file, &mem.header)?;
-        println!("doctor: reset_wal - WAL reopened successfully");
+        doctor_log!("doctor: reset_wal - WAL reopened successfully");
 
         // CRITICAL: Clear dirty flag to prevent Drop from calling commit()
         // Drop handler will call commit() if dirty=true, which would corrupt the WAL we just cleaned
@@ -1486,7 +1498,7 @@ impl DoctorExecutor {
         {
             mem.tantivy_dirty = false;
         }
-        println!("doctor: reset_wal - cleared dirty flags");
+        doctor_log!("doctor: reset_wal - cleared dirty flags");
         Ok(())
     }
 
@@ -1516,7 +1528,7 @@ impl DoctorExecutor {
     fn scan_for_footer(path: &Path) -> Result<u64> {
         use std::fs::File;
 
-        println!("doctor: [Tier 2] Scanning for footer in corrupted file");
+        doctor_log!("doctor: [Tier 2] Scanning for footer in corrupted file");
 
         let file = File::open(path)?;
         let file_size = file.metadata()?.len();
@@ -1539,14 +1551,13 @@ impl DoctorExecutor {
         reader.read_exact(&mut buf)?;
 
         if &buf == FOOTER_MAGIC {
-            println!(
-                "doctor: [Tier 2] Footer found at expected location: {}",
+            doctor_log!("doctor: [Tier 2] Footer found at expected location: {}",
                 expected_offset
             );
             return Ok(expected_offset);
         }
 
-        println!("doctor: [Tier 2] Footer not at expected location, scanning backwards...");
+        doctor_log!("doctor: [Tier 2] Footer not at expected location, scanning backwards...");
 
         // Scan backwards from near end of file
         const MAX_SCAN: u64 = 100_000_000; // Scan last 100MB max
@@ -1556,13 +1567,13 @@ impl DoctorExecutor {
             reader.seek(SeekFrom::Start(offset))?;
             reader.read_exact(&mut buf)?;
             if &buf == FOOTER_MAGIC {
-                println!("doctor: [Tier 2] Footer found at offset: {}", offset);
+                doctor_log!("doctor: [Tier 2] Footer found at offset: {}", offset);
                 return Ok(offset);
             }
 
             // Progress indicator every 10MB
             if offset % 10_000_000 == 0 {
-                println!("doctor: [Tier 2] Scanned to offset {}...", offset);
+                doctor_log!("doctor: [Tier 2] Scanned to offset {}...", offset);
             }
         }
 
@@ -1573,7 +1584,7 @@ impl DoctorExecutor {
 
     /// Tier 2 Aggressive Repair: Fix header's footer_offset pointer.
     fn aggressive_header_repair(path: &Path) -> Result<()> {
-        println!("doctor: [Tier 2] Attempting aggressive header repair");
+        doctor_log!("doctor: [Tier 2] Attempting aggressive header repair");
 
         // Find actual footer location
         let actual_footer_offset = Self::scan_for_footer(path)?;
@@ -1585,17 +1596,15 @@ impl DoctorExecutor {
         file.read_exact(&mut buf)?;
         let header_footer_offset = u64::from_le_bytes(buf);
 
-        println!(
-            "doctor: [Tier 2] Header claims footer at: {}",
+        doctor_log!("doctor: [Tier 2] Header claims footer at: {}",
             header_footer_offset
         );
-        println!(
-            "doctor: [Tier 2] Actual footer at: {}",
+        doctor_log!("doctor: [Tier 2] Actual footer at: {}",
             actual_footer_offset
         );
 
         if header_footer_offset == actual_footer_offset {
-            println!("doctor: [Tier 2] Header already correct");
+            doctor_log!("doctor: [Tier 2] Header already correct");
             return Ok(());
         }
 
@@ -1605,8 +1614,7 @@ impl DoctorExecutor {
         } else {
             header_footer_offset - actual_footer_offset
         };
-        println!(
-            "doctor: [Tier 2] Mismatch: {} bytes, repairing...",
+        doctor_log!("doctor: [Tier 2] Mismatch: {} bytes, repairing...",
             mismatch
         );
 
@@ -1620,7 +1628,7 @@ impl DoctorExecutor {
         let new_value = u64::from_le_bytes(buf);
 
         if new_value == actual_footer_offset {
-            println!("doctor: [Tier 2] Header repaired successfully");
+            doctor_log!("doctor: [Tier 2] Header repaired successfully");
             Ok(())
         } else {
             Err(MemvidError::InvalidHeader {

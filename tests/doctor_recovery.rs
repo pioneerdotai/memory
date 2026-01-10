@@ -71,6 +71,7 @@ fn doctor_rebuilds_tantivy_index() {
                 rebuild_vec_index: false,
                 vacuum: false,
                 dry_run: false,
+                quiet: true,
             },
         )
         .unwrap();
@@ -135,6 +136,7 @@ fn doctor_handles_empty_file() {
                 rebuild_vec_index: false,
                 vacuum: false,
                 dry_run: false,
+                quiet: true,
             },
         )
         .unwrap();
@@ -185,6 +187,7 @@ fn doctor_handles_lex_disabled() {
                 rebuild_vec_index: false,
                 vacuum: false,
                 dry_run: false,
+                quiet: true,
             },
         )
         .unwrap();
@@ -291,6 +294,7 @@ fn doctor_rebuild_produces_searchable_index() {
                 rebuild_vec_index: false,
                 vacuum: false,
                 dry_run: false,
+                quiet: true,
             },
         )
         .unwrap();

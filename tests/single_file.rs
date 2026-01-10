@@ -269,6 +269,7 @@ fn doctor_maintains_single_file() {
                 rebuild_vec_index: false,
                 vacuum: false,
                 dry_run: false,
+                quiet: true,
             },
         )
         .unwrap();

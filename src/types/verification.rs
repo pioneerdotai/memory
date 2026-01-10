@@ -17,6 +17,9 @@ pub struct DoctorOptions {
     pub vacuum: bool,
     #[serde(default)]
     pub dry_run: bool,
+    /// Suppress debug output when true.
+    #[serde(default)]
+    pub quiet: bool,
 }
 
 /// Version identifier embedded in `DoctorPlan` for compatibility checks.
