@@ -3,14 +3,12 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use atomic_write_file::AtomicWriteFile;
-use rand::RngCore;
-use rand::rngs::OsRng;
 use zeroize::Zeroize;
 
-use crate::encryption::constants::{MV2E_MAGIC, MV2E_VERSION, NONCE_SIZE, SALT_SIZE};
-use crate::encryption::crypto::{decrypt, derive_key, encrypt};
+use crate::encryption::capsule_stream::{lock_file_stream, unlock_file_stream};
+use crate::encryption::crypto::{decrypt, derive_key};
 use crate::encryption::error::EncryptionError;
-use crate::encryption::types::{CipherAlgorithm, KdfAlgorithm, Mv2eHeader};
+use crate::encryption::types::Mv2eHeader;
 
 /// Lock (encrypt) an `.mv2` file into a `.mv2e` capsule.
 pub fn lock_file(
@@ -18,46 +16,7 @@ pub fn lock_file(
     output: Option<&Path>,
     password: &[u8],
 ) -> Result<PathBuf, EncryptionError> {
-    let input = input.as_ref();
-    validate_mv2_file(input)?;
-
-    let plaintext = std::fs::read(input).map_err(|source| EncryptionError::Io {
-        source,
-        path: Some(input.to_path_buf()),
-    })?;
-
-    let mut salt = [0u8; SALT_SIZE];
-    let mut nonce = [0u8; NONCE_SIZE];
-    OsRng.fill_bytes(&mut salt);
-    OsRng.fill_bytes(&mut nonce);
-
-    let mut key = derive_key(password, &salt)?;
-    let ciphertext = encrypt(&plaintext, &key, &nonce)?;
-
-    let header = Mv2eHeader {
-        magic: MV2E_MAGIC,
-        version: MV2E_VERSION,
-        kdf_algorithm: KdfAlgorithm::Argon2id,
-        cipher_algorithm: CipherAlgorithm::Aes256Gcm,
-        salt,
-        nonce,
-        original_size: plaintext.len() as u64,
-        reserved: [0u8; 4],
-    };
-
-    let output_path = output
-        .map(PathBuf::from)
-        .unwrap_or_else(|| input.with_extension("mv2e"));
-
-    write_atomic(&output_path, |writer| {
-        writer.write_all(&header.encode())?;
-        writer.write_all(&ciphertext)?;
-        Ok(())
-    })?;
-
-    key.zeroize();
-
-    Ok(output_path)
+    lock_file_stream(input, output, password)
 }
 
 /// Unlock (decrypt) an `.mv2e` capsule into an `.mv2` file.
@@ -80,6 +39,30 @@ pub fn unlock_file(
             path: Some(input.to_path_buf()),
         })?;
     let header = Mv2eHeader::decode(&header_bytes)?;
+
+    if header.reserved[0] == 0x01 {
+        unlock_file_stream(input, output, password)
+    } else {
+        unlock_file_oneshot(input, output, password, header)
+    }
+}
+
+fn unlock_file_oneshot(
+    input: &Path,
+    output: Option<&Path>,
+    password: &[u8],
+    header: Mv2eHeader,
+) -> Result<PathBuf, EncryptionError> {
+    let mut file = File::open(input).map_err(|source| EncryptionError::Io {
+        source,
+        path: Some(input.to_path_buf()),
+    })?;
+
+    file.seek(SeekFrom::Start(Mv2eHeader::SIZE as u64))
+        .map_err(|source| EncryptionError::Io {
+            source,
+            path: Some(input.to_path_buf()),
+        })?;
 
     let mut ciphertext = Vec::new();
     file.read_to_end(&mut ciphertext)
@@ -105,7 +88,7 @@ pub fn unlock_file(
         .map(PathBuf::from)
         .unwrap_or_else(|| input.with_extension("mv2"));
 
-    write_atomic(&output_path, |writer| {
+    write_atomic(&output_path, |writer| -> Result<(), EncryptionError> {
         writer.write_all(&plaintext)?;
         Ok(())
     })?;
@@ -113,7 +96,7 @@ pub fn unlock_file(
     Ok(output_path)
 }
 
-fn validate_mv2_file(path: &Path) -> Result<(), EncryptionError> {
+pub fn validate_mv2_file(path: &Path) -> Result<(), EncryptionError> {
     let mut file = File::open(path).map_err(|source| EncryptionError::Io {
         source,
         path: Some(path.to_path_buf()),
@@ -143,42 +126,21 @@ fn validate_mv2_bytes(bytes: &[u8]) -> Result<(), EncryptionError> {
     Ok(())
 }
 
-fn write_atomic<F>(path: &Path, write_fn: F) -> Result<(), EncryptionError>
+pub fn write_atomic<F, E>(path: &Path, write_fn: F) -> Result<(), E>
 where
-    F: FnOnce(&mut File) -> std::io::Result<()>,
+    F: FnOnce(&mut File) -> Result<(), E>,
+    E: From<std::io::Error>,
 {
     let mut options = AtomicWriteFile::options();
     options.read(false);
-    let mut atomic = options.open(path).map_err(|source| EncryptionError::Io {
-        source,
-        path: Some(path.to_path_buf()),
-    })?;
+    let mut atomic = options.open(path)?;
 
     let file = atomic.as_file_mut();
-    file.set_len(0).map_err(|source| EncryptionError::Io {
-        source,
-        path: Some(path.to_path_buf()),
-    })?;
-    file.seek(SeekFrom::Start(0))
-        .map_err(|source| EncryptionError::Io {
-            source,
-            path: Some(path.to_path_buf()),
-        })?;
-    write_fn(file).map_err(|source| EncryptionError::Io {
-        source,
-        path: Some(path.to_path_buf()),
-    })?;
-    file.flush().map_err(|source| EncryptionError::Io {
-        source,
-        path: Some(path.to_path_buf()),
-    })?;
-    file.sync_all().map_err(|source| EncryptionError::Io {
-        source,
-        path: Some(path.to_path_buf()),
-    })?;
-    atomic.commit().map_err(|source| EncryptionError::Io {
-        source,
-        path: Some(path.to_path_buf()),
-    })?;
+    file.set_len(0)?;
+    file.seek(SeekFrom::Start(0))?;
+    write_fn(file)?;
+    file.flush()?;
+    file.sync_all()?;
+    atomic.commit()?;
     Ok(())
 }
