@@ -120,33 +120,66 @@ fn streaming_encryption_large_file() {
 
     // The file should be >1MB due to embedded WAL
     let original_size = std::fs::metadata(&mv2_path).expect("metadata").len();
-    assert!(original_size > 1_000_000, "File should be >1MB, got {} bytes", original_size);
-    println!("Created test file: {} bytes ({:.2} MB)", original_size, original_size as f64 / 1_000_000.0);
+    assert!(
+        original_size > 1_000_000,
+        "File should be >1MB, got {} bytes",
+        original_size
+    );
+    println!(
+        "Created test file: {} bytes ({:.2} MB)",
+        original_size,
+        original_size as f64 / 1_000_000.0
+    );
 
     // Encrypt using streaming
-    lock_file(&mv2_path, Some(mv2e_path.as_path()), b"streaming-test-password").expect("lock");
+    lock_file(
+        &mv2_path,
+        Some(mv2e_path.as_path()),
+        b"streaming-test-password",
+    )
+    .expect("lock");
 
     // Verify encrypted file has streaming marker (reserved[0] == 0x01)
     let encrypted_bytes = read(&mv2e_path).expect("read encrypted");
-    let header_bytes: [u8; Mv2eHeader::SIZE] = encrypted_bytes[..Mv2eHeader::SIZE].try_into().expect("slice to array");
+    let header_bytes: [u8; Mv2eHeader::SIZE] = encrypted_bytes[..Mv2eHeader::SIZE]
+        .try_into()
+        .expect("slice to array");
     let header = Mv2eHeader::decode(&header_bytes).expect("decode header");
-    assert_eq!(header.reserved[0], 0x01, "Should use streaming format (reserved[0] == 0x01)");
-    println!("Encrypted file: {} bytes, streaming format confirmed", encrypted_bytes.len());
+    assert_eq!(
+        header.reserved[0], 0x01,
+        "Should use streaming format (reserved[0] == 0x01)"
+    );
+    println!(
+        "Encrypted file: {} bytes, streaming format confirmed",
+        encrypted_bytes.len()
+    );
 
     // Decrypt
-    unlock_file(&mv2e_path, Some(restored_path.as_path()), b"streaming-test-password").expect("unlock");
+    unlock_file(
+        &mv2e_path,
+        Some(restored_path.as_path()),
+        b"streaming-test-password",
+    )
+    .expect("unlock");
 
     // Verify content matches
     let original = read(&mv2_path).expect("read original");
     let restored = read(&restored_path).expect("read restored");
     assert_eq!(original.len(), restored.len(), "Size mismatch");
     assert_eq!(original, restored, "Content mismatch");
-    println!("Decryption successful, {} bytes restored correctly", restored.len());
+    println!(
+        "Decryption successful, {} bytes restored correctly",
+        restored.len()
+    );
 
     // Verify the restored file is valid and readable
     let mem = Memvid::open(&restored_path).expect("open restored");
     let stats = mem.stats().expect("stats");
-    assert!(stats.frame_count >= 5, "Should have at least 5 frames, got {}", stats.frame_count);
+    assert!(
+        stats.frame_count >= 5,
+        "Should have at least 5 frames, got {}",
+        stats.frame_count
+    );
     println!("Restored memory verified: {} frames", stats.frame_count);
 }
 
@@ -172,44 +205,62 @@ fn wrong_password_fails_streaming() {
 
     // Verify streaming format (files >1MB use streaming)
     let encrypted = read(&mv2e_path).expect("read");
-    let header_bytes: [u8; Mv2eHeader::SIZE] = encrypted[..Mv2eHeader::SIZE].try_into().expect("slice to array");
+    let header_bytes: [u8; Mv2eHeader::SIZE] = encrypted[..Mv2eHeader::SIZE]
+        .try_into()
+        .expect("slice to array");
     let header = Mv2eHeader::decode(&header_bytes).expect("decode");
     assert_eq!(header.reserved[0], 0x01, "Should use streaming format");
 
     // Wrong password should fail
     let err = unlock_file(&mv2e_path, None, b"wrong-password").expect_err("should fail");
-    assert!(matches!(err, EncryptionError::Decryption { .. }), "Expected Decryption error, got {:?}", err);
+    assert!(
+        matches!(err, EncryptionError::Decryption { .. }),
+        "Expected Decryption error, got {:?}",
+        err
+    );
     println!("Wrong password correctly rejected for streaming format");
 }
 
-// ============================================================================
-// STREAMING ENCRYPTION SKELETON TESTS (TODO: implement)
-// ============================================================================
-
+/*
+    This test verifies two things:
+    1. Legacy format marker exists (reserved[0] == 0x00)
+    2. Decryption works (new code can decrypt old format files)
+*/
 #[test]
 #[cfg(feature = "encryption")]
-#[ignore] // Remove when implemented
-fn streaming_format_sets_reserved_flag() {
-    // TODO: Verify that new encryptions set reserved[0] = 0x01
-    todo!()
-}
-
-#[test]
-#[cfg(feature = "encryption")]
-#[ignore]
-fn streaming_roundtrip_medium_file() {
-    // TODO: Test encrypt/decrypt roundtrip with ~10MB file
-    todo!()
-}
-
-#[test]
-#[cfg(feature = "encryption")]
-#[ignore]
 fn decrypt_legacy_format_with_new_code() {
-    // TODO: Create a file with legacy format (reserved[0]=0), decrypt with current code
-    todo!()
+    use std::path::PathBuf;
+
+    let mut fixture_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    fixture_dir.push("tests/fixtures");
+
+    let original_mv2 = fixture_dir.join("legacy_test.mv2");
+    let original_mv2e = fixture_dir.join("legacy_test.mv2e");
+
+    let encrypted = read(&original_mv2e).expect("read");
+    let header_bytes: [u8; Mv2eHeader::SIZE] = encrypted[..Mv2eHeader::SIZE]
+        .try_into()
+        .expect("header bytes");
+    let header = Mv2eHeader::decode(&header_bytes).expect("decode");
+    assert_eq!(header.reserved[0], 0x00, "should be legacy format");
+
+    let dir = TempDir::new().expect("temp");
+    let decrypted_path = dir.path().join("decrypted.mv2");
+
+    unlock_file(original_mv2e, Some(decrypted_path.as_ref()), b"legacy-password").expect("unlock");
+
+    let original = read(&original_mv2).expect("original");
+    let decrypted = read(&decrypted_path).expect("decrypted");
+    assert_eq!(original, decrypted);
 }
 
+
+
+/*
+    This test verifies two things:
+    1. Legacy format marker exists (reserved[0] == 0x00)
+    2. Decryption works (new code can decrypt old format files)
+*/
 #[test]
 #[cfg(feature = "encryption")]
 #[ignore]
@@ -263,5 +314,19 @@ fn multiple_encrypt_decrypt_cycles() {
 #[ignore]
 fn concurrent_encryption_different_files() {
     // TODO: Test encrypting multiple files in parallel
+    todo!()
+}
+
+#[test]
+#[cfg(feature = "encryption")]
+#[ignore]
+fn legacy_file_upgrade_on_reencrypt() {
+    // TODO: Simulate legacy file upgrade flow:
+    // 1. Create a .mv2e file with reserved[0] = 0x00 (legacy one-shot format)
+    // 2. Decrypt it using unlock_file (should use oneshot path)
+    // 3. Modify the .mv2 file (add some data)
+    // 4. Re-encrypt using lock_file
+    // 5. Verify the new .mv2e has reserved[0] = 0x01 (streaming format)
+    // 6. Verify the content is still correct after round-trip
     todo!()
 }
