@@ -8,6 +8,8 @@ use memvid_core::{Memvid, PutOptions};
 #[cfg(feature = "encryption")]
 use std::fs::read;
 #[cfg(feature = "encryption")]
+use std::path::Path;
+#[cfg(feature = "encryption")]
 use tempfile::TempDir;
 
 #[test]
@@ -221,6 +223,15 @@ fn wrong_password_fails_streaming() {
     println!("Wrong password correctly rejected for streaming format");
 }
 
+/// Helper: reads and decodes the Mv2eHeader from an encrypted file.
+#[cfg(feature = "encryption")]
+fn read_header(path: &Path) -> Mv2eHeader {
+    let bytes = read(path).expect("read file");
+    let header_bytes: [u8; Mv2eHeader::SIZE] =
+        bytes[..Mv2eHeader::SIZE].try_into().expect("header bytes");
+    Mv2eHeader::decode(&header_bytes).expect("decode header")
+}
+
 /*
     This test verifies two things:
     1. Legacy format marker exists (reserved[0] == 0x00)
@@ -237,96 +248,108 @@ fn decrypt_legacy_format_with_new_code() {
     let original_mv2 = fixture_dir.join("legacy_test.mv2");
     let original_mv2e = fixture_dir.join("legacy_test.mv2e");
 
-    let encrypted = read(&original_mv2e).expect("read");
-    let header_bytes: [u8; Mv2eHeader::SIZE] = encrypted[..Mv2eHeader::SIZE]
-        .try_into()
-        .expect("header bytes");
-    let header = Mv2eHeader::decode(&header_bytes).expect("decode");
+    assert!(original_mv2.exists(), "legacy mv2 fixture missing");
+    assert!(original_mv2e.exists(), "legacy mv2e fixture missing");
+
+    let header = read_header(&original_mv2e);
     assert_eq!(header.reserved[0], 0x00, "should be legacy format");
 
     let dir = TempDir::new().expect("temp");
     let decrypted_path = dir.path().join("decrypted.mv2");
 
-    unlock_file(original_mv2e, Some(decrypted_path.as_ref()), b"legacy-password").expect("unlock");
+    unlock_file(
+        &original_mv2e,
+        Some(decrypted_path.as_ref()),
+        b"legacy-password",
+    )
+    .expect("unlock");
 
     let original = read(&original_mv2).expect("original");
     let decrypted = read(&decrypted_path).expect("decrypted");
     assert_eq!(original, decrypted);
 }
 
-
-
 /*
-    This test verifies two things:
-    1. Legacy format marker exists (reserved[0] == 0x00)
-    2. Decryption works (new code can decrypt old format files)
+    This test verifies dispatcher logic selects correct decoder:
+    1. New file (reserved[0] = 0x01) → uses streaming path
+    2. Legacy file (reserved[0] = 0x00) → uses oneshot path
 */
 #[test]
 #[cfg(feature = "encryption")]
-#[ignore]
 fn auto_detection_chooses_correct_decoder() {
-    // TODO: Verify unlock_file dispatches correctly based on reserved[0]
-    todo!()
+    // password for legacy file decryption: [b"legacy-password"]
+    use std::path::PathBuf;
+
+    let dir = TempDir::new().expect("temp");
+    let mv2_path = dir.path().join("test.mv2");
+    let mv2e_path = dir.path().join("test.mv2e");
+    let decrypted_path = dir.path().join("decrypted.mv2");
+
+    {
+        let mut mem = Memvid::create(&mv2_path).expect("memvid");
+        mem.put_bytes(b"testing: auto detection chooses correct decoder.")
+            .unwrap();
+        mem.commit().unwrap();
+    }
+
+    lock_file(&mv2_path, Some(&mv2e_path), b"test-password").expect("lock");
+
+    let header = read_header(&mv2e_path);
+    assert_eq!(header.reserved[0], 0x01, "new file should use streaming");
+
+    unlock_file(&mv2e_path, Some(&decrypted_path), b"test-password").expect("unlock");
+
+    let mut fixture_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    fixture_dir.push("tests/fixtures");
+    let legacy_mv2e = fixture_dir.join("legacy_test.mv2e");
+    let legacy_decrypted = dir.path().join("legacy_decrypted.mv2");
+
+    let header = read_header(&legacy_mv2e);
+    assert_eq!(header.reserved[0], 0x00, "legacy file should be oneshot");
+
+    unlock_file(&legacy_mv2e, Some(&legacy_decrypted), b"legacy-password").expect("unlock");
 }
 
+/*
+    This test verifies legacy file upgrade flow:
+    1. Decrypt legacy file (reserved[0] = 0x00)
+    2. Re-encrypt → produces streaming format (reserved[0] = 0x01)
+    3. Content integrity preserved after upgrade
+*/
 #[test]
 #[cfg(feature = "encryption")]
-#[ignore]
-fn corrupted_chunk_fails_gracefully() {
-    // TODO: Corrupt a chunk in the middle, verify proper error
-    todo!()
-}
-
-#[test]
-#[cfg(feature = "encryption")]
-#[ignore]
-fn truncated_file_fails_gracefully() {
-    // TODO: Truncate encrypted file mid-chunk, verify proper error
-    todo!()
-}
-
-#[test]
-#[cfg(feature = "encryption")]
-#[ignore]
-fn empty_mv2_file_encryption() {
-    // TODO: Test encrypting an empty .mv2 file
-    todo!()
-}
-
-#[test]
-#[cfg(feature = "encryption")]
-#[ignore]
-fn exact_chunk_boundary_file() {
-    // TODO: Test file size that's exactly N * CHUNK_SIZE (1MB)
-    todo!()
-}
-
-#[test]
-#[cfg(feature = "encryption")]
-#[ignore]
-fn multiple_encrypt_decrypt_cycles() {
-    // TODO: Encrypt, decrypt, modify, encrypt again - verify no corruption
-    todo!()
-}
-
-#[test]
-#[cfg(feature = "encryption")]
-#[ignore]
-fn concurrent_encryption_different_files() {
-    // TODO: Test encrypting multiple files in parallel
-    todo!()
-}
-
-#[test]
-#[cfg(feature = "encryption")]
-#[ignore]
 fn legacy_file_upgrade_on_reencrypt() {
-    // TODO: Simulate legacy file upgrade flow:
-    // 1. Create a .mv2e file with reserved[0] = 0x00 (legacy one-shot format)
-    // 2. Decrypt it using unlock_file (should use oneshot path)
-    // 3. Modify the .mv2 file (add some data)
-    // 4. Re-encrypt using lock_file
-    // 5. Verify the new .mv2e has reserved[0] = 0x01 (streaming format)
-    // 6. Verify the content is still correct after round-trip
-    todo!()
+    use std::{fs, path::PathBuf};
+
+    let dir = TempDir::new().expect("temp");
+    let legacy_mv2 = dir.path().join("test.mv2");
+    let legacy_mv2e = dir.path().join("test.mv2e");
+    let legacy_decrypted = dir.path().join("decrypt.mv2");
+    let new_mv2e = dir.path().join("new.mv2e");
+    let new_decrypted = dir.path().join("new_decrypted.mv2");
+
+    let mut fixture_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    fixture_dir.push("tests/fixtures");
+
+    fs::copy(fixture_dir.join("legacy_test.mv2"), &legacy_mv2).expect("copy mv2");
+    fs::copy(fixture_dir.join("legacy_test.mv2e"), &legacy_mv2e).expect("copy mv2");
+
+    let header = read_header(&legacy_mv2e);
+    assert_eq!(header.reserved[0], 0x00);
+
+    unlock_file(&legacy_mv2e, Some(&legacy_decrypted), b"legacy-password").expect("unlock");
+
+    lock_file(&legacy_decrypted, Some(&new_mv2e), b"new-password").expect("lock");
+
+    let header = read_header(&new_mv2e);
+    assert_eq!(header.reserved[0], 0x01, "should now be streaming format");
+
+    unlock_file(&new_mv2e, Some(&new_decrypted), b"new-password").expect("unlock new");
+
+    let original_content = read(&legacy_mv2).expect("read legacy");
+    let final_content = read(&new_decrypted).expect("read new decrypted");
+    assert_eq!(
+        final_content, original_content,
+        "content should match after upgrade"
+    );
 }
