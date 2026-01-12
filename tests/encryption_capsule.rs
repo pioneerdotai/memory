@@ -353,3 +353,96 @@ fn legacy_file_upgrade_on_reencrypt() {
         "content should match after upgrade"
     );
 }
+
+/*
+    Test: Invalid magic header detection
+    1. Create and encrypt a valid .mv2 file
+    2. Corrupt the magic bytes (MV2E → 0x00000000)
+    3. Attempt decrypt → should return InvalidMagic error
+*/
+#[test]
+#[cfg(feature = "encryption")]
+fn invalid_magic_header() {
+    use std::fs;
+
+    let dir = TempDir::new().expect("temp");
+    let mv2_path = dir.path().join("test.mv2");
+    let mv2e_path = dir.path().join("test.mv2e");
+
+    {
+        let mut mem = Memvid::create(&mv2_path).expect("create");
+        mem.put_bytes(b"testing invalid magic header").unwrap();
+        mem.commit().unwrap();
+    }
+
+    lock_file(&mv2_path, Some(&mv2e_path), b"test-password").expect("lock");
+
+    let mut bytes = fs::read(&mv2e_path).unwrap();
+    bytes[..4].copy_from_slice(&[0u8; 4]);
+    fs::write(&mv2e_path, &bytes).unwrap();
+
+    let err = unlock_file(&mv2e_path, None, b"test-password")
+        .expect_err("should fail with invalid magic");
+
+    assert!(matches!(
+        err,
+        EncryptionError::InvalidMagic {
+            expected: _,
+            found: _
+        }
+    ));
+}
+
+/*
+    Test: Truncated file error handling
+    1. Create and encrypt a valid .mv2 file
+    2. Truncate the .mv2e file (cut in half)
+    3. Attempt decrypt → should return error (not crash)
+*/
+#[test]
+#[cfg(feature = "encryption")]
+fn truncated_file_fails_gracefully() {
+    use std::fs;
+
+    let dir = TempDir::new().expect("temp");
+    let mv2_path = dir.path().join("test.mv2");
+    let mv2e_path = dir.path().join("test.mv2e");
+    let truncated_path = dir.path().join("truncated.mv2e");
+
+    {
+        let mut mem = Memvid::create(&mv2_path).unwrap();
+        mem.put_bytes(b"testing truncated files").unwrap();
+        mem.commit().unwrap();
+    }
+
+    lock_file(&mv2_path, Some(&mv2e_path), b"test-password").expect("lock");
+
+    let bytes = read(&mv2e_path).unwrap();
+    let truncated = &bytes[..bytes.len() / 2];
+    fs::write(&truncated_path, truncated).unwrap();
+
+    let result = unlock_file(&truncated_path, None, b"test-password");
+
+    assert!(result.is_err());
+}
+
+/*
+    Test: Non-MV2 file rejection
+    1. Create random file (not .mv2)
+    2. Attempt encrypt → should return NotMv2File error
+*/
+#[test]
+#[cfg(feature = "encryption")]
+fn non_mv2_file_rejected() {
+    use std::fs;
+
+    let dir = TempDir::new().expect("temp");
+    let fake_file = dir.path().join("not_a_mv2.txt");
+
+    fs::write(&fake_file, b"this is a fake file, not a mv2 file").unwrap();
+
+    let err =
+        lock_file(&fake_file, None, b"test-password").expect_err("should reject non mv2 file");
+
+    assert!(matches!(err, EncryptionError::NotMv2File { path: _ }))
+}
