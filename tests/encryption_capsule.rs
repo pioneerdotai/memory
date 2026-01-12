@@ -446,3 +446,69 @@ fn non_mv2_file_rejected() {
 
     assert!(matches!(err, EncryptionError::NotMv2File { path: _ }))
 }
+
+/*
+    Test: Exact chunk boundary (5MB)
+    1. Create 5MB content → multiple 1MB chunks
+    2. Encrypt/decrypt roundtrip
+    3. Verify content integrity
+*/
+#[test]
+#[cfg(feature = "encryption")]
+fn exact_chunk_boundary_file() {
+    let dir = TempDir::new().unwrap();
+    let mv2_path = dir.path().join("test.mv2");
+    let mv2e_path = dir.path().join("test.mv2e");
+    let decrypted_path = dir.path().join("decrypted.mv2");
+
+    {
+        let mut mem = Memvid::create(&mv2_path).unwrap();
+        mem.put_bytes(&[0u8; 1024 * 1024 * 5]).unwrap();
+        mem.commit().unwrap();
+    }
+
+    lock_file(&mv2_path, Some(&mv2e_path), b"test-password").expect("lock");
+
+    let header = read_header(&mv2e_path);
+    assert_eq!(header.reserved[0], 0x01);
+
+    unlock_file(&mv2e_path, Some(&decrypted_path), b"test-password").expect("unlock");
+
+    let original_content = read(&mv2_path).expect("read original");
+    let final_content = read(&decrypted_path).expect("read final");
+    assert_eq!(final_content, original_content);
+}
+
+/*
+    Test: Empty MV2 file encryption
+    1. Create .mv2 with no frames
+    2. Encrypt/decrypt roundtrip
+    3. Verify integrity and Memvid::open works
+*/
+#[test]
+#[cfg(feature = "encryption")]
+fn empty_mv2_file_encryption() {
+    let dir = TempDir::new().unwrap();
+    let mv2_path = dir.path().join("test.mv2");
+    let mv2e_path = dir.path().join("test.mv2e");
+    let decrypted_path = dir.path().join("decrypted.mv2");
+
+    {
+        let mut mem = Memvid::create(&mv2_path).unwrap();
+        mem.commit().unwrap();
+    }
+
+    lock_file(&mv2_path, Some(&mv2e_path), b"test-password").expect("lock");
+
+    unlock_file(&mv2e_path, Some(&decrypted_path), b"test-password").expect("unlock");
+
+    let original_content = read(&mv2_path).unwrap();
+    let final_content = read(&decrypted_path).unwrap();
+    assert_eq!(final_content, original_content);
+
+    {
+        let mem = Memvid::open(&decrypted_path).expect("should open decrypted file");
+        let stats = mem.stats().expect("stats");
+        assert_eq!(stats.frame_count, 0, "empty file should have 0 frames");
+    }
+}
