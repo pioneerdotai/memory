@@ -4,6 +4,26 @@ This directory contains Docker configurations for Memvid components.
 
 ## Available Images
 
+### Memvid Core (`core/`)
+
+The Memvid Core Docker images provide containerized Rust development, testing, and build environments for the `memvid-core` library.
+
+**Quick Start:**
+```bash
+# Development environment
+cd core
+docker-compose up -d dev
+docker-compose exec dev bash
+
+# Run tests
+docker-compose run --rm test
+
+# Build release
+docker-compose run --rm build
+```
+
+For detailed usage, see [core/README.md](core/README.md).
+
 ### Memvid CLI (`cli/`)
 
 The Memvid CLI Docker image provides a containerized version of the `memvid-cli` tool, allowing you to run Memvid commands without installing Node.js or dealing with platform-specific binaries.
@@ -55,6 +75,7 @@ The CLI image runs as a non-root user (`memvid`) for improved security. When mou
 
 ## Links
 
+- [Core Documentation](core/README.md)
 - [CLI Documentation](cli/README.md)
 - [CLI Testing Guide](cli/TESTING.md)
 - [Main Project README](../README.md)
