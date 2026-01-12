@@ -74,7 +74,10 @@ struct PlanProbe {
 pub(crate) fn doctor_plan(path: &Path, options: DoctorOptions) -> Result<DoctorPlan> {
     doctor_log!(
         "doctor: planning for {:?} (options: rebuild_time={}, rebuild_lex={}, rebuild_vec={})",
-        path, options.rebuild_time_index, options.rebuild_lex_index, options.rebuild_vec_index,
+        path,
+        options.rebuild_time_index,
+        options.rebuild_lex_index,
+        options.rebuild_vec_index,
     );
     ensure_single_file(path)?;
     let planner = DoctorPlanner::new(path.to_path_buf(), options);
@@ -96,7 +99,8 @@ fn try_recover_from_wal_corruption(path: &Path) -> Result<Memvid> {
 
     doctor_log!(
         "doctor: zeroing out corrupted WAL region (offset: {}, size: {})",
-        header.wal_offset, header.wal_size
+        header.wal_offset,
+        header.wal_size
     );
 
     // Zero out the entire WAL region to create a clean slate
@@ -174,7 +178,8 @@ impl DoctorPlanner {
         doctor_log!("doctor: planner.compute start");
         let start = std::time::Instant::now();
         let mut probe = self.probe()?;
-        doctor_log!("doctor: probe complete in {:?} (wal_pending={}, findings={})",
+        doctor_log!(
+            "doctor: probe complete in {:?} (wal_pending={}, findings={})",
             start.elapsed(),
             probe.wal_pending,
             probe.findings.len()
@@ -385,8 +390,11 @@ impl DoctorPlanner {
         let Some(header) = probe.header.as_ref() else {
             return Ok(probe);
         };
-        doctor_log!("doctor: header footer_offset={}, wal_offset={}, wal_size={}",
-            header.footer_offset, header.wal_offset, header.wal_size
+        doctor_log!(
+            "doctor: header footer_offset={}, wal_offset={}, wal_size={}",
+            header.footer_offset,
+            header.wal_offset,
+            header.wal_size
         );
 
         doctor_log!("doctor: attempting read_toc");
@@ -414,7 +422,8 @@ impl DoctorPlanner {
         probe.toc_recovered = recovered;
         probe.toc = Some(toc.clone());
         probe.toc_offset = Some(toc_offset);
-        doctor_log!("doctor: toc entries frames={}, segments={}, segment_catalog(lex={}, vec={}, time={})",
+        doctor_log!(
+            "doctor: toc entries frames={}, segments={}, segment_catalog(lex={}, vec={}, time={})",
             toc.frames.len(),
             toc.segments.len(),
             toc.segment_catalog.lex_segments.len(),
@@ -490,8 +499,11 @@ impl DoctorPlanner {
             return;
         };
         if let Some(manifest) = toc.time_index.clone() {
-            doctor_log!("doctor: inspect_time_index offset={} length={} entries={}",
-                manifest.bytes_offset, manifest.bytes_length, manifest.entry_count
+            doctor_log!(
+                "doctor: inspect_time_index offset={} length={} entries={}",
+                manifest.bytes_offset,
+                manifest.bytes_length,
+                manifest.entry_count
             );
             let span_end = manifest.bytes_offset.saturating_add(manifest.bytes_length);
             if span_end > probe.file_len {
@@ -563,7 +575,8 @@ impl DoctorPlanner {
         // CRITICAL FIX (Bug #10): Check for Tantivy segments first
         // Tantivy indexes have NO manifest but have lex_segments instead
         if !toc.indexes.lex_segments.is_empty() {
-            doctor_log!("doctor: detected Tantivy-based lex index with {} segments, skipping old validation",
+            doctor_log!(
+                "doctor: detected Tantivy-based lex index with {} segments, skipping old validation",
                 toc.indexes.lex_segments.len()
             );
             // Tantivy index is valid, no further validation needed
@@ -580,8 +593,11 @@ impl DoctorPlanner {
 
         #[cfg(feature = "lex")]
         {
-            doctor_log!("doctor: inspect_lex_index offset={} length={} docs={}",
-                manifest.bytes_offset, manifest.bytes_length, manifest.doc_count
+            doctor_log!(
+                "doctor: inspect_lex_index offset={} length={} docs={}",
+                manifest.bytes_offset,
+                manifest.bytes_length,
+                manifest.doc_count
             );
 
             let span_end = manifest.bytes_offset.saturating_add(manifest.bytes_length);
@@ -622,8 +638,10 @@ impl DoctorPlanner {
                 Ok(mut index) => {
                     let doc_count = index.documents_mut().len() as u64;
                     if doc_count != manifest.doc_count {
-                        doctor_log!("doctor: lex doc count mismatch manifest {} actual {}",
-                            manifest.doc_count, doc_count
+                        doctor_log!(
+                            "doctor: lex doc count mismatch manifest {} actual {}",
+                            manifest.doc_count,
+                            doc_count
                         );
                         probe.index.needs_lex = true;
                         probe.findings.push(DoctorFinding::warning(
@@ -674,7 +692,8 @@ impl DoctorPlanner {
                 .map(|s| s.dimension)
                 .unwrap_or(0);
 
-            doctor_log!("doctor: inspect_vec_index (segment_catalog) segments={} total_vectors={} dim={}",
+            doctor_log!(
+                "doctor: inspect_vec_index (segment_catalog) segments={} total_vectors={} dim={}",
                 toc.segment_catalog.vec_segments.len(),
                 total_vectors,
                 dimension
@@ -752,8 +771,12 @@ impl DoctorPlanner {
         };
         probe.index.vec_expected_vectors = manifest.vector_count;
         probe.index.vec_dimension = manifest.dimension;
-        doctor_log!("doctor: inspect_vec_index (monolithic) offset={} length={} vectors={} dim={}",
-            manifest.bytes_offset, manifest.bytes_length, manifest.vector_count, manifest.dimension
+        doctor_log!(
+            "doctor: inspect_vec_index (monolithic) offset={} length={} vectors={} dim={}",
+            manifest.bytes_offset,
+            manifest.bytes_length,
+            manifest.vector_count,
+            manifest.dimension
         );
 
         let span_end = manifest.bytes_offset.saturating_add(manifest.bytes_length);
@@ -906,7 +929,8 @@ impl DoctorExecutor {
                                 match Memvid::try_open(&path) {
                                     Ok(mem) => Some(mem),
                                     Err(retry_err) => {
-                                        doctor_log!("doctor: file still unopenable after aggressive repair: {}",
+                                        doctor_log!(
+                                            "doctor: file still unopenable after aggressive repair: {}",
                                             retry_err
                                         );
                                         additional_findings.push(DoctorFinding::error(
@@ -1388,8 +1412,11 @@ impl DoctorExecutor {
         lex: bool,
         vec: bool,
     ) -> Result<DoctorActionReport> {
-        doctor_log!("doctor: apply pending rebuilds (time={}, lex={}, vec={})",
-            time, lex, vec
+        doctor_log!(
+            "doctor: apply pending rebuilds (time={}, lex={}, vec={})",
+            time,
+            lex,
+            vec
         );
         if !(time || lex || vec) {
             return Ok(DoctorActionReport {
@@ -1427,7 +1454,8 @@ impl DoctorExecutor {
 
         // Preserve footer_offset that was just set by rebuild_indexes
         let footer_offset_after_rebuild = mem.header.footer_offset;
-        doctor_log!("doctor: footer_offset after rebuild: {}",
+        doctor_log!(
+            "doctor: footer_offset after rebuild: {}",
             footer_offset_after_rebuild
         );
 
@@ -1450,7 +1478,8 @@ impl DoctorExecutor {
                 reason: "footer_offset corrupted during doctor repair".into(),
             });
         }
-        doctor_log!("doctor: footer_offset preserved: {}",
+        doctor_log!(
+            "doctor: footer_offset preserved: {}",
             mem.header.footer_offset
         );
 
@@ -1462,8 +1491,10 @@ impl DoctorExecutor {
     }
 
     fn reset_wal(mem: &mut Memvid) -> Result<()> {
-        doctor_log!("doctor: reset_wal - zeroing {} bytes at offset {}",
-            mem.header.wal_size, mem.header.wal_offset
+        doctor_log!(
+            "doctor: reset_wal - zeroing {} bytes at offset {}",
+            mem.header.wal_size,
+            mem.header.wal_offset
         );
         let mut remaining = mem.header.wal_size;
         let mut offset = mem.header.wal_offset;
@@ -1551,7 +1582,8 @@ impl DoctorExecutor {
         reader.read_exact(&mut buf)?;
 
         if &buf == FOOTER_MAGIC {
-            doctor_log!("doctor: [Tier 2] Footer found at expected location: {}",
+            doctor_log!(
+                "doctor: [Tier 2] Footer found at expected location: {}",
                 expected_offset
             );
             return Ok(expected_offset);
@@ -1596,10 +1628,12 @@ impl DoctorExecutor {
         file.read_exact(&mut buf)?;
         let header_footer_offset = u64::from_le_bytes(buf);
 
-        doctor_log!("doctor: [Tier 2] Header claims footer at: {}",
+        doctor_log!(
+            "doctor: [Tier 2] Header claims footer at: {}",
             header_footer_offset
         );
-        doctor_log!("doctor: [Tier 2] Actual footer at: {}",
+        doctor_log!(
+            "doctor: [Tier 2] Actual footer at: {}",
             actual_footer_offset
         );
 
@@ -1614,7 +1648,8 @@ impl DoctorExecutor {
         } else {
             header_footer_offset - actual_footer_offset
         };
-        doctor_log!("doctor: [Tier 2] Mismatch: {} bytes, repairing...",
+        doctor_log!(
+            "doctor: [Tier 2] Mismatch: {} bytes, repairing...",
             mismatch
         );
 
