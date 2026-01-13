@@ -52,7 +52,7 @@ The result is a model-agnostic, infrastructure-free memory layer that gives AI a
 
 ---
 
-## Why Video Frames?
+## What are Smart Frames?
 
 Memvid draws inspiration from video encoding, not to store video, but to **organize AI memory as an append-only, ultra-efficient sequence of Smart Frames.**
 
