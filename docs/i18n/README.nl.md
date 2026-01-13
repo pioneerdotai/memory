@@ -9,8 +9,7 @@
 
 <p align="center">
   <strong>Memvid is een geheugenlaag van één bestand voor AI-agenten met directe toegang en langetermijnsgeheugen.</strong><br/>
-  Aanhoudend
-  Blijvend, versieerbaar en draagbaar geheugen, zonder databases.
+  Volhardend, versieerbaar en draagbaar geheugen, zonder databases.
 </p>
 
 <p align="center">
