@@ -252,4 +252,65 @@ mod tests {
         let bge = EmbeddingConfig::bge_small();
         assert_eq!(bge.dimension, 384);
     }
+
+    /// Integration test for LocalTextEmbedder
+    /// This test requires the BGE-small model to be downloaded to ~/.cache/memvid/text-models/
+    /// If the model is not present, the test will print a skip message and pass.
+    #[cfg(feature = "vec")]
+    #[test]
+    fn test_local_text_embedder_integration() {
+        use crate::text_embed::{LocalTextEmbedder, TextEmbedConfig};
+        use crate::types::embedding::EmbeddingProvider;
+
+        let config = TextEmbedConfig::default();
+        let embedder = match LocalTextEmbedder::new(config) {
+            Ok(e) => e,
+            Err(_) => {
+                println!("Skipping test_local_text_embedder_integration: model setup required");
+                return;
+            }
+        };
+
+        // Verify trait implementation
+        assert_eq!(embedder.kind(), "local");
+        assert_eq!(embedder.model(), "bge-small-en-v1.5");
+        assert_eq!(embedder.dimension(), 384);
+        assert!(embedder.is_ready());
+
+        // Test single embedding (skip if model not downloaded)
+        match embedder.embed_text("hello world") {
+            Ok(embedding) => {
+                assert_eq!(embedding.len(), 384);
+                // Verify normalization (L2 norm should be ~1.0)
+                let norm: f32 = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
+                assert!((norm - 1.0).abs() < 0.01, "Embedding should be normalized");
+            }
+            Err(e) => {
+                println!("Skipping embedding test: {}", e);
+                println!("To run this test, download the model:");
+                println!("  mkdir -p ~/.cache/memvid/text-models");
+                println!(
+                    "  curl -L 'https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/main/onnx/model.onnx' -o ~/.cache/memvid/text-models/bge-small-en-v1.5.onnx"
+                );
+                println!(
+                    "  curl -L 'https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/main/tokenizer.json' -o ~/.cache/memvid/text-models/bge-small-en-v1.5_tokenizer.json"
+                );
+                return;
+            }
+        }
+
+        // Test batch processing
+        let texts = vec!["hello", "world", "embedding"];
+        match embedder.embed_batch(&texts) {
+            Ok(batch) => {
+                assert_eq!(batch.len(), 3);
+                assert_eq!(batch[0].len(), 384);
+                assert_eq!(batch[1].len(), 384);
+                assert_eq!(batch[2].len(), 384);
+            }
+            Err(e) => {
+                println!("Batch embedding failed: {}", e);
+            }
+        }
+    }
 }

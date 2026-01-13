@@ -95,7 +95,7 @@ extractous = ["dep:extractous"]
 pdf_extract = ["dep:pdf-extract"]
 # High-accuracy PDF extraction with perfect word spacing (recommended for 2025+)
 pdf_oxide = ["dep:pdf_oxide"]
-vec = ["dep:ort", "dep:hnsw"]
+vec = ["dep:ort", "dep:hnsw", "dep:ndarray", "dep:tokenizers"]
 clip = ["vec", "dep:image", "dep:ndarray", "dep:rayon", "dep:tokenizers"]
 mmap = []
 pdfium = ["dep:pdfium-render"]
