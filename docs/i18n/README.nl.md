@@ -39,16 +39,16 @@
     <a href="https://trendshift.io/repositories/17293" target="_blank"><img src="https://trendshift.io/api/badge/repositories/17293" alt="memvid%2Fmemvid | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/</a>
 </p>
 
-<h2 align="center">⭐️ Leave a STAR to support the project ⭐️</h2>
+<h2 align="center">⭐️ Laat een ster achter om het project te steunen ⭐️</h2>
 </p>
 
-## What is Memvid?
+## Wat is Memvid?
 
-Memvid is a portable AI memory system that packages your data, embeddings, search structure, and metadata into a single file.
+Memvid is een draagbaar AI-geheugensysteem dat uw data, embedding, zoekstructuur en metadata in één bestand opslaat.
 
-Instead of running complex RAG pipelines or server-based vector databases, Memvid enables fast retrieval directly from the file.
+In plaats van complexe RAG pijplijnen of servergebaseerde vectordatabases te gebruiken, zal Memvid snelle toegang recht vanuit het bestand toestaan.
 
-The result is a model-agnostic, infrastructure-free memory layer that gives AI agents persistent, long-term memory they can carry anywhere.
+Het resultaat is een model-agnostische, infrastructuurvrije geheugenlaag die AI-agenten een volhardende langetermijnsgeheugen geeft, die ze overal kunnen meenemen.
 
 ---
 
