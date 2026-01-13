@@ -15,11 +15,11 @@
 <p align="center">
   <a href="https://www.memvid.com">Website</a>
   ·
-  <a href="https://sandbox.memvid.com">Try Sandbox</a>
+  <a href="https://sandbox.memvid.com">Probeer de Sandbox uit</a>
   ·
   <a href="https://docs.memvid.com">Docs</a>
   ·
-  <a href="https://github.com/memvid/memvid/discussions">Discussions</a>
+  <a href="https://github.com/memvid/memvid/discussions">Discussies</a>
 </p>
 
 <p align="center">
