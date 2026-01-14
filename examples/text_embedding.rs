@@ -1,3 +1,4 @@
+#![cfg(feature = "vec")]
 //! Example demonstrating local text embedding usage.
 //!
 //! This example shows how to:
