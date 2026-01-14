@@ -120,3 +120,7 @@ symspell_cleanup = ["dep:symspell"]
 [dev-dependencies]
 fastrand = "2.0"
 tempfile = "3.10.1"
+
+[[example]]
+name = "text_embedding"
+required-features = ["vec"]
