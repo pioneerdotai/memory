@@ -32,6 +32,9 @@ pub mod types;
 pub mod vec;
 pub mod vec_pq;
 
+#[cfg(feature = "vec")]
+pub mod text_embed;
+
 // Triplet extraction module for automatic SPO extraction during ingestion
 pub mod triplet;
 
@@ -191,6 +194,12 @@ pub use vec::{VecIndex, VecIndexArtifact, VecSearchHit};
 pub use vec_pq::{
     CompressionStats, ProductQuantizer, QuantizedVecIndex, QuantizedVecIndexArtifact,
     QuantizedVecIndexBuilder,
+};
+// Local text embedding provider - feature-gated
+#[cfg(feature = "vec")]
+pub use text_embed::{
+    LocalTextEmbedder, TEXT_EMBED_MODELS, TextEmbedConfig, TextEmbedModelInfo,
+    default_text_model_info, get_text_model_info,
 };
 // CLIP visual embeddings - types always available for serde compatibility
 pub use clip::{

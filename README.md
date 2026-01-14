@@ -136,16 +136,16 @@ memvid-core = "2.0"
 
 ### Feature Flags
 
-| Feature             | Description                                    |
-| ------------------- | ---------------------------------------------- |
-| `lex`               | Full-text search with BM25 ranking (Tantivy)   |
-| `pdf_extract`       | Pure Rust PDF text extraction                  |
-| `vec`               | Vector similarity search (HNSW + ONNX)         |
-| `clip`              | CLIP visual embeddings for image search        |
-| `whisper`           | Audio transcription with Whisper               |
-| `temporal_track`    | Natural language date parsing ("last Tuesday") |
-| `parallel_segments` | Multi-threaded ingestion                       |
-| `encryption`        | Password-based encryption capsules (.mv2e)     |
+| Feature             | Description                                         |
+| ------------------- | --------------------------------------------------- |
+| `lex`               | Full-text search with BM25 ranking (Tantivy)        |
+| `pdf_extract`       | Pure Rust PDF text extraction                       |
+| `vec`               | Vector similarity search (HNSW + local text embeddings via ONNX) |
+| `clip`              | CLIP visual embeddings for image search             |
+| `whisper`           | Audio transcription with Whisper                    |
+| `temporal_track`    | Natural language date parsing ("last Tuesday")      |
+| `parallel_segments` | Multi-threaded ingestion                            |
+| `encryption`        | Password-based encryption capsules (.mv2e)          |
 
 Enable features as needed:
 
@@ -286,6 +286,83 @@ Audio transcription (requires `whisper` feature):
 ```bash
 cargo run --example test_whisper --features whisper
 ```
+
+---
+
+## Text Embedding Models
+
+The `vec` feature includes local text embedding support using ONNX models. Before using local text embeddings, you need to download the model files manually.
+
+### Quick Start: BGE-small (Recommended)
+
+Download the default BGE-small model (384 dimensions, fast and efficient):
+
+```bash
+mkdir -p ~/.cache/memvid/text-models
+
+# Download ONNX model
+curl -L 'https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/main/onnx/model.onnx' \
+  -o ~/.cache/memvid/text-models/bge-small-en-v1.5.onnx
+
+# Download tokenizer
+curl -L 'https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/main/tokenizer.json' \
+  -o ~/.cache/memvid/text-models/bge-small-en-v1.5_tokenizer.json
+```
+
+### Available Models
+
+| Model                   | Dimensions | Size  | Best For              |
+| ----------------------- | ---------- | ----- | --------------------- |
+| `bge-small-en-v1.5`     | 384        | ~120MB | Default, fast         |
+| `bge-base-en-v1.5`      | 768        | ~420MB | Better quality        |
+| `nomic-embed-text-v1.5` | 768        | ~530MB | Versatile tasks       |
+| `gte-large`             | 1024       | ~1.3GB | Highest quality       |
+
+### Other Models
+
+**BGE-base** (768 dimensions):
+```bash
+curl -L 'https://huggingface.co/BAAI/bge-base-en-v1.5/resolve/main/onnx/model.onnx' \
+  -o ~/.cache/memvid/text-models/bge-base-en-v1.5.onnx
+curl -L 'https://huggingface.co/BAAI/bge-base-en-v1.5/resolve/main/tokenizer.json' \
+  -o ~/.cache/memvid/text-models/bge-base-en-v1.5_tokenizer.json
+```
+
+**Nomic** (768 dimensions):
+```bash
+curl -L 'https://huggingface.co/nomic-ai/nomic-embed-text-v1.5/resolve/main/onnx/model.onnx' \
+  -o ~/.cache/memvid/text-models/nomic-embed-text-v1.5.onnx
+curl -L 'https://huggingface.co/nomic-ai/nomic-embed-text-v1.5/resolve/main/tokenizer.json' \
+  -o ~/.cache/memvid/text-models/nomic-embed-text-v1.5_tokenizer.json
+```
+
+**GTE-large** (1024 dimensions):
+```bash
+curl -L 'https://huggingface.co/thenlper/gte-large/resolve/main/onnx/model.onnx' \
+  -o ~/.cache/memvid/text-models/gte-large.onnx
+curl -L 'https://huggingface.co/thenlper/gte-large/resolve/main/tokenizer.json' \
+  -o ~/.cache/memvid/text-models/gte-large_tokenizer.json
+```
+
+### Usage in Code
+
+```rust
+use memvid_core::text_embed::{LocalTextEmbedder, TextEmbedConfig};
+use memvid_core::types::embedding::EmbeddingProvider;
+
+// Use default model (BGE-small)
+let config = TextEmbedConfig::default();
+let embedder = LocalTextEmbedder::new(config)?;
+
+let embedding = embedder.embed_text("hello world")?;
+assert_eq!(embedding.len(), 384);
+
+// Use different model
+let config = TextEmbedConfig::bge_base();
+let embedder = LocalTextEmbedder::new(config)?;
+```
+
+See `examples/text_embedding.rs` for a complete example with similarity computation and search ranking.
 
 ---
 
