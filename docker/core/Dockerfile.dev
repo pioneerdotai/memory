@@ -1,5 +1,5 @@
 # Development Dockerfile for Memvid Core
-FROM rust:1.85-slim
+FROM rust:1.92-slim-trixie AS builder
 
 # Install development dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \

@@ -8,12 +8,12 @@ LABEL org.opencontainers.image.source="https://github.com/memvid/memvid"
 LABEL org.opencontainers.image.vendor="Memvid"
 LABEL org.opencontainers.image.version="2.0.131"
 
-# Install system deps + Node.js 22
+# Install system deps + Node.js 24
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
     libssl3 \
-    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
