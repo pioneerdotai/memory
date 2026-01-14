@@ -1,8 +1,13 @@
 //! Integration tests for doctor recovery functionality.
 //! These tests ensure that doctor can reliably recover corrupted files.
 
-use memvid_core::{DoctorOptions, Memvid, PutOptions, SearchRequest};
-use tempfile::NamedTempFile;
+use std::fs::{read, write};
+use tempfile::{NamedTempFile, TempDir};
+
+use memvid_core::{
+    DoctorOptions, DoctorStatus, HEADER_SIZE, Memvid, PutOptions, SearchRequest,
+    io::header::HeaderCodec,
+};
 
 /// Test that doctor can rebuild a Tantivy-based lex index from scratch.
 #[test]
@@ -353,4 +358,169 @@ fn doctor_rebuild_produces_searchable_index() {
 
         assert_eq!(results.hits.len(), 2, "Should find both physics documents");
     }
+}
+
+/*
+    Test: WAL corruption recovery
+    1. Create valid .mv2, corrupt WAL region with 0xFF bytes
+    2. Run doctor → triggers try_recover_from_wal_corruption()
+    3. Assert file opens after WAL rebuild
+*/
+#[test]
+fn doctor_recovers_corrupted_wal() {
+    use memvid_core::io::header::HeaderCodec;
+    use std::fs::{read, write};
+
+    let dir = TempDir::new().expect("temp");
+    let mv2_path = dir.path().join("test.mv2");
+    {
+        let mut mem = Memvid::create(&mv2_path).unwrap();
+        mem.put_bytes(b"testing the docter recovers corrupted WAL.")
+            .unwrap();
+        mem.commit().unwrap();
+    }
+
+    let mut bytes = read(&mv2_path).unwrap();
+    let header_bytes: &[u8; HEADER_SIZE] = bytes[0..HEADER_SIZE].try_into().unwrap();
+    let header = HeaderCodec::decode(header_bytes).unwrap();
+
+    let start = header.wal_offset as usize;
+    let end = start + header.wal_size.min(100) as usize;
+
+    // corrupt some bytes
+    for i in start..end {
+        bytes[i] = 0xFF;
+    }
+
+    write(&mv2_path, &bytes).unwrap();
+
+    let options = DoctorOptions {
+        rebuild_time_index: true,
+        rebuild_lex_index: true,
+        rebuild_vec_index: true,
+        vacuum: true,
+        dry_run: false, // should be false for repair
+        quiet: true,
+    };
+    let report = Memvid::doctor(&mv2_path, options).expect("docter");
+    eprintln!("Doctor status: {:?}", report.status);
+    eprintln!("Findings: {:?}", report.findings);
+    assert!(matches!(
+        report.status,
+        DoctorStatus::Healed | DoctorStatus::Clean
+    ));
+
+    let _mem = Memvid::open(&mv2_path).expect("should open after repair");
+}
+
+/*
+    Test: Header pointer corruption (Tier-2 aggressive repair)
+    1. Create valid .mv2, corrupt footer_offset (bytes 8-15) with u64::MAX
+    2. Run doctor → scan_for_footer() finds MV2FOOT! magic
+    3. Assert file opens after header repair
+*/
+#[test]
+fn doctor_repairs_header_pointer() {
+    let dir = TempDir::new().expect("temp");
+    let mv2_path = dir.path().join("test.mv2");
+
+    {
+        let mut mem = Memvid::create(&mv2_path).unwrap();
+        mem.put_bytes(b"testing doctor repair header pointer")
+            .unwrap();
+        mem.commit().unwrap();
+    }
+
+    let mut bytes = read(&mv2_path).unwrap();
+
+    // footer_offset = 8
+    bytes[8..16].copy_from_slice(&u64::MAX.to_le_bytes()); // corrupt the footer offset
+
+    write(&mv2_path, &bytes).unwrap();
+
+    let options = DoctorOptions {
+        ..Default::default()
+    };
+
+    let report = Memvid::doctor(&mv2_path, options).expect("doctor report");
+
+    assert!(matches!(
+        report.status,
+        DoctorStatus::Clean | DoctorStatus::Healed
+    ));
+
+    let _ = Memvid::open(&mv2_path).expect("open");
+}
+
+/*
+    Test: TOC recovery via header hint
+    1. Create valid .mv2, corrupt footer magic (last 8 bytes)
+    2. Run doctor → recover_toc() uses hint-based fallback
+    3. Assert file opens after TOC recovery
+*/
+#[test]
+fn doctor_recovers_corrupted_toc() {
+    let dir = TempDir::new().unwrap();
+    let mv2_path = dir.path().join("test.mv2");
+
+    {
+        let mut mem = Memvid::create(&mv2_path).unwrap();
+        mem.put_bytes(b"testing doctor recovers corrupted toc")
+            .unwrap();
+        mem.commit().unwrap();
+    }
+
+    let mut bytes = read(&mv2_path).unwrap();
+    let file_len = bytes.len();
+    bytes[file_len - 8..file_len].copy_from_slice(b"XXXXXXXX");
+
+    write(&mv2_path, &bytes).unwrap();
+
+    let options = DoctorOptions {
+        ..Default::default()
+    };
+
+    let report = Memvid::doctor(&mv2_path, options).expect("doctor report");
+    assert!(matches!(
+        report.status,
+        DoctorStatus::Clean | DoctorStatus::Healed
+    ));
+
+    let _ = Memvid::open(&mv2_path).expect("file should open after repair");
+}
+
+/*
+    Test: Complete TOC destruction is unrecoverable
+    1. Create valid .mv2, destroy TOC prefix at footer_offset
+    2. Run doctor → recover_toc() fails, aggressive repair fails
+    3. Assert status is Failed (documents limitation)
+*/
+#[test]
+fn doctor_handles_missing_footer() {
+    let dir = TempDir::new().expect("temp");
+    let mv2_path = dir.path().join("test.mv2");
+
+    {
+        let mut mem = Memvid::create(&mv2_path).expect("create mv2");
+        mem.put_bytes(b"testing doctor handles missing footer")
+            .unwrap();
+        mem.commit().unwrap();
+    }
+
+    let mut bytes = read(&mv2_path).expect("read");
+    let header_bytes: [u8; HEADER_SIZE] = bytes[..HEADER_SIZE].try_into().unwrap();
+    let header = HeaderCodec::decode(&header_bytes).unwrap();
+
+    let footer_offset = header.footer_offset as usize;
+    bytes[footer_offset..footer_offset + 8].copy_from_slice(&u64::MAX.to_le_bytes());
+
+    write(&mv2_path, &bytes).unwrap();
+
+    let options = DoctorOptions {
+        ..Default::default()
+    };
+
+    let report = Memvid::doctor(&mv2_path, options).unwrap();
+
+    assert!(matches!(report.status, DoctorStatus::Failed)); // assert that complete TOC destruction is unrecoverable
 }
