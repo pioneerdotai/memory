@@ -52,7 +52,16 @@ Het resultaat is een model-agnostische, infrastructuurvrije geheugenlaag die AI-
 
 ---
 
-## Why Video Frames?
+## Waarom videoframes?
+
+Memvid neemt inspiratie uit videos encoderen, niet om de video op te slaan, maar om **het organiseren van AI-geheugen als een ultra-efficiënte sequentie van Smart Frames waarbij je enkel kan toevoegen.**
+
+Een Smart Beeld is een immutable eenheid die content opslaat samen met zijn tijdssloten, controlesommen en basismetadata.
+Beelden worden gegroupeerd in een manier die voor efficiënte compressie, indexing en parallele lezingen zorgt.
+
+Dit beeld-gebaseerde design maakt dergelijke mogelijk:
+
+-    
 
 Memvid draws inspiration from video encoding, not to store video, but to **organize AI memory as an append-only, ultra-efficient sequence of Smart Frames.**
 
