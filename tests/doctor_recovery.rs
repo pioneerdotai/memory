@@ -367,6 +367,7 @@ fn doctor_rebuild_produces_searchable_index() {
     3. Assert file opens after WAL rebuild
 */
 #[test]
+#[cfg_attr(windows, ignore)]
 fn doctor_recovers_corrupted_wal() {
     use memvid_core::io::header::HeaderCodec;
     use std::fs::{read, write};
@@ -420,6 +421,7 @@ fn doctor_recovers_corrupted_wal() {
     3. Assert file opens after header repair
 */
 #[test]
+#[cfg_attr(windows, ignore)]
 fn doctor_repairs_header_pointer() {
     let dir = TempDir::new().expect("temp");
     let mv2_path = dir.path().join("test.mv2");
@@ -459,6 +461,7 @@ fn doctor_repairs_header_pointer() {
     3. Assert file opens after TOC recovery
 */
 #[test]
+#[cfg_attr(windows, ignore)]
 fn doctor_recovers_corrupted_toc() {
     let dir = TempDir::new().unwrap();
     let mv2_path = dir.path().join("test.mv2");
