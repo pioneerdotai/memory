@@ -1,0 +1,33 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown: # applies only to version-updates (not security-updates)
+      semver-patch: 7 # wait 7 days before applying patch updates
+      semver-minor: 14
+      semver-major: 28
+    ignore:
+      - dependency-name: "bincode"
+        versions: [ ">=3.0.0" ] # unsupported since v3
+  - package-ecosystem: docker
+    directories:
+      - docker/cli
+      - docker/core
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+  - package-ecosystem: docker-compose
+    directory: docker/core
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown: # https://blog.yossarian.net/2025/11/21/We-should-all-be-using-dependency-cooldowns
+      default-days: 7

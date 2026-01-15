@@ -56,7 +56,7 @@ docker run -it --rm -v $(pwd):/app memvid-dev bash
 ```
 
 **Features:**
-- Rust toolchain 1.85
+- Rust toolchain 1.92
 - All build dependencies
 - Cargo watch (optional)
 - Volume mounting for live development
@@ -72,7 +72,7 @@ docker run --rm memvid-test
 ```
 
 **Features:**
-- Rust toolchain 1.85
+- Rust toolchain 1.92
 - Test dependencies
 - Runs tests automatically
 
