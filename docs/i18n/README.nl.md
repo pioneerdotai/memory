@@ -257,7 +257,7 @@ De `examples/` map bedraagd werkende Voorbeelden:
 
 ### Basisgebruik
 
-Demonstrates create, put, search, and timeline operations:
+Beeldt create, put, search, and timeline operaties uit:
 
 ```bash
 cargo run --example basic_usage
@@ -265,7 +265,7 @@ cargo run --example basic_usage
 
 ### PDF Ingestion
 
-Ingest and search PDF documents (uses the "Attention Is All You Need" paper):
+PDF-documenten importeren en doorzoeken (gebruikt de "Attention Is All You Need" paper):
 
 ```bash
 cargo run --example pdf_ingestion
@@ -273,7 +273,7 @@ cargo run --example pdf_ingestion
 
 ### CLIP Visual Search
 
-Image search using CLIP embeddings (requires `clip` feature):
+Afbeeldingen zoeken met behulp van CLIP-integraties (gebruikt `clip` feature):
 
 ```bash
 cargo run --example clip_visual_search --features clip
@@ -281,7 +281,7 @@ cargo run --example clip_visual_search --features clip
 
 ### Whisper Transcription
 
-Audio transcription (requires `whisper` feature):
+Audio transcripties (gebruikt `whisper` feature):
 
 ```bash
 cargo run --example test_whisper --features whisper
