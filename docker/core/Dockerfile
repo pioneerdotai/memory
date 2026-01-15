@@ -1,6 +1,6 @@
 # Multi-stage Dockerfile for Memvid Core (Rust Library)
 # Build stage
-FROM rust:1.85-slim as builder
+FROM rust:1.92-slim-trixie AS builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -30,7 +30,7 @@ COPY tests ./tests
 RUN cargo build --release --features lex,pdf_extract
 
 # Runtime stage - minimal image for running examples/tests
-FROM debian:bookworm-slim
+FROM debian:trixie-slim AS runtime
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -43,7 +43,7 @@ WORKDIR /app
 # Copy the built artifacts from builder
 COPY --from=builder /app/target/release/examples ./examples
 COPY --from=builder /app/target/release/deps ./deps
-COPY --from=builder /app/target/release/libmemvid_core*.rlib ./lib/ 2>/dev/null || true
+COPY --from=builder /app/target/release/libmemvid_core*.rlib ./lib/
 
 # Set environment variables
 ENV RUST_LOG=info

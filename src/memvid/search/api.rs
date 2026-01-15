@@ -346,6 +346,7 @@ impl Memvid {
                 created_at: timestamp_to_rfc3339(frame.timestamp),
                 content_dates: frame.content_dates.clone(),
                 entities: Vec::new(),
+                extra_metadata: frame.extra_metadata.clone(),
                 #[cfg(feature = "temporal_track")]
                 temporal: None,
             };

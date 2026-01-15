@@ -317,6 +317,7 @@ pub(super) fn try_tantivy_search(
                 created_at: timestamp_to_rfc3339(frame_meta.timestamp),
                 content_dates: frame_meta.content_dates.clone(),
                 entities: Vec::new(),
+                extra_metadata: frame_meta.extra_metadata.clone(),
                 #[cfg(feature = "temporal_track")]
                 temporal: None,
             };
