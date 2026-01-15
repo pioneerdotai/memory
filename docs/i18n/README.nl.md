@@ -147,7 +147,7 @@ memvid-core = "2.0"
 | `parallel_segments` | Multi-threaded ingestion                       |
 | `encryption`        | Password-based encryption capsules (.mv2e)     |
 
-Enable features as needed:
+Schakel functies in indien nodig:
 
 ```toml
 [dependencies]
@@ -194,20 +194,20 @@ fn main() -> memvid_core::Result<()> {
 
 ## Build
 
-Clone the repository:
+Clone de repository:
 
 ```bash
 git clone https://github.com/memvid/memvid.git
 cd memvid
 ```
 
-Build in debug mode:
+Build in debug modus:
 
 ```bash
 cargo build
 ```
 
-Build in release mode (optimized):
+Build in release modus (geoptimaliseerd):
 
 ```bash
 cargo build --release
@@ -221,27 +221,27 @@ cargo build --release --features "lex,vec,temporal_track"
 
 ---
 
-## Run Tests
+## Tests uitvoeren
 
-Run all tests:
+Voer alle tests uit:
 
 ```bash
 cargo test
 ```
 
-Run tests with output:
+Voer tests uit met uitvoer:
 
 ```bash
 cargo test -- --nocapture
 ```
 
-Run a specific test:
+Voer een specifieke test uit:
 
 ```bash
 cargo test test_name
 ```
 
-Run integration tests only:
+Voer enkel integratie tests uit:
 
 ```bash
 cargo test --test lifecycle
@@ -251,11 +251,11 @@ cargo test --test mutation
 
 ---
 
-## Examples
+## Voorbeelden
 
-The `examples/` directory contains working examples:
+De `examples/` map bedraagd werkende Voorbeelden:
 
-### Basic Usage
+### Basisgebruik
 
 Demonstrates create, put, search, and timeline operations:
 
