@@ -71,48 +71,48 @@ Het resultaat is één bestand dat werkt als een terugspoelbare geheugentijdslij
 
 ---
 
-## Core Concepts
+## Basisconcepten
 
 -   **Living Memory Engine**
-    Continuously append, branch, and evolve memory across sessions.
+    Append, vertakt en evolueert geheugen continu over sessies.
 
 -   **Capsule Context (`.mv2`)**
-    Self-contained, shareable memory capsules with rules and expiry.
+    Autonome, deelbaar geheugencapsules met regels en vervalling.
 
 -   **Time-Travel Debugging**
-    Rewind, replay, or branch any memory state.
+    Spoel terug, herspeel, of vertak elke geheugenstatus.
 
 -   **Smart Recall**
-    Sub-5ms local memory access with predictive caching.
+    Sub-5ms lokale geheugentoegang met voorspelbare caching.
 
 -   **Codec Intelligence**
-    Auto-selects and upgrades compression over time.
+    Selecteert en verbetert automatisch de compressie doorheen de tijd.
 
 ---
 
-## Use Cases
+## Gebruiksgevallen
 
-Memvid is a portable, serverless memory layer that gives AI agents persistent memory and fast recall. Because it's model-agnostic, multi-modal, and works fully offline, developers are using Memvid across a wide range of real-world applications.
+Memvid is een draagbare, serverloze geheugenlaag dat AI-agenten een volhardend geheugen en snelle herroepingen geeft. Door zijn model-agnostische, multi-modale en het feit dat het volledig offline werkt, gebruiken ontwikkelaars het over een wijd scala aan real-world applicaties.
 
--   Long-Running AI Agents
--   Enterprise Knowledge Bases
--   Offline-First AI Systems
--   Codebase Understanding
--   Customer Support Agents
--   Workflow Automation
--   Sales and Marketing Copilots
--   Personal Knowledge Assistants
--   Medical, Legal, and Financial Agents
--   Auditable and Debuggable AI Workflows
--   Custom Applications
+-   Lang werkende AI-agenten
+-   Kennisbanken voor ondernemingen
+-   Offline-First AI-systemen
+-   Codebase-begrip
+-   Klantenondersteuningsagenten
+-   Automatisering van de workflow
+-   Verkoop- en marketingcopiloten
+-   Persoonlijke Kennisassistenten
+-   Medische, juridische en financiële adviseurs
+-   Controleerbare en debugbare AI-workflows
+-   Aangepaste toepassingen
 
 ---
 
 ## SDKs & CLI
 
-Use Memvid in your preferred language:
+Gebruik Memvid in je lievelingstaal:
 
-| Package         | Install                     | Links                                                                                                               |
+| Pakket          | Installatie                 | Links                                                                                                               |
 | --------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | **CLI**         | `npm install -g memvid-cli` | [![npm](https://img.shields.io/npm/v/memvid-cli?style=flat-square)](https://www.npmjs.com/package/memvid-cli)       |
 | **Node.js SDK** | `npm install @memvid/sdk`   | [![npm](https://img.shields.io/npm/v/@memvid/sdk?style=flat-square)](https://www.npmjs.com/package/@memvid/sdk)     |
@@ -121,13 +121,13 @@ Use Memvid in your preferred language:
 
 ---
 
-## Installation (Rust)
+## Installatie (Rust)
 
-### Requirements
+### Benodigdheden
 
--   **Rust 1.85.0+** — Install from [rustup.rs](https://rustup.rs)
+-   **Rust 1.85.0+** — Installeer vanuit [rustup.rs](https://rustup.rs)
 
-### Add to Your Project
+### Voeg dit aan je project toe
 
 ```toml
 [dependencies]
@@ -136,7 +136,7 @@ memvid-core = "2.0"
 
 ### Feature Flags
 
-| Feature             | Description                                    |
+| Feature             | Beschrijving                                   |
 | ------------------- | ---------------------------------------------- |
 | `lex`               | Full-text search with BM25 ranking (Tantivy)   |
 | `pdf_extract`       | Pure Rust PDF text extraction                  |
@@ -289,9 +289,9 @@ cargo run --example test_whisper --features whisper
 
 ---
 
-## File Format
+## Bestandsformaat
 
-Everything lives in a single `.mv2` file:
+Alles leeft in één `.mv2` bestand:
 
 ```
 ┌────────────────────────────┐
@@ -311,21 +311,21 @@ Everything lives in a single `.mv2` file:
 └────────────────────────────┘
 ```
 
-No `.wal`, `.lock`, `.shm`, or sidecar files. Ever.
+Geen `.wal`, `.lock`, `.shm`, of sidecar-bestanden. Ooit.
 
-See [MV2_SPEC.md](MV2_SPEC.md) for the complete file format specification.
+Zie [MV2_SPEC.md](MV2_SPEC.md) voor de complete bestandsformaat specificaties.
 
 ---
 
-## Support
+## Ondersteuning
 
-Have questions or feedback?
+Heb je vragen of feedback?
 Email: contact@memvid.com
 
-**Drop a ⭐ to show support**
+**Laat een ⭐ om je ondersteuning te tonen**
 
 ---
 
-## License
+## Licentie
 
-Apache License 2.0 — see the [LICENSE](LICENSE) file for details.
+Apache License 2.0 — zie het [LICENSE](LICENSE) bestandvoor details.
