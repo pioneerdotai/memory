@@ -28,6 +28,9 @@ use crate::{MemvidError, Result};
 use ndarray::Array;
 use ort::session::{Session, builder::GraphOptimizationLevel};
 use ort::value::Tensor;
+use std::collections::hash_map::DefaultHasher;
+use std::collections::{HashMap, VecDeque};
+use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -47,6 +50,9 @@ const MAX_SEQUENCE_LENGTH: usize = 512;
 
 /// Model unload timeout - unload after 5 minutes of inactivity
 pub const MODEL_UNLOAD_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Default cache capacity (number of embeddings to cache)
+const DEFAULT_CACHE_CAPACITY: usize = 1000;
 
 // ============================================================================
 // Model Registry
@@ -140,6 +146,10 @@ pub struct TextEmbedConfig {
     pub models_dir: PathBuf,
     /// Offline mode - don't attempt downloads, fail if model missing
     pub offline: bool,
+    /// Enable embedding cache (default: true)
+    pub enable_cache: bool,
+    /// Maximum number of embeddings to cache (default: 1000)
+    pub cache_capacity: usize,
 }
 
 impl Default for TextEmbedConfig {
@@ -154,7 +164,9 @@ impl Default for TextEmbedConfig {
         Self {
             model_name: default_text_model_info().name.to_string(),
             models_dir,
-            offline: true, // Default to offline (no auto-download)
+            offline: true,      // Default to offline (no auto-download)
+            enable_cache: true, // Cache enabled by default
+            cache_capacity: DEFAULT_CACHE_CAPACITY,
         }
     }
 }
@@ -198,6 +210,112 @@ impl TextEmbedConfig {
 }
 
 // ============================================================================
+// Embedding Cache
+// ============================================================================
+
+/// Statistics for the embedding cache
+#[derive(Debug, Clone, Copy)]
+pub struct CacheStats {
+    /// Number of cache hits
+    pub hits: usize,
+    /// Number of cache misses
+    pub misses: usize,
+    /// Current cache size
+    pub size: usize,
+    /// Maximum cache capacity
+    pub capacity: usize,
+}
+
+impl CacheStats {
+    /// Calculate hit rate (hits / total requests)
+    pub fn hit_rate(&self) -> f64 {
+        let total = self.hits + self.misses;
+        if total == 0 {
+            0.0
+        } else {
+            self.hits as f64 / total as f64
+        }
+    }
+}
+
+/// Simple LRU cache for text embeddings
+struct EmbeddingCache {
+    /// Cache storage: text hash -> embedding
+    cache: HashMap<u64, Vec<f32>>,
+    /// LRU queue: tracks access order (most recent at front)
+    lru_queue: VecDeque<u64>,
+    /// Maximum capacity
+    capacity: usize,
+    /// Cache hit count
+    hits: usize,
+    /// Cache miss count
+    misses: usize,
+}
+
+impl EmbeddingCache {
+    fn new(capacity: usize) -> Self {
+        Self {
+            cache: HashMap::with_capacity(capacity),
+            lru_queue: VecDeque::with_capacity(capacity),
+            capacity,
+            hits: 0,
+            misses: 0,
+        }
+    }
+
+    fn get(&mut self, key: u64) -> Option<Vec<f32>> {
+        if let Some(embedding) = self.cache.get(&key) {
+            // Move to front (most recently used)
+            self.lru_queue.retain(|&k| k != key);
+            self.lru_queue.push_front(key);
+            self.hits += 1;
+            Some(embedding.clone())
+        } else {
+            self.misses += 1;
+            None
+        }
+    }
+
+    fn insert(&mut self, key: u64, value: Vec<f32>) {
+        // Check if already exists
+        if self.cache.contains_key(&key) {
+            // Update and move to front
+            self.cache.insert(key, value);
+            self.lru_queue.retain(|&k| k != key);
+            self.lru_queue.push_front(key);
+            return;
+        }
+
+        // Evict if at capacity
+        if self.cache.len() >= self.capacity {
+            if let Some(oldest_key) = self.lru_queue.pop_back() {
+                self.cache.remove(&oldest_key);
+            }
+        }
+
+        // Insert new entry
+        self.cache.insert(key, value);
+        self.lru_queue.push_front(key);
+    }
+
+    fn clear(&mut self) {
+        self.cache.clear();
+        self.lru_queue.clear();
+        self.hits = 0;
+        self.misses = 0;
+    }
+
+    fn stats(&self) -> CacheStats {
+        CacheStats {
+            hits: self.hits,
+            misses: self.misses,
+            size: self.cache.len(),
+            capacity: self.capacity,
+        }
+    }
+}
+
+// ============================================================================
 // Local Text Embedder
 // ============================================================================
 
@@ -215,6 +333,8 @@ pub struct LocalTextEmbedder {
     tokenizer: Mutex<Option<Tokenizer>>,
     /// Last time the model was used (for idle unloading)
     last_used: Mutex<Instant>,
+    /// Embedding cache (optional)
+    cache: Mutex<Option<EmbeddingCache>>,
 }
 
 impl LocalTextEmbedder {
@@ -222,12 +342,20 @@ impl LocalTextEmbedder {
     pub fn new(config: TextEmbedConfig) -> Result<Self> {
         let model_info = get_text_model_info(&config.model_name);
 
+        // Initialize cache if enabled
+        let cache = if config.enable_cache {
+            Some(EmbeddingCache::new(config.cache_capacity))
+        } else {
+            None
+        };
+
         Ok(Self {
             config,
             model_info,
             session: Mutex::new(None),
             tokenizer: Mutex::new(None),
             last_used: Mutex::new(Instant::now()),
+            cache: Mutex::new(cache),
         })
     }
 
@@ -369,8 +497,28 @@ impl LocalTextEmbedder {
         Ok(())
     }
 
-    /// Encode text to embedding
+    /// Compute cache key for a given text
+    fn cache_key(text: &str) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        text.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    /// Encode text to embedding (with caching support)
     pub fn encode_text(&self, text: &str) -> Result<Vec<f32>> {
+        // 1. Check cache first
+        if let Ok(mut cache_guard) = self.cache.lock() {
+            if let Some(ref mut cache) = *cache_guard {
+                let key = Self::cache_key(text);
+                if let Some(embedding) = cache.get(key) {
+                    tracing::debug!(text_len = text.len(), "Cache hit");
+                    return Ok(embedding);
+                }
+                tracing::debug!(text_len = text.len(), "Cache miss");
+            }
+        }
+
+        // 2. Cache miss - generate embedding normally
         // Ensure session and tokenizer are loaded
         self.load_session()?;
         self.load_tokenizer()?;
@@ -535,6 +683,14 @@ impl LocalTextEmbedder {
             "Generated text embedding"
         );
 
+        // 3. Store in cache
+        if let Ok(mut cache_guard) = self.cache.lock() {
+            if let Some(ref mut cache) = *cache_guard {
+                let key = Self::cache_key(text);
+                cache.insert(key, normalized.clone());
+            }
+        }
+
         Ok(normalized)
     }
 
@@ -545,6 +701,30 @@ impl LocalTextEmbedder {
             embeddings.push(self.encode_text(text)?);
         }
         Ok(embeddings)
+    }
+
+    /// Get cache statistics
+    ///
+    /// Returns None if caching is disabled
+    pub fn cache_stats(&self) -> Option<CacheStats> {
+        if let Ok(cache_guard) = self.cache.lock() {
+            cache_guard.as_ref().map(|cache| cache.stats())
+        } else {
+            None
+        }
+    }
+
+    /// Clear the embedding cache
+    ///
+    /// This resets all cache statistics and removes all cached embeddings
+    pub fn clear_cache(&self) -> Result<()> {
+        if let Ok(mut cache_guard) = self.cache.lock() {
+            if let Some(ref mut cache) = *cache_guard {
+                cache.clear();
+                tracing::debug!("Embedding cache cleared");
+            }
+        }
+        Ok(())
     }
 
     /// Check if model is loaded
@@ -720,5 +900,177 @@ mod tests {
         assert_eq!(embedder.model(), "bge-small-en-v1.5");
         assert_eq!(embedder.dimension(), 384);
         assert!(embedder.is_ready());
+    }
+
+    // ========================================================================
+    // Cache Tests
+    // ========================================================================
+
+    #[test]
+    fn test_cache_enabled_by_default() {
+        let config = TextEmbedConfig::default();
+        assert!(config.enable_cache);
+        assert_eq!(config.cache_capacity, 1000);
+
+        let embedder = LocalTextEmbedder::new(config).unwrap();
+        // Should have cache stats available
+        assert!(embedder.cache_stats().is_some());
+    }
+
+    #[test]
+    fn test_cache_can_be_disabled() {
+        let config = TextEmbedConfig {
+            enable_cache: false,
+            ..Default::default()
+        };
+        let embedder = LocalTextEmbedder::new(config).unwrap();
+
+        // Should not have cache stats when disabled
+        assert!(embedder.cache_stats().is_none());
+    }
+
+    #[test]
+    fn test_cache_basic_operations() {
+        let mut cache = EmbeddingCache::new(10);
+
+        // Initial state
+        let stats = cache.stats();
+        assert_eq!(stats.hits, 0);
+        assert_eq!(stats.misses, 0);
+        assert_eq!(stats.size, 0);
+
+        // Insert
+        cache.insert(1, vec![1.0, 2.0, 3.0]);
+        assert_eq!(cache.stats().size, 1);
+
+        // Hit
+        let result = cache.get(1);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), vec![1.0, 2.0, 3.0]);
+        assert_eq!(cache.stats().hits, 1);
+        assert_eq!(cache.stats().misses, 0);
+
+        // Miss
+        let result = cache.get(999);
+        assert!(result.is_none());
+        assert_eq!(cache.stats().hits, 1);
+        assert_eq!(cache.stats().misses, 1);
+    }
+
+    #[test]
+    fn test_cache_lru_eviction() {
+        let mut cache = EmbeddingCache::new(3);
+
+        // Fill cache
+        cache.insert(1, vec![1.0]);
+        cache.insert(2, vec![2.0]);
+        cache.insert(3, vec![3.0]);
+        assert_eq!(cache.stats().size, 3);
+
+        // Access key 1 (moves to front)
+        let _ = cache.get(1);
+
+        // Insert key 4 - should evict key 2 (least recently used)
+        cache.insert(4, vec![4.0]);
+        assert_eq!(cache.stats().size, 3);
+
+        // Key 1 and 3 should still be present
+        assert!(cache.get(1).is_some());
+        assert!(cache.get(3).is_some());
+
+        // Key 2 should be evicted
+        assert!(cache.get(2).is_none());
+
+        // Key 4 should be present
+        assert!(cache.get(4).is_some());
+    }
+
+    #[test]
+    fn test_cache_clear() {
+        let mut cache = EmbeddingCache::new(10);
+
+        // Add some entries
+        cache.insert(1, vec![1.0]);
+        cache.insert(2, vec![2.0]);
+        let _ = cache.get(1); // Generate some stats
+        let _ = cache.get(999); // Miss
+
+        assert_eq!(cache.stats().size, 2);
+        assert_eq!(cache.stats().hits, 1);
+        assert_eq!(cache.stats().misses, 1);
+
+        // Clear
+        cache.clear();
+
+        assert_eq!(cache.stats().size, 0);
+        assert_eq!(cache.stats().hits, 0);
+        assert_eq!(cache.stats().misses, 0);
+    }
+
+    #[test]
+    fn test_cache_stats_hit_rate() {
+        let stats = CacheStats {
+            hits: 7,
+            misses: 3,
+            size: 5,
+            capacity: 10,
+        };
+
+        assert_eq!(stats.hit_rate(), 0.7); // 7 / (7 + 3) = 0.7
+
+        // Zero case
+        let stats_zero = CacheStats {
+            hits: 0,
+            misses: 0,
+            size: 0,
+            capacity: 10,
+        };
+        assert_eq!(stats_zero.hit_rate(), 0.0);
+    }
+
+    #[test]
+    fn test_cache_key_consistency() {
+        // Same text should produce same key
+        let key1 = LocalTextEmbedder::cache_key("hello world");
+        let key2 = LocalTextEmbedder::cache_key("hello world");
+        assert_eq!(key1, key2);
+
+        // Different text should (very likely) produce different key
+        let key3 = LocalTextEmbedder::cache_key("goodbye world");
+        assert_ne!(key1, key3);
+    }
+
+    #[test]
+    #[ignore] // Requires model files
+    fn test_cache_integration() {
+        let config = TextEmbedConfig {
+            enable_cache: true,
+            cache_capacity: 100,
+            ..Default::default()
+        };
+        let embedder = LocalTextEmbedder::new(config).unwrap();
+
+        let text = "test embedding";
+
+        // First call - should be cache miss
+        let _ = embedder.encode_text(text).unwrap();
+        let stats1 = embedder.cache_stats().unwrap();
+        assert_eq!(stats1.misses, 1);
+        assert_eq!(stats1.hits, 0);
+        assert_eq!(stats1.size, 1);
+
+        // Second call - should be cache hit
+        let _ = embedder.encode_text(text).unwrap();
+        let stats2 = embedder.cache_stats().unwrap();
+        assert_eq!(stats2.misses, 1); // Still 1
+        assert_eq!(stats2.hits, 1); // Now 1
+        assert_eq!(stats2.size, 1); // Still 1
+
+        // Clear cache
+        embedder.clear_cache().unwrap();
+        let stats3 = embedder.cache_stats().unwrap();
+        assert_eq!(stats3.size, 0);
+        assert_eq!(stats3.hits, 0);
+        assert_eq!(stats3.misses, 0);
     }
 }
