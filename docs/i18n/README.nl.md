@@ -56,27 +56,18 @@ Het resultaat is een model-agnostische, infrastructuurvrije geheugenlaag die AI-
 
 Memvid neemt inspiratie uit videos encoderen, niet om de video op te slaan, maar om **het organiseren van AI-geheugen als een ultra-efficiënte sequentie van Smart Frames waarbij je enkel kan toevoegen.**
 
-Een Smart Beeld is een immutable eenheid die content opslaat samen met zijn tijdssloten, controlesommen en basismetadata.
-Beelden worden gegroupeerd in een manier die voor efficiënte compressie, indexing en parallele lezingen zorgt.
+Een Smart Frame is een immutabele eenheid die content opslaat samen met zijn tijdstempels, controlesommen en basismetadata.
+Frames worden gegroupeerd in een manier die voor efficiënte compressie, indexing en parallele lezingen zorgt.
 
-Dit beeld-gebaseerde design maakt dergelijke mogelijk:
+Dit frame-gebaseerde design maakt het volgende mogelijk:
 
--    
+- Append-only bijschrijven van data zonder het aanpassen of corrumperen van bestaande data
+- Zoekopdrachten over vorige geheugenstaten
+- Tijdlijn-stijl inspectie van hoe kennis evolueert
+- Crashveiligheid door de vastgelegde immutabele frames
+- Efficiënte compressie gebruikmakend van technieken aangepast uit video encoderen
 
-Memvid draws inspiration from video encoding, not to store video, but to **organize AI memory as an append-only, ultra-efficient sequence of Smart Frames.**
-
-A Smart Frame is an immutable unit that stores content along with timestamps, checksums and basic metadata.
-Frames are grouped in a way that allows efficient compression, indexing, and parallel reads.
-
-This frame-based design enables:
-
--   Append-only writes without modifying or corrupting existing data
--   Queries over past memory states
--   Timeline-style inspection of how knowledge evolves
--   Crash safety through committed, immutable frames
--   Efficient compression using techniques adapted from video encoding
-
-The result is a single file that behaves like a rewindable memory timeline for AI systems.
+Het resultaat is één bestand dat werkt als een terugspoelbare geheugentijdslijn van AI-systemen.
 
 ---
 
