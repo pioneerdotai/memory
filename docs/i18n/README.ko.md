@@ -1,26 +1,18 @@
 <img width="2000" height="524" alt="Social Cover (9)" src="https://github.com/user-attachments/assets/cf66f045-c8be-494b-b696-b8d7e4fb709c" />
 
 <p align="center">
- <a href="docs/i18n/README.es.md">🇪🇸 Español</a>
- <a href="docs/i18n/README.fr.md">🇫🇷 Français</a>
- <a href="docs/i18n/README.so.md">🇸🇴 Soomaali</a>
- <a href="docs/i18n/README.ar.md">🇸🇦 العربية</a>
- <a href="docs/i18n/README.kr.md">🇰🇷 한국어</a>
+  <strong>Memvid는 AI 에이전트를 위한 단일 파일 메모리 레이어로, 인스턴스 검색 및 장기 메모리 기능을 제공합니다.</strong><br/>
+  데이터 베이스 없이 지속적이고, 버전 관리가 용이하며 여러 어플리케이션에 자유로운 적용이 가능합니다.
 </p>
 
 <p align="center">
-  <strong>Memvid is a single-file memory layer for AI agents with instant retrieval and long-term memory.</strong><br/>
-  Persistent, versioned, and portable memory, without databases.
-</p>
-
-<p align="center">
-  <a href="https://www.memvid.com">Website</a>
+  <a href="https://www.memvid.com">웹사이트</a>
   ·
-  <a href="https://sandbox.memvid.com">Try Sandbox</a>
+  <a href="https://sandbox.memvid.com">샌드박스</a>
   ·
-  <a href="https://docs.memvid.com">Docs</a>
+  <a href="https://docs.memvid.com">문서</a>
   ·
-  <a href="https://github.com/memvid/memvid/discussions">Discussions</a>
+  <a href="https://github.com/memvid/memvid/discussions">토론</a>
 </p>
 
 <p align="center">
@@ -40,80 +32,80 @@
     <a href="https://trendshift.io/repositories/17293" target="_blank"><img src="https://trendshift.io/api/badge/repositories/17293" alt="memvid%2Fmemvid | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/</a>
 </p>
 
-<h2 align="center">⭐️ Leave a STAR to support the project ⭐️</h2>
+<h2 align="center">⭐️ STAR로 이 프로젝트를 지원해주세요 ⭐️</h2>
 </p>
 
-## What is Memvid?
+## Memvid란?
 
-Memvid is a portable AI memory system that packages your data, embeddings, search structure, and metadata into a single file.
+Memvid는 데이터, 임베딩, 검색 구조 및 메타데이터를 단일 파일로 패키징하는 이식 가능한 AI 메모리 시스템입니다.
+​
+복잡한 RAG 파이프라인이나 서버 기반 벡터 데이터베이스를 실행하는 대신, Memvid는 파일에서 직접 빠른 검색을 가능하게 합니다.
 
-Instead of running complex RAG pipelines or server-based vector databases, Memvid enables fast retrieval directly from the file.
-
-The result is a model-agnostic, infrastructure-free memory layer that gives AI agents persistent, long-term memory they can carry anywhere.
-
----
-
-## What are Smart Frames?
-
-Memvid draws inspiration from video encoding, not to store video, but to **organize AI memory as an append-only, ultra-efficient sequence of Smart Frames.**
-
-A Smart Frame is an immutable unit that stores content along with timestamps, checksums and basic metadata.
-Frames are grouped in a way that allows efficient compression, indexing, and parallel reads.
-
-This frame-based design enables:
-
--   Append-only writes without modifying or corrupting existing data
--   Queries over past memory states
--   Timeline-style inspection of how knowledge evolves
--   Crash safety through committed, immutable frames
--   Efficient compression using techniques adapted from video encoding
-
-The result is a single file that behaves like a rewindable memory timeline for AI systems.
+결과적으로 모델에 독립적이며 인프라 구조와는 독립적인 메모리 레이어로, AI 에이전트가 어디서나 휴대할 수 있는 지속적 장기 메모리를 제공합니다
 
 ---
 
-## Core Concepts
+## Smart Frames란?
 
--   **Living Memory Engine**
-    Continuously append, branch, and evolve memory across sessions.
+Memvid는 **AI 메모리를 추가 전용(append-only)의 초고효율 Smart Frame 시퀀스로 구성하기 위해** 비디오 인코딩에서 영감을 받았습니다.
 
--   **Capsule Context (`.mv2`)**
-    Self-contained, shareable memory capsules with rules and expiry.
+Smart Frame은 타임스탬프, 체크섬 및 기본 메타데이터와 함께 콘텐츠를 저장하는 불변 단위입니다.
+프레임은 효율적인 압축, 인덱싱 및 병렬 읽기를 허용하는 방식으로 그룹화됩니다.
 
--   **Time-Travel Debugging**
-    Rewind, replay, or branch any memory state.
+이러한 프레임 기반 설계는 다음을 가능하게 합니다:
 
--   **Smart Recall**
-    Sub-5ms local memory access with predictive caching.
+-   기존 데이터를 수정하거나 손상시키지 않는 추가 전용(append-only) 쓰기
+-   과거 메모리 상태에 대한 쿼리
+-   지식이 어떻게 변화하는지에 대한 타임라인 스타일 검사
+-   불변 프레임워크를 통한 크래시 안전성
+-   비디오 인코딩에서 차용한 기술을 사용한 효율적인 압축
 
--   **Codec Intelligence**
-    Auto-selects and upgrades compression over time.
+이를 위한 결과물은 AI 시스템을 위한 되감기 가능한 메모리 타임라인처럼 동작하는 단일 파일입니다.
 
 ---
 
-## Use Cases
+## 주요 개념
 
-Memvid is a portable, serverless memory layer that gives AI agents persistent memory and fast recall. Because it's model-agnostic, multi-modal, and works fully offline, developers are using Memvid across a wide range of real-world applications.
+-   **실시간 변화하는 메모리 엔진**
+    세션 간에 메모리를 지속적으로 추가, 분기 및 변화시킵니다.
 
--   Long-Running AI Agents
--   Enterprise Knowledge Bases
--   Offline-First AI Systems
--   Codebase Understanding
--   Customer Support Agents
--   Workflow Automation
--   Sales and Marketing Copilots
--   Personal Knowledge Assistants
--   Medical, Legal, and Financial Agents
--   Auditable and Debuggable AI Workflows
--   Custom Applications
+-   **문맥 캡슐화 (`.mv2`)**
+    규칙과 만료 시간이 포함된 자립형 공유 가능 형대의 메모리 캡슐입니다.
+
+-   **시간 기반 디버깅**
+    임의의 메모리 상태로 되감기, 재생 또는 분기합니다.
+
+-   **예측 기반 호출**
+    예측 캐싱을 사용한 5ms 미만 로컬 메모리 액세스를 제공합니다.
+
+-   **코덱 인텔리전스**
+    시간 경과에 따라 압축을 자동 선택 및 업그레이드합니다.
+
+---
+
+## 이용 사례
+
+Memvid 이동 가능한 서버리스 메모리 레이어로 AI 에이전트에 지속적인 메모리와 빠른 호출을 제공합니다. 이는 모델과 독립적이고, 멀티모달을 지원하며, 인터넷을 사용하지 않으므로, 개발자들은 다양한 실제 어플리케이션에서 Memvid를 활용하고 있습니다.
+
+- 장기 실행 AI 에이전트
+- 기업 내의 지식 베이스
+- 오프라인 우선의 AI 시스템
+- 코드베이스 이해
+- 고객 지원 에이전트
+- 워크플로 자동화
+- 판매 및 마케팅 코파일럿
+- 개인 지식 어시스턴트
+- 의료, 법률 및 금융 에이전트
+- 모니터링 및 디버깅 가능한 AI 워크플로
+- 그 외의 여러 애플리케이션
 
 ---
 
 ## SDKs & CLI
 
-Use Memvid in your preferred language:
+원하는 언어로 Memvid를 사용하세요:
 
-| Package         | Install                     | Links                                                                                                               |
+| 패키지         | 설치 커맨드                     | 링크                                                                                                               |
 | --------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | **CLI**         | `npm install -g memvid-cli` | [![npm](https://img.shields.io/npm/v/memvid-cli?style=flat-square)](https://www.npmjs.com/package/memvid-cli)       |
 | **Node.js SDK** | `npm install @memvid/sdk`   | [![npm](https://img.shields.io/npm/v/@memvid/sdk?style=flat-square)](https://www.npmjs.com/package/@memvid/sdk)     |
@@ -122,13 +114,13 @@ Use Memvid in your preferred language:
 
 ---
 
-## Installation (Rust)
+## 설치 (Rust)
 
-### Requirements
+### 요구 사항
 
--   **Rust 1.85.0+** — Install from [rustup.rs](https://rustup.rs)
+-   **Rust 1.85.0+** — [rustup.rs](https://rustup.rs)에서 설치 가능합니다.
 
-### Add to Your Project
+### 프로젝트에 추가
 
 ```toml
 [dependencies]
@@ -139,16 +131,16 @@ memvid-core = "2.0"
 
 | Feature             | Description                                         |
 | ------------------- | --------------------------------------------------- |
-| `lex`               | Full-text search with BM25 ranking (Tantivy)        |
-| `pdf_extract`       | Pure Rust PDF text extraction                       |
-| `vec`               | Vector similarity search (HNSW + local text embeddings via ONNX) |
-| `clip`              | CLIP visual embeddings for image search             |
-| `whisper`           | Audio transcription with Whisper                    |
-| `temporal_track`    | Natural language date parsing ("last Tuesday")      |
-| `parallel_segments` | Multi-threaded ingestion                            |
-| `encryption`        | Password-based encryption capsules (.mv2e)          |
+| `lex`               | BM25 랭킹 기반 전체 텍스트 검색 (Tantivy)              |
+| `pdf_extract`       | Rust 기반 PDF 텍스트 추출                       |
+| `vec`               | 벡터 유사도 검색 (HNSW + ONNX) |
+| `clip`              | 이미지 검색을 위한 CLIP 임베딩             |
+| `whisper`           | Whisper 기반 오디오 전사                    |
+| `temporal_track`    | 자연어 날짜 추출 ("지난 화요일")      |
+| `parallel_segments` | 멀티-스레딩 처리                            |
+| `encryption`        | Password 기반 암호화 (.mv2e)          |
 
-Enable features as needed:
+필요한 기능을 아래 방식으로 활성화하세요:
 
 ```toml
 [dependencies]
@@ -193,28 +185,28 @@ fn main() -> memvid_core::Result<()> {
 
 ---
 
-## Build
+## 빌드
 
-Clone the repository:
+이 레포지토리 클론:
 
 ```bash
 git clone https://github.com/memvid/memvid.git
 cd memvid
 ```
 
-Build in debug mode:
+디버그 모드로 빌드:
 
 ```bash
 cargo build
 ```
 
-Build in release mode (optimized):
+배포 모드로 빌드 (optimized):
 
 ```bash
 cargo build --release
 ```
 
-Build with specific features:
+특수 기능을 포함하도록 빌드:
 
 ```bash
 cargo build --release --features "lex,vec,temporal_track"
@@ -222,27 +214,27 @@ cargo build --release --features "lex,vec,temporal_track"
 
 ---
 
-## Run Tests
+## 테스트
 
-Run all tests:
+전체 테스트 실행:
 
 ```bash
 cargo test
 ```
 
-Run tests with output:
+테스트 실행 및 결과 출력:
 
 ```bash
 cargo test -- --nocapture
 ```
 
-Run a specific test:
+특정 테스트 실행:
 
 ```bash
 cargo test test_name
 ```
 
-Run integration tests only:
+인테그레이션 테스트만 실행:
 
 ```bash
 cargo test --test lifecycle
@@ -252,37 +244,37 @@ cargo test --test mutation
 
 ---
 
-## Examples
+## 예시
 
-The `examples/` directory contains working examples:
+`examples/` 디렉토리에 예제가 있습니다:
 
-### Basic Usage
+### 기본 사용법
 
-Demonstrates create, put, search, and timeline operations:
+생성, 추가, 검색 및 타임라인 작업을 보여줍니다:
 
 ```bash
 cargo run --example basic_usage
 ```
 
-### PDF Ingestion
+### PDF 수집
 
-Ingest and search PDF documents (uses the "Attention Is All You Need" paper):
+PDF 문서 수집 및 검색 ("Attention Is All You Need" 논문 사용):
 
 ```bash
 cargo run --example pdf_ingestion
 ```
 
-### CLIP Visual Search
+### CLIP 이미지 검색
 
-Image search using CLIP embeddings (requires `clip` feature):
+CLIP 임베딩을 사용한 이미지 검색 (`clip` 기능 필요):
 
 ```bash
 cargo run --example clip_visual_search --features clip
 ```
 
-### Whisper Transcription
+### Whisper 전사
 
-Audio transcription (requires `whisper` feature):
+오디오 전사 (`whisper` 기능 필요):
 
 ```bash
 cargo run --example test_whisper --features whisper
@@ -290,13 +282,13 @@ cargo run --example test_whisper --features whisper
 
 ---
 
-## Text Embedding Models
+## Text Embedding 모델
 
-The `vec` feature includes local text embedding support using ONNX models. Before using local text embeddings, you need to download the model files manually.
+`vec` 기능은 ONNX 모델을 사용한 로컬 텍스트 임베딩을 포함합니다. 로컬 텍스트 임베딩을 사용하기 전에 모델 파일을 수동으로 다운로드해야 합니다.
 
-### Quick Start: BGE-small (Recommended)
+### Quick Start: BGE-small (추천함)
 
-Download the default BGE-small model (384 dimensions, fast and efficient):
+기본 BGE-small 모델(384 차원, 빠르고 효율적) 다운로드:
 
 ```bash
 mkdir -p ~/.cache/memvid/text-models
@@ -310,16 +302,16 @@ curl -L 'https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/main/tokenizer.js
   -o ~/.cache/memvid/text-models/bge-small-en-v1.5_tokenizer.json
 ```
 
-### Available Models
+### 지원 모델
 
-| Model                   | Dimensions | Size  | Best For              |
-| ----------------------- | ---------- | ----- | --------------------- |
-| `bge-small-en-v1.5`     | 384        | ~120MB | Default, fast         |
-| `bge-base-en-v1.5`      | 768        | ~420MB | Better quality        |
-| `nomic-embed-text-v1.5` | 768        | ~530MB | Versatile tasks       |
-| `gte-large`             | 1024       | ~1.3GB | Highest quality       |
+| 모델명                   | 차원 수     | 크기   | 권장 용도               |
+| ----------------------- | ---------- | -----  | --------------------- |
+| `bge-small-en-v1.5`     | 384        | ~120MB | 기본 설정, 가장 빠름     |
+| `bge-base-en-v1.5`      | 768        | ~420MB | 꽤 좋은 성능            |
+| `nomic-embed-text-v1.5` | 768        | ~530MB | 다양한 업무 가능       |
+| `gte-large`             | 1024       | ~1.3GB | 가장 좋은 성능      |
 
-### Other Models
+### 타 모델
 
 **BGE-base** (768 dimensions):
 ```bash
@@ -345,7 +337,7 @@ curl -L 'https://huggingface.co/thenlper/gte-large/resolve/main/tokenizer.json' 
   -o ~/.cache/memvid/text-models/gte-large_tokenizer.json
 ```
 
-### Usage in Code
+### 코드 내 사용법
 
 ```rust
 use memvid_core::text_embed::{LocalTextEmbedder, TextEmbedConfig};
@@ -363,13 +355,13 @@ let config = TextEmbedConfig::bge_base();
 let embedder = LocalTextEmbedder::new(config)?;
 ```
 
-See `examples/text_embedding.rs` for a complete example with similarity computation and search ranking.
+유사도 계산 및 검색 랭킹이 포함된 전체 예제는 `examples/text_embedding.rs`를 참조하세요.
 
 ---
 
-## File Format
+## 파일 구조
 
-Everything lives in a single `.mv2` file:
+모든 구성 요소는 단일 `.mv2` 파일 내에 구성됩니다:
 
 ```
 ┌────────────────────────────┐
@@ -389,21 +381,21 @@ Everything lives in a single `.mv2` file:
 └────────────────────────────┘
 ```
 
-No `.wal`, `.lock`, `.shm`, or sidecar files. Ever.
+`.wal`, `.lock`, `.shm`, 혹은 그 외의 별도 구성 요소는 없습니다.
 
-See [MV2_SPEC.md](MV2_SPEC.md) for the complete file format specification.
+[MV2_SPEC.md](MV2_SPEC.md)에서 파일 세부 형식을 확인할 수 있습니다.
 
 ---
 
 ## Support
 
-Have questions or feedback?
+문의 사항은 아래 이메일로 부탁드립니다.
 Email: contact@memvid.com
 
-**Drop a ⭐ to show support**
+**⭐를 눌러 이 프로젝트를 지원해주세요**
 
 ---
 
 ## License
 
-Apache License 2.0 — see the [LICENSE](LICENSE) file for details.
+Apache License 2.0 — [LICENSE](LICENSE) 파일 참고.
