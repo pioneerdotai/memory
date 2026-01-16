@@ -124,3 +124,7 @@ tempfile = "3.10.1"
 [[example]]
 name = "text_embedding"
 required-features = ["vec"]
+
+[[example]]
+name = "text_embed_cache_bench"
+required-features = ["vec"]

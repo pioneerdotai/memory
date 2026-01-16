@@ -21,6 +21,7 @@
 //! ```
 
 use memvid_core::Result;
+#[cfg(feature = "vec")]
 use memvid_core::text_embed::{LocalTextEmbedder, TextEmbedConfig};
 use std::time::Instant;
 

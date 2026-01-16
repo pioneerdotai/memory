@@ -26,7 +26,9 @@
 //! ```
 
 use memvid_core::Result;
+#[cfg(feature = "vec")]
 use memvid_core::text_embed::{LocalTextEmbedder, TextEmbedConfig};
+#[cfg(feature = "vec")]
 use memvid_core::types::embedding::EmbeddingProvider;
 
 /// Compute cosine similarity between two vectors
