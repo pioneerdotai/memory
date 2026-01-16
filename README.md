@@ -5,6 +5,7 @@
  <a href="docs/i18n/README.fr.md">🇫🇷 Français</a>
  <a href="docs/i18n/README.so.md">🇸🇴 Soomaali</a>
  <a href="docs/i18n/README.ar.md">🇸🇦 العربية</a>
+ <a href="docs/i18n/README.nl.md">🇧🇪/🇳🇱 Nederlands</a>
  <a href="docs/i18n/README.kr.md">🇰🇷 한국어</a>
 </p>
 
