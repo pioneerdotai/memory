@@ -284,13 +284,14 @@ impl Parser {
             if self.check(TokenKind::Or) || self.check(TokenKind::RParen) || self.is_end() {
                 break;
             }
+            // Implicit word separation (no explicit AND/OR) defaults to OR for better recall
             let rhs = self.parse_factor()?;
             expr = match expr {
-                Expr::And(mut list) => {
+                Expr::Or(mut list) => {
                     list.push(rhs);
-                    Expr::And(list)
+                    Expr::Or(list)
                 }
-                _ => Expr::And(vec![expr, rhs]),
+                _ => Expr::Or(vec![expr, rhs]),
             };
         }
         Ok(expr)

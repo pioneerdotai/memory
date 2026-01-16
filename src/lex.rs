@@ -277,7 +277,18 @@ impl LexIndex {
         }
 
         hits.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(Ordering::Equal));
-        hits
+
+        // Deduplicate by frame_id, keeping the highest-scoring match for each frame.
+        // This prevents the same document from appearing multiple times when it has
+        // multiple sections that match the query.
+        let mut seen_frames: std::collections::HashSet<FrameId> = std::collections::HashSet::new();
+        let mut deduped = Vec::with_capacity(hits.len());
+        for hit in hits {
+            if seen_frames.insert(hit.frame_id) {
+                deduped.push(hit);
+            }
+        }
+        deduped
     }
 }
 
@@ -691,5 +702,122 @@ mod tests {
     fn tokenizer_retains_connector_characters() {
         let tokens = tokenize("N&M EXPRESS LLC @ 2024");
         assert_eq!(tokens, vec!["n&m", "express", "llc", "2024"]);
+    }
+
+    #[test]
+    fn compute_matches_deduplicates_by_frame_id() {
+        // Create a document with content long enough to be split into multiple sections.
+        // The section soft limit is 900 chars, hard limit is 1400 chars.
+        // We'll create content > 2000 chars with the search term appearing in each section.
+        let mut builder = LexIndexBuilder::new();
+
+        // Build content with "quantum" appearing in multiple sections
+        let section1 = "Quantum computing represents a revolutionary approach to computation. \
+            The fundamental principles of quantum mechanics enable quantum computers to process \
+            information in ways classical computers cannot. Quantum bits or qubits can exist in \
+            superposition states, allowing quantum algorithms to explore multiple solutions \
+            simultaneously. This quantum parallelism offers exponential speedups for certain \
+            computational problems. Researchers continue to advance quantum hardware and software. \
+            The field of quantum computing is rapidly evolving with new breakthroughs. \
+            Major tech companies invest heavily in quantum research and development. \
+            Quantum error correction remains a significant challenge for practical quantum computers.";
+
+        let section2 = "Applications of quantum computing span many domains including cryptography, \
+            drug discovery, and optimization problems. Quantum cryptography promises unbreakable \
+            encryption through quantum key distribution protocols. In the pharmaceutical industry, \
+            quantum simulations could revolutionize how we discover new medicines. Quantum \
+            algorithms like Shor's algorithm threaten current encryption standards. Financial \
+            institutions explore quantum computing for portfolio optimization. The quantum \
+            advantage may soon be demonstrated for practical real-world applications. Quantum \
+            machine learning combines quantum computing with artificial intelligence techniques. \
+            The future of quantum computing holds immense promise for scientific discovery.";
+
+        let full_content = format!("{} {}", section1, section2);
+        assert!(
+            full_content.len() > 1400,
+            "Content should be long enough to create multiple sections"
+        );
+
+        builder.add_document(
+            42, // frame_id
+            "mv2://docs/quantum",
+            Some("Quantum Computing Overview"),
+            &full_content,
+            &HashMap::new(),
+        );
+
+        let artifact = builder.finish().expect("finish should succeed");
+        let index = LexIndex::decode(&artifact.bytes).expect("decode should succeed");
+
+        // Search for "quantum" which appears many times across both sections
+        let query_tokens = tokenize("quantum");
+        let matches = index.compute_matches(&query_tokens, None, None);
+
+        // Verify: no duplicate frame_ids in results
+        let frame_ids: Vec<_> = matches.iter().map(|m| m.frame_id).collect();
+        let unique_frame_ids: std::collections::HashSet<_> = frame_ids.iter().copied().collect();
+
+        assert_eq!(
+            frame_ids.len(),
+            unique_frame_ids.len(),
+            "Results should not contain duplicate frame_ids. Found: {:?}",
+            frame_ids
+        );
+
+        // Should have exactly one result for frame_id 42
+        assert_eq!(matches.len(), 1, "Should have exactly one match");
+        assert_eq!(matches[0].frame_id, 42, "Match should be for frame_id 42");
+        assert!(
+            matches[0].score > 0.0,
+            "Match should have a positive score"
+        );
+    }
+
+    #[test]
+    fn compute_matches_keeps_highest_score_per_frame() {
+        // Test that when multiple sections match, we keep the highest-scoring one
+        let mut builder = LexIndexBuilder::new();
+
+        // Create content where "target" appears more times in the second section
+        let section1 = "This is the first section with one target mention. \
+            It contains various other words to pad the content and make it long enough \
+            to be split into multiple sections by the chunking algorithm. We need quite \
+            a bit of text here to ensure the sections are created properly. The content \
+            continues with more filler text about various topics. Keep writing to reach \
+            the section boundary. More text follows to ensure we cross the soft limit. \
+            This should be enough to trigger section creation at the boundary point.";
+
+        let section2 = "The second section has target target target multiple times. \
+            Target appears here repeatedly: target target target target. This section \
+            should score higher because it has more occurrences of the search term target. \
+            We mention target again to boost the score further. Target target target. \
+            The abundance of target keywords makes this section rank higher in relevance.";
+
+        let full_content = format!("{} {}", section1, section2);
+
+        builder.add_document(
+            99,
+            "mv2://docs/multi-section",
+            Some("Multi-Section Document"),
+            &full_content,
+            &HashMap::new(),
+        );
+
+        let artifact = builder.finish().expect("finish");
+        let index = LexIndex::decode(&artifact.bytes).expect("decode");
+
+        let query_tokens = tokenize("target");
+        let matches = index.compute_matches(&query_tokens, None, None);
+
+        // Should have exactly one result (deduplicated)
+        assert_eq!(matches.len(), 1, "Should have exactly one deduplicated match");
+
+        // The match should have the higher score (from section2 with more "target" occurrences)
+        // Section1 has 1 occurrence, Section2 has ~10+ occurrences
+        assert!(
+            matches[0].score >= 5.0,
+            "Should keep the highest-scoring match, score was: {}",
+            matches[0].score
+        );
     }
 }

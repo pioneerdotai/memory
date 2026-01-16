@@ -238,6 +238,7 @@ fn read_header(path: &Path) -> Mv2eHeader {
     2. Decryption works (new code can decrypt old format files)
 */
 #[test]
+#[ignore = "legacy_test.mv2 fixture missing - regenerate with legacy encryption code"]
 #[cfg(feature = "encryption")]
 fn decrypt_legacy_format_with_new_code() {
     use std::path::PathBuf;
@@ -317,6 +318,7 @@ fn auto_detection_chooses_correct_decoder() {
     3. Content integrity preserved after upgrade
 */
 #[test]
+#[ignore = "legacy_test.mv2 fixture missing - regenerate with legacy encryption code"]
 #[cfg(feature = "encryption")]
 fn legacy_file_upgrade_on_reencrypt() {
     use std::{fs, path::PathBuf};

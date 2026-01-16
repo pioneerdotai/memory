@@ -117,7 +117,16 @@ impl Memvid {
                 continue;
             }
 
-            let content = self.frame_content(&frame)?;
+            // Use search_text if available (covers no_raw mode), otherwise fall back to content
+            let content = if let Some(ref text) = frame.search_text {
+                if !text.trim().is_empty() {
+                    text.clone()
+                } else {
+                    self.frame_content(&frame)?
+                }
+            } else {
+                self.frame_content(&frame)?
+            };
             if content.trim().is_empty() {
                 continue;
             }
