@@ -527,3 +527,85 @@ fn doctor_handles_missing_footer() {
 
     assert!(matches!(report.status, DoctorStatus::Failed)); // assert that complete TOC destruction is unrecoverable
 }
+
+/*
+    Test: dry_run returns plan without modifying disk
+    1. create .mv2, run doctor with dry_run = true
+    2. assert status is PlanOnly and file unchanged
+*/
+#[test]
+fn doctor_dry_run_returns_plan() {
+    let dir = TempDir::new().expect("temp");
+    let mv2_path = dir.path().join("test.mv2");
+
+    {
+        let mut mem = Memvid::create(&mv2_path).expect("create mem");
+        mem.put_bytes(b"testing doctor dry run returns plan")
+            .expect("put bytes");
+        mem.commit().expect("commit");
+    }
+
+    let original_bytes = read(&mv2_path).expect("read original bytes");
+
+    let options = DoctorOptions {
+        rebuild_time_index: true,
+        dry_run: true,
+        ..Default::default()
+    };
+
+    let report = Memvid::doctor(&mv2_path, options).expect("report");
+    assert!(matches!(
+        report.status,
+        DoctorStatus::PlanOnly | DoctorStatus::Clean
+    ));
+
+    let final_bytes = read(&mv2_path).expect("read final bytes");
+    assert_eq!(final_bytes, original_bytes);
+
+    let _ = Memvid::open(&mv2_path).expect("open");
+}
+
+/*
+    Test: doctor detects index out of bounds
+    1. create .mv2, truncate file to make index offsets invalid
+    2. run doctor, assert it detects the issue (finding or heals)
+*/
+#[test]
+fn doctor_rejects_index_out_of_bounds() {
+    use std::fs::{OpenOptions, metadata};
+
+    let dir = TempDir::new().expect("temp");
+    let mv2_path = dir.path().join("test.mv2");
+
+    {
+        let mut mem = Memvid::create(&mv2_path).expect("create");
+        mem.put_bytes(b"testing doctor rejects index out of bounds")
+            .expect("put bytes");
+        mem.commit().expect("commit");
+    }
+
+    let original_len = metadata(&mv2_path).expect("meta").len();
+    let truncated_len = original_len.saturating_sub(100);
+
+    {
+        let file = OpenOptions::new()
+            .write(true)
+            .open(&mv2_path)
+            .expect("open for truncate");
+
+        file.set_len(truncated_len).expect("truncate");
+    }
+
+    let options = DoctorOptions {
+        rebuild_time_index: true,
+        ..Default::default()
+    };
+
+    let report = Memvid::doctor(&mv2_path, options).expect("doctor");
+    assert!(
+        !report.findings.is_empty()
+            || matches!(report.status, DoctorStatus::Healed | DoctorStatus::Failed),
+        "expected findings or heal/fail status, got {:?}",
+        report.status
+    );
+}
