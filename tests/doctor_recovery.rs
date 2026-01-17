@@ -5,7 +5,7 @@ use std::fs::{read, write};
 use tempfile::{NamedTempFile, TempDir};
 
 use memvid_core::{
-    DoctorOptions, DoctorStatus, HEADER_SIZE, Memvid, PutOptions, SearchRequest,
+    DoctorOptions, DoctorPhaseKind, DoctorStatus, HEADER_SIZE, Memvid, PutOptions, SearchRequest,
     io::header::HeaderCodec,
 };
 
@@ -526,4 +526,173 @@ fn doctor_handles_missing_footer() {
     let report = Memvid::doctor(&mv2_path, options).unwrap();
 
     assert!(matches!(report.status, DoctorStatus::Failed)); // assert that complete TOC destruction is unrecoverable
+}
+
+/*
+    Test: dry_run returns plan without modifying disk
+    1. create .mv2, run doctor with dry_run = true
+    2. assert status is PlanOnly and file unchanged
+*/
+#[test]
+fn doctor_dry_run_returns_plan() {
+    let dir = TempDir::new().expect("temp");
+    let mv2_path = dir.path().join("test.mv2");
+
+    {
+        let mut mem = Memvid::create(&mv2_path).expect("create mem");
+        mem.put_bytes(b"testing doctor dry run returns plan")
+            .expect("put bytes");
+        mem.commit().expect("commit");
+    }
+
+    let original_bytes = read(&mv2_path).expect("read original bytes");
+
+    let options = DoctorOptions {
+        rebuild_time_index: true,
+        dry_run: true,
+        ..Default::default()
+    };
+
+    let report = Memvid::doctor(&mv2_path, options).expect("report");
+    assert!(matches!(
+        report.status,
+        DoctorStatus::PlanOnly | DoctorStatus::Clean
+    ));
+
+    let final_bytes = read(&mv2_path).expect("read final bytes");
+    assert_eq!(final_bytes, original_bytes);
+
+    let _ = Memvid::open(&mv2_path).expect("open");
+}
+
+/*
+    Test: doctor detects index out of bounds
+    1. create .mv2, truncate file to make index offsets invalid
+    2. run doctor, assert it detects the issue (finding or heals)
+*/
+#[test]
+fn doctor_rejects_index_out_of_bounds() {
+    use std::fs::{OpenOptions, metadata};
+
+    let dir = TempDir::new().expect("temp");
+    let mv2_path = dir.path().join("test.mv2");
+
+    {
+        let mut mem = Memvid::create(&mv2_path).expect("create");
+        mem.put_bytes(b"testing doctor rejects index out of bounds")
+            .expect("put bytes");
+        mem.commit().expect("commit");
+    }
+
+    let original_len = metadata(&mv2_path).expect("meta").len();
+    let truncated_len = original_len.saturating_sub(100);
+
+    {
+        let file = OpenOptions::new()
+            .write(true)
+            .open(&mv2_path)
+            .expect("open for truncate");
+
+        file.set_len(truncated_len).expect("truncate");
+    }
+
+    let options = DoctorOptions {
+        rebuild_time_index: true,
+        ..Default::default()
+    };
+
+    let report = Memvid::doctor(&mv2_path, options).expect("doctor");
+    assert!(
+        !report.findings.is_empty()
+            || matches!(report.status, DoctorStatus::Healed | DoctorStatus::Failed),
+        "expected findings or heal/fail status, got {:?}",
+        report.status
+    );
+}
+
+/*
+    Test: vacuum phase runs before index rebuild phase
+    1. create .mv2, delete frame, request vacuum + rebuild
+    2. assert phase ordering: Vacuum before IndexRebuild
+*/
+#[test]
+fn doctor_vacuum_before_index_rebuild() {
+    let dir = TempDir::new().expect("temp");
+    let mv2_path = dir.path().join("test.mv2");
+
+    {
+        let mut mem = Memvid::create(&mv2_path).expect("create");
+        for i in 0..5 {
+            let frame_data = format!("testing doctor vaccum should be before index rebuild: {i}");
+            mem.put_bytes(frame_data.as_bytes()).expect("put byets");
+        }
+        mem.commit().expect("commit");
+    }
+
+    {
+        let mut mem = Memvid::open(&mv2_path).expect("open");
+        mem.delete_frame(0).ok();
+        mem.commit().expect("commit");
+    }
+
+    let options = DoctorOptions {
+        vacuum: true,
+        rebuild_time_index: true,
+        dry_run: true,
+        ..Default::default()
+    };
+
+    let report = Memvid::doctor(&mv2_path, options).expect("doctor");
+    let phases = &report.plan.phases;
+
+    let vacuum_idx = phases
+        .iter()
+        .position(|p| matches!(p.phase, DoctorPhaseKind::Vacuum));
+
+    let rebuild_idx = phases
+        .iter()
+        .position(|p| matches!(p.phase, DoctorPhaseKind::IndexRebuild));
+
+    if let (Some(v), Some(r)) = (vacuum_idx, rebuild_idx) {
+        assert!(v < r, "vacuum phase must come before IndexRebuild phase");
+    }
+}
+
+/*
+    Test: doctor preserves footer_offset invariant
+    1. create .mv2, run doctor rebuild
+    2. assert footer_offset remains within file bounds
+*/
+#[test]
+fn doctor_preserves_footer_offset() {
+    use std::fs::metadata;
+
+    let dir = TempDir::new().expect("temp");
+    let mv2_path = dir.path().join("test.mv2");
+
+    {
+        let mut mem = Memvid::create(&mv2_path).expect("create");
+        mem.put_bytes(b"testing doctor preserves footer offset")
+            .expect("put bytes");
+        mem.commit().expect("commit");
+    }
+
+    let options = DoctorOptions {
+        rebuild_time_index: true,
+        ..Default::default()
+    };
+
+    let _ = Memvid::doctor(&mv2_path, options).expect("doctor");
+
+    let file_len = metadata(&mv2_path).unwrap().len();
+    let bytes = read(&mv2_path).expect("read");
+    let header_bytes: &[u8; HEADER_SIZE] = bytes[0..HEADER_SIZE].try_into().unwrap();
+    let header = HeaderCodec::decode(header_bytes).expect("header");
+
+    assert!(
+        header.footer_offset < file_len,
+        "footer_offset should not exceeds file length"
+    );
+
+    let _ = Memvid::open(&mv2_path).expect("file should open after doctor");
 }
