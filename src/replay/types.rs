@@ -58,21 +58,21 @@ impl ReplayAction {
     }
 
     /// Set the input hash and preview
-    /// 
+    ///
     /// # Security
     /// This function implements multiple layers of defense against malicious input:
     /// - **Size Validation**: Enforces strict 10MB limit, rejecting larger payloads
     /// - **Content Sanitization**: Removes control characters that could enable injection
     /// - **Memory Safety**: Uses safe UTF-8 conversion with lossy handling
-    /// - **DoS Prevention**: Prevents memory exhaustion and resource abuse
-    /// 
+    /// - **`DoS` Prevention**: Prevents memory exhaustion and resource abuse
+    ///
     /// Data exceeding limits is rejected by storing empty values.
     #[must_use]
     pub fn with_input(mut self, data: &[u8]) -> Self {
         // Security: Multi-layer validation to prevent exploitation
         const MAX_INPUT_SIZE: usize = 10 * 1024 * 1024; // 10MB hard limit
         const WARN_INPUT_SIZE: usize = 1024 * 1024; // 1MB warning threshold
-        
+
         // Reject oversized data completely to prevent DoS
         if data.is_empty() {
             // Empty data is safe, use zero hash
@@ -82,20 +82,26 @@ impl ReplayAction {
             // SECURITY: Reject oversized payloads completely
             // Store error indicator instead of processing malicious data
             self.input_hash = [0xFF; 32]; // Error sentinel value
-            self.input_preview = format!("[ERROR: Input size {} exceeds maximum {}]", 
-                data.len(), MAX_INPUT_SIZE);
+            self.input_preview = format!(
+                "[ERROR: Input size {} exceeds maximum {}]",
+                data.len(),
+                MAX_INPUT_SIZE
+            );
         } else {
             // Valid size: process with sanitization
             if data.len() > WARN_INPUT_SIZE {
                 // Log large but acceptable inputs
-                eprintln!("[SECURITY WARNING] Large input detected: {} bytes", data.len());
+                eprintln!(
+                    "[SECURITY WARNING] Large input detected: {} bytes",
+                    data.len()
+                );
             }
             self.input_hash = blake3::hash(data).into();
             self.input_preview = Self::sanitize_preview(data);
         }
         self
     }
-    
+
     /// Sanitize input data for preview display
     /// Removes control characters and limits length for security
     fn sanitize_preview(data: &[u8]) -> String {
@@ -108,21 +114,21 @@ impl ReplayAction {
     }
 
     /// Set the output hash and preview
-    /// 
+    ///
     /// # Security
     /// This function implements multiple layers of defense against malicious output:
     /// - **Size Validation**: Enforces strict 10MB limit, rejecting larger payloads
     /// - **Content Sanitization**: Removes control characters that could enable injection
     /// - **Memory Safety**: Uses safe UTF-8 conversion with lossy handling
-    /// - **DoS Prevention**: Prevents memory exhaustion and resource abuse
-    /// 
+    /// - **`DoS` Prevention**: Prevents memory exhaustion and resource abuse
+    ///
     /// Data exceeding limits is rejected by storing empty values.
     #[must_use]
     pub fn with_output(mut self, data: &[u8]) -> Self {
         // Security: Multi-layer validation to prevent exploitation
         const MAX_OUTPUT_SIZE: usize = 10 * 1024 * 1024; // 10MB hard limit
         const WARN_OUTPUT_SIZE: usize = 1024 * 1024; // 1MB warning threshold
-        
+
         // Reject oversized data completely to prevent DoS
         if data.is_empty() {
             // Empty data is safe, use zero hash
@@ -132,13 +138,19 @@ impl ReplayAction {
             // SECURITY: Reject oversized payloads completely
             // Store error indicator instead of processing malicious data
             self.output_hash = [0xFF; 32]; // Error sentinel value
-            self.output_preview = format!("[ERROR: Output size {} exceeds maximum {}]", 
-                data.len(), MAX_OUTPUT_SIZE);
+            self.output_preview = format!(
+                "[ERROR: Output size {} exceeds maximum {}]",
+                data.len(),
+                MAX_OUTPUT_SIZE
+            );
         } else {
             // Valid size: process with sanitization
             if data.len() > WARN_OUTPUT_SIZE {
                 // Log large but acceptable outputs
-                eprintln!("[SECURITY WARNING] Large output detected: {} bytes", data.len());
+                eprintln!(
+                    "[SECURITY WARNING] Large output detected: {} bytes",
+                    data.len()
+                );
             }
             self.output_hash = blake3::hash(data).into();
             self.output_preview = Self::sanitize_preview(data);
@@ -310,8 +322,9 @@ impl ReplaySession {
     #[must_use]
     pub fn duration_secs(&self) -> u64 {
         match self.ended_secs {
-            Some(end) => (end - self.created_secs).max(0) as u64,
-            None => (chrono::Utc::now().timestamp() - self.created_secs).max(0) as u64,
+            Some(end) => u64::try_from((end - self.created_secs).max(0)).unwrap_or(0),
+            None => u64::try_from((chrono::Utc::now().timestamp() - self.created_secs).max(0))
+                .unwrap_or(0),
         }
     }
 

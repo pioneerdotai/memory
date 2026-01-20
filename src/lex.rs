@@ -149,6 +149,7 @@ impl LexIndex {
         Self { documents }
     }
 
+    #[must_use]
     pub fn search(&self, query: &str, limit: usize) -> Vec<LexSearchHit> {
         let mut query_tokens = tokenize(query);
         query_tokens.retain(|token| !token.is_empty());
@@ -260,6 +261,7 @@ impl LexIndex {
                 }
 
                 occurrences.sort_by_key(|(start, _)| *start);
+                #[allow(clippy::cast_precision_loss)]
                 let mut score = occurrences.len() as f32;
                 if !phrase.is_empty() && section.content_lower.contains(&phrase) {
                     score += 1000.0;
@@ -413,7 +415,7 @@ fn tokenize(input: &str) -> Vec<String> {
     input
         .split(|c: char| !is_token_char(c))
         .filter_map(|token| {
-            if token.chars().any(|ch| ch.is_alphanumeric()) {
+            if token.chars().any(char::is_alphanumeric) {
                 Some(token.to_lowercase())
             } else {
                 None
@@ -524,7 +526,7 @@ fn push_section(sections: &mut Vec<LexSection>, content: &str, start: usize, end
 
 fn is_soft_boundary(ch: char, next: Option<char>) -> bool {
     match ch {
-        '.' | '!' | '?' => next.map_or(true, |n| n.is_whitespace()),
+        '.' | '!' | '?' => next.is_none_or(char::is_whitespace),
         '\n' => true,
         _ => false,
     }
@@ -767,10 +769,7 @@ mod tests {
         // Should have exactly one result for frame_id 42
         assert_eq!(matches.len(), 1, "Should have exactly one match");
         assert_eq!(matches[0].frame_id, 42, "Match should be for frame_id 42");
-        assert!(
-            matches[0].score > 0.0,
-            "Match should have a positive score"
-        );
+        assert!(matches[0].score > 0.0, "Match should have a positive score");
     }
 
     #[test]
@@ -810,7 +809,11 @@ mod tests {
         let matches = index.compute_matches(&query_tokens, None, None);
 
         // Should have exactly one result (deduplicated)
-        assert_eq!(matches.len(), 1, "Should have exactly one deduplicated match");
+        assert_eq!(
+            matches.len(),
+            1,
+            "Should have exactly one deduplicated match"
+        );
 
         // The match should have the higher score (from section2 with more "target" occurrences)
         // Section1 has 1 occurrence, Section2 has ~10+ occurrences
