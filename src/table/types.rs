@@ -314,6 +314,7 @@ impl TableExtractionOptions {
 
 /// Builder for `TableExtractionOptions`.
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct TableExtractionOptionsBuilder {
     inner: TableExtractionOptions,
 }
@@ -389,13 +390,6 @@ impl TableExtractionOptionsBuilder {
     }
 }
 
-impl Default for TableExtractionOptionsBuilder {
-    fn default() -> Self {
-        Self {
-            inner: TableExtractionOptions::default(),
-        }
-    }
-}
 
 /// Extraction mode controls quality vs coverage tradeoff.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -441,7 +435,7 @@ pub struct TableSummary {
     pub quality: TableQuality,
     /// Column headers
     pub headers: Vec<String>,
-    /// Frame ID of the table_meta frame
+    /// Frame ID of the `table_meta` frame
     pub frame_id: u64,
 }
 

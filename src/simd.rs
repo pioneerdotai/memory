@@ -1,16 +1,17 @@
 //! SIMD-accelerated distance calculations for vector search.
 //!
 //! This module provides optimized L2 (Euclidean) distance functions using
-//! the `wide` crate for portable SIMD across x86_64 and aarch64.
+//! the `wide` crate for portable SIMD across `x86_64` and aarch64.
 
 #[cfg(feature = "simd")]
 use wide::f32x8;
 
 /// Compute squared L2 distance between two f32 slices using SIMD.
 ///
-/// Uses 8-wide SIMD lanes (AVX2 on x86_64, NEON on aarch64).
+/// Uses 8-wide SIMD lanes (AVX2 on `x86_64`, NEON on aarch64).
 /// Falls back to scalar for remainder elements.
 #[cfg(feature = "simd")]
+#[must_use] 
 pub fn l2_distance_squared_simd(a: &[f32], b: &[f32]) -> f32 {
     debug_assert_eq!(a.len(), b.len(), "vectors must have same length");
 
@@ -63,6 +64,7 @@ pub fn l2_distance_squared_simd(a: &[f32], b: &[f32]) -> f32 {
 
 /// Compute L2 distance (with sqrt) using SIMD.
 #[cfg(feature = "simd")]
+#[must_use] 
 pub fn l2_distance_simd(a: &[f32], b: &[f32]) -> f32 {
     l2_distance_squared_simd(a, b).sqrt()
 }

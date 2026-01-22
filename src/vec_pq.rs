@@ -29,10 +29,10 @@ const SUBSPACE_DIM: usize = 4; // Dimensions per subspace
 const NUM_CENTROIDS: usize = 256; // 2^8 centroids (encoded as u8)
 const TOTAL_DIM: usize = NUM_SUBSPACES * SUBSPACE_DIM; // 384
 
-/// Codebook for one subspace: 256 centroids, each with SUBSPACE_DIM dimensions
+/// Codebook for one subspace: 256 centroids, each with `SUBSPACE_DIM` dimensions
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubspaceCodebook {
-    /// Flat array: centroids[i*SUBSPACE_DIM..(i+1)*SUBSPACE_DIM] is centroid i
+    /// Flat array: centroids[i*`SUBSPACE_DIM..(i+1)`*`SUBSPACE_DIM`] is centroid i
     centroids: Vec<f32>,
 }
 
@@ -88,8 +88,7 @@ impl ProductQuantizer {
         if dimension as usize != TOTAL_DIM {
             return Err(MemvidError::InvalidQuery {
                 reason: format!(
-                    "PQ only supports {}-dim vectors, got {}",
-                    TOTAL_DIM, dimension
+                    "PQ only supports {TOTAL_DIM}-dim vectors, got {dimension}"
                 ),
             });
         }
@@ -194,6 +193,7 @@ impl ProductQuantizer {
 
     /// Compute asymmetric distance between query vector and PQ-encoded vector
     /// Uses precomputed lookup tables for efficiency
+    #[must_use] 
     pub fn asymmetric_distance(&self, query: &[f32], codes: &[u8]) -> f32 {
         if query.len() != TOTAL_DIM || codes.len() != NUM_SUBSPACES {
             return f32::INFINITY;
@@ -232,6 +232,7 @@ pub struct QuantizedVecIndexBuilder {
 }
 
 impl QuantizedVecIndexBuilder {
+    #[must_use] 
     pub fn new() -> Self {
         Self::default()
     }
@@ -307,7 +308,7 @@ impl QuantizedVecIndex {
         if let Ok(((quantizer, documents), read)) = bincode::serde::decode_from_slice::<
             (ProductQuantizer, Vec<QuantizedVecDocument>),
             _,
-        >(bytes, config.clone())
+        >(bytes, config)
         {
             if read == bytes.len() {
                 return Ok(Self {
@@ -348,6 +349,7 @@ impl QuantizedVecIndex {
     }
 
     /// Search using asymmetric distance computation
+    #[must_use] 
     pub fn search(&self, query: &[f32], limit: usize) -> Vec<VecSearchHit> {
         if query.is_empty() {
             return Vec::new();
@@ -380,6 +382,7 @@ impl QuantizedVecIndex {
     }
 
     /// Get compression statistics
+    #[must_use] 
     pub fn compression_stats(&self) -> CompressionStats {
         let original_bytes = self.documents.len() * TOTAL_DIM * std::mem::size_of::<f32>();
         let compressed_bytes = self.documents.len() * NUM_SUBSPACES; // 96 bytes per vector
@@ -507,8 +510,7 @@ fn kmeans_plus_plus_init(vectors: &[Vec<f32>], k: usize) -> Result<Vec<Vec<f32>>
             .iter()
             .enumerate()
             .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-            .map(|(idx, _)| idx)
-            .unwrap_or(0);
+            .map_or(0, |(idx, _)| idx);
 
         centroids.push(vectors[max_idx].clone());
     }

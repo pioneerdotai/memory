@@ -23,6 +23,41 @@ use crate::error::{MemvidError, Result};
 use crate::types::FrameId;
 
 // ============================================================================
+// Safe Byte Extraction Helpers
+// ============================================================================
+
+/// Extract a fixed-size array from a byte slice. Panics if slice is too short.
+/// Only use this when the input buffer size is compile-time guaranteed.
+#[inline]
+fn read_u16_le(buf: &[u8], offset: usize) -> u16 {
+    u16::from_le_bytes([buf[offset], buf[offset + 1]])
+}
+
+#[inline]
+fn read_u32_le(buf: &[u8], offset: usize) -> u32 {
+    u32::from_le_bytes([
+        buf[offset],
+        buf[offset + 1],
+        buf[offset + 2],
+        buf[offset + 3],
+    ])
+}
+
+#[inline]
+fn read_u64_le(buf: &[u8], offset: usize) -> u64 {
+    u64::from_le_bytes([
+        buf[offset],
+        buf[offset + 1],
+        buf[offset + 2],
+        buf[offset + 3],
+        buf[offset + 4],
+        buf[offset + 5],
+        buf[offset + 6],
+        buf[offset + 7],
+    ])
+}
+
+// ============================================================================
 // Constants
 // ============================================================================
 
@@ -219,13 +254,10 @@ impl SketchEntrySmall {
     /// Deserialize from bytes.
     #[must_use]
     pub fn from_bytes(buf: &[u8; ENTRY_SIZE_SMALL]) -> Self {
-        let simhash = u64::from_le_bytes(buf[0..8].try_into().unwrap());
+        let simhash = read_u64_le(buf, 0);
         let mut term_filter = [0u8; TERM_FILTER_SIZE_SMALL];
         term_filter.copy_from_slice(&buf[8..24]);
-        let top_terms = [
-            u32::from_le_bytes(buf[24..28].try_into().unwrap()),
-            u32::from_le_bytes(buf[28..32].try_into().unwrap()),
-        ];
+        let top_terms = [read_u32_le(buf, 24), read_u32_le(buf, 28)];
         Self {
             simhash,
             term_filter,
@@ -314,7 +346,7 @@ impl SketchEntryMedium {
     pub fn from_bytes(buf: &[u8; ENTRY_SIZE_MEDIUM]) -> Self {
         let mut offset = 0;
 
-        let simhash = u64::from_le_bytes(buf[offset..offset + 8].try_into().unwrap());
+        let simhash = read_u64_le(buf, offset);
         offset += 8;
 
         let mut term_filter = [0u8; TERM_FILTER_SIZE_MEDIUM];
@@ -322,18 +354,18 @@ impl SketchEntryMedium {
         offset += TERM_FILTER_SIZE_MEDIUM;
 
         let mut top_terms = [0u32; TOP_TERMS_COUNT_MEDIUM];
-        for term in &mut top_terms {
-            *term = u32::from_le_bytes(buf[offset..offset + 4].try_into().unwrap());
-            offset += 4;
+        for (i, term) in top_terms.iter_mut().enumerate() {
+            *term = read_u32_le(buf, offset + i * 4);
         }
+        offset += TOP_TERMS_COUNT_MEDIUM * 4;
 
-        let term_weight_sum = u16::from_le_bytes(buf[offset..offset + 2].try_into().unwrap());
+        let term_weight_sum = read_u16_le(buf, offset);
         offset += 2;
-        let flags = u16::from_le_bytes(buf[offset..offset + 2].try_into().unwrap());
+        let flags = read_u16_le(buf, offset);
         offset += 2;
-        let length_hint = u16::from_le_bytes(buf[offset..offset + 2].try_into().unwrap());
+        let length_hint = read_u16_le(buf, offset);
         offset += 2;
-        let reserved = u16::from_le_bytes(buf[offset..offset + 2].try_into().unwrap());
+        let reserved = read_u16_le(buf, offset);
 
         Self {
             simhash,
@@ -555,7 +587,7 @@ pub fn hash_token(token: &str) -> u64 {
     // Use BLAKE3 for determinism, take first 8 bytes as u64
     let hash = blake3::hash(token.as_bytes());
     let bytes = hash.as_bytes();
-    u64::from_le_bytes(bytes[0..8].try_into().unwrap())
+    read_u64_le(bytes, 0)
 }
 
 /// Hash a token to u32 for top_terms storage.
@@ -1012,11 +1044,11 @@ impl SketchTrackHeader {
 
         Ok(Self {
             magic,
-            version: u16::from_le_bytes(buf[4..6].try_into().unwrap()),
-            entry_size: u16::from_le_bytes(buf[6..8].try_into().unwrap()),
-            entry_count: u64::from_le_bytes(buf[8..16].try_into().unwrap()),
-            flags: u32::from_le_bytes(buf[16..20].try_into().unwrap()),
-            reserved: u32::from_le_bytes(buf[20..24].try_into().unwrap()),
+            version: read_u16_le(buf, 4),
+            entry_size: read_u16_le(buf, 6),
+            entry_count: read_u64_le(buf, 8),
+            flags: read_u32_le(buf, 16),
+            reserved: read_u32_le(buf, 20),
         })
     }
 
@@ -1103,7 +1135,6 @@ pub fn read_sketch_track<R: Read + Seek>(
 
     // Read entries
     let mut track = SketchTrack::new(variant);
-    let _entry_size = header.entry_size as usize;
 
     for frame_id in 0..header.entry_count {
         let entry = match variant {

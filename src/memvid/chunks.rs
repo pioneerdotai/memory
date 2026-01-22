@@ -85,7 +85,7 @@ fn plan_structural_chunks(
     Some(DocumentChunkPlan { manifest, chunks })
 }
 
-/// Build TextChunkManifest from structural chunks.
+/// Build `TextChunkManifest` from structural chunks.
 fn build_manifest_from_structural(
     chunks: &[crate::structure::StructuredChunk],
     text: &str,

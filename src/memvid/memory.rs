@@ -124,7 +124,7 @@ impl Memvid {
                 // In strict mode, reject all if any are invalid
                 let errors: Vec<String> = validation_errors
                     .iter()
-                    .map(|(i, e)| format!("Card {}: {}", i, e))
+                    .map(|(i, e)| format!("Card {i}: {e}"))
                     .collect();
                 return Err(crate::error::MemvidError::SchemaValidation {
                     reason: format!(
@@ -413,6 +413,7 @@ impl Memvid {
     ///
     /// # Returns
     /// A vector of (index, error) tuples for invalid cards.
+    #[must_use] 
     pub fn validate_cards(&self, cards: &[MemoryCard]) -> Vec<(usize, SchemaError)> {
         cards
             .iter()
@@ -424,7 +425,7 @@ impl Memvid {
     /// Infer schemas from existing memory cards.
     ///
     /// Analyzes all predicates (slots) in the memories track and infers
-    /// type information (Number, DateTime, Boolean, String) and cardinality
+    /// type information (Number, `DateTime`, Boolean, String) and cardinality
     /// (Single vs Multiple) from the actual values.
     ///
     /// # Returns
@@ -455,7 +456,7 @@ impl Memvid {
             let all_values: Vec<&str> = entity_values
                 .values()
                 .flatten()
-                .map(|s| s.as_str())
+                .map(std::string::String::as_str)
                 .collect();
 
             // Use the registry's inference method
@@ -540,15 +541,13 @@ impl Memvid {
             .map(|schema| {
                 let stats = predicate_stats.get(&schema.id);
                 let (entity_count, value_count, unique_values) = stats
-                    .map(|s| (s.entities.len(), s.value_count, s.unique_values.len()))
-                    .unwrap_or((0, 0, 0));
+                    .map_or((0, 0, 0), |s| (s.entities.len(), s.value_count, s.unique_values.len()));
 
                 // Check if there's an existing (builtin) schema
                 let is_builtin = self
                     .schema_registry
                     .get(&schema.id)
-                    .map(|s| s.builtin)
-                    .unwrap_or(false);
+                    .is_some_and(|s| s.builtin);
 
                 SchemaSummaryEntry {
                     predicate: schema.id.clone(),
@@ -578,7 +577,7 @@ impl Memvid {
     /// * `engine` - The enrichment engine to run
     ///
     /// # Returns
-    /// A tuple of (frames_processed, cards_extracted).
+    /// A tuple of (`frames_processed`, `cards_extracted`).
     pub fn run_enrichment(
         &mut self,
         engine: &dyn crate::enrich::EnrichmentEngine,
@@ -628,10 +627,10 @@ impl Memvid {
                 let card_count = cards.len();
 
                 // Store cards
-                let card_ids = if !cards.is_empty() {
-                    self.put_memory_cards(cards)?
-                } else {
+                let card_ids = if cards.is_empty() {
                     Vec::new()
+                } else {
+                    self.put_memory_cards(cards)?
                 };
 
                 // Record enrichment

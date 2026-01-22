@@ -95,9 +95,7 @@ pub(super) fn search_with_lex_fallback(
             })?;
         let canonical = memvid.frame_content(&frame_meta)?;
         let canonical_limit = frame_meta
-            .canonical_length
-            .map(|len| len as usize)
-            .unwrap_or_else(|| canonical.len());
+            .canonical_length.map_or_else(|| canonical.len(), |len| len as usize);
         let canonical_len = canonical.len();
         let effective_len = canonical_limit.min(canonical_len);
         let uri = matched

@@ -63,17 +63,11 @@ impl ModelVerification {
 }
 
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct ModelVerifyOptions {
     pub run_onnx_smoke: bool,
 }
 
-impl Default for ModelVerifyOptions {
-    fn default() -> Self {
-        Self {
-            run_onnx_smoke: cfg!(feature = "vec"),
-        }
-    }
-}
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, rename_all = "kebab-case")]
@@ -103,6 +97,7 @@ impl Default for ModelManifest {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, rename_all = "kebab-case")]
+#[derive(Default)]
 pub struct ModelManifestEntry {
     pub path: String,
     pub sha256: String,
@@ -111,17 +106,6 @@ pub struct ModelManifestEntry {
     pub kind: Option<String>,
 }
 
-impl Default for ModelManifestEntry {
-    fn default() -> Self {
-        Self {
-            path: String::new(),
-            sha256: String::new(),
-            optional: false,
-            roles: Vec::new(),
-            kind: None,
-        }
-    }
-}
 
 pub fn verify_models(root: &Path, options: &ModelVerifyOptions) -> Result<Vec<ModelVerification>> {
     if !root.exists() {
@@ -129,13 +113,13 @@ pub fn verify_models(root: &Path, options: &ModelVerifyOptions) -> Result<Vec<Mo
     }
 
     let mut dirs: Vec<PathBuf> = fs::read_dir(root)?
-        .filter_map(|entry| entry.ok())
+        .filter_map(std::result::Result::ok)
         .filter_map(|entry| {
             let path = entry.path();
             entry
                 .file_type()
                 .ok()
-                .filter(|ft| ft.is_dir())
+                .filter(std::fs::FileType::is_dir)
                 .and_then(|_| digest_from_dir_name(&path).map(|_| path))
         })
         .collect();
@@ -283,7 +267,7 @@ fn validate_entry(entry: &ModelManifestEntry) -> Result<()> {
             reason: "file entry path is empty".into(),
         });
     }
-    if entry.path.contains("\\") {
+    if entry.path.contains('\\') {
         return Err(MemvidError::ModelManifestInvalid {
             reason: format!("file entry path must use forward slashes: {}", entry.path)
                 .into_boxed_str(),
@@ -301,14 +285,14 @@ fn resolve_entry_path(base: &Path, relative: &str) -> Result<PathBuf> {
     let path = Path::new(relative);
     if path.is_absolute() {
         return Err(MemvidError::ModelManifestInvalid {
-            reason: format!("file entry '{}' must be relative", relative).into_boxed_str(),
+            reason: format!("file entry '{relative}' must be relative").into_boxed_str(),
         });
     }
 
     for component in path.components() {
         if matches!(component, Component::ParentDir) {
             return Err(MemvidError::ModelManifestInvalid {
-                reason: format!("file entry '{}' attempts directory traversal", relative)
+                reason: format!("file entry '{relative}' attempts directory traversal")
                     .into_boxed_str(),
             });
         }
@@ -333,7 +317,7 @@ fn normalize_sha256(value: &str, context: &str) -> Result<String> {
 
 fn digest_from_dir_name(path: &Path) -> Option<String> {
     let name = path.file_name()?.to_str()?;
-    name.strip_prefix("sha256-").map(|rest| rest.to_string())
+    name.strip_prefix("sha256-").map(std::string::ToString::to_string)
 }
 
 fn compute_sha256_hex(path: &Path) -> Result<String> {
@@ -353,7 +337,7 @@ fn compute_sha256_hex(path: &Path) -> Result<String> {
     Ok(hex::encode(hasher.finalize()))
 }
 
-fn select_weights_entry<'a>(manifest: &'a ModelManifest) -> Option<&'a ModelManifestEntry> {
+fn select_weights_entry(manifest: &ModelManifest) -> Option<&ModelManifestEntry> {
     if let Some(quant) = manifest.quant.as_deref() {
         if let Some(entry) = manifest
             .files

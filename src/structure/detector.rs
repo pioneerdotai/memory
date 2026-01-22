@@ -1,3 +1,5 @@
+// Safe unwrap/expect usage: regex patterns are compile-time constants.
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! Structure detection for markdown and text documents.
 //!
 //! This module detects structural elements in text, including:
@@ -57,6 +59,7 @@ impl Patterns {
 }
 
 /// Detect structure in text and produce a `StructuredDocument`.
+#[must_use]
 pub fn detect_structure(text: &str) -> StructuredDocument {
     let mut doc = StructuredDocument::from_text(text);
     let patterns = Patterns::get();
@@ -318,14 +321,14 @@ fn try_detect_list(
 
     // Check for unordered list
     if let Some(caps) = patterns.unordered_list.captures(first_line) {
-        let indent = caps.get(1).map(|m| m.as_str().len()).unwrap_or(0);
+        let indent = caps.get(1).map_or(0, |m| m.as_str().len());
         let mut items: Vec<String> = vec![caps.get(2)?.as_str().to_string()];
         let mut consumed = 1;
 
         // Collect consecutive list items at same indentation
         for i in (start + 1)..lines.len() {
             if let Some(item_caps) = patterns.unordered_list.captures(lines[i]) {
-                let item_indent = item_caps.get(1).map(|m| m.as_str().len()).unwrap_or(0);
+                let item_indent = item_caps.get(1).map_or(0, |m| m.as_str().len());
                 if item_indent == indent {
                     items.push(item_caps.get(2).unwrap().as_str().to_string());
                     consumed += 1;
@@ -348,7 +351,7 @@ fn try_detect_list(
 
     // Check for ordered list
     if let Some(caps) = patterns.ordered_list.captures(first_line) {
-        let indent = caps.get(1).map(|m| m.as_str().len()).unwrap_or(0);
+        let indent = caps.get(1).map_or(0, |m| m.as_str().len());
         let start_num: usize = caps.get(2)?.as_str().parse().unwrap_or(1);
         let mut items: Vec<String> = vec![caps.get(3)?.as_str().to_string()];
         let mut consumed = 1;
@@ -356,7 +359,7 @@ fn try_detect_list(
         // Collect consecutive list items at same indentation
         for i in (start + 1)..lines.len() {
             if let Some(item_caps) = patterns.ordered_list.captures(lines[i]) {
-                let item_indent = item_caps.get(1).map(|m| m.as_str().len()).unwrap_or(0);
+                let item_indent = item_caps.get(1).map_or(0, |m| m.as_str().len());
                 if item_indent == indent {
                     items.push(item_caps.get(3).unwrap().as_str().to_string());
                     consumed += 1;
@@ -409,6 +412,7 @@ fn try_detect_heading(
 ///
 /// This function attempts to detect such patterns by analyzing
 /// column alignment.
+#[must_use]
 pub fn detect_ascii_tables(text: &str) -> Vec<(usize, usize, StructuredTable)> {
     let mut tables = Vec::new();
     let lines: Vec<&str> = text.lines().collect();

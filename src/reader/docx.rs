@@ -46,12 +46,11 @@ impl DocumentReader for DocxReader {
         matches!(hint.format, Some(DocumentFormat::Docx))
             || hint
                 .mime
-                .map(|mime| {
+                .is_some_and(|mime| {
                     mime.eq_ignore_ascii_case(
                         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                     )
                 })
-                .unwrap_or(false)
     }
 
     fn extract(&self, bytes: &[u8], hint: &ReaderHint<'_>) -> Result<ReaderOutput> {

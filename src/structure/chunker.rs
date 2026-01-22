@@ -40,11 +40,13 @@ impl Default for StructuralChunker {
 
 impl StructuralChunker {
     /// Create a new chunker with the given options.
+    #[must_use] 
     pub fn new(options: ChunkingOptions) -> Self {
         Self { options }
     }
 
     /// Create a chunker with default options and custom max chars.
+    #[must_use] 
     pub fn with_max_chars(max_chars: usize) -> Self {
         Self {
             options: ChunkingOptions {
@@ -55,6 +57,7 @@ impl StructuralChunker {
     }
 
     /// Chunk a structured document.
+    #[must_use] 
     pub fn chunk(&self, doc: &StructuredDocument) -> ChunkingResult {
         let mut result = ChunkingResult::empty();
         let mut current_text = String::new();
@@ -295,7 +298,7 @@ impl StructuralChunker {
                 }
 
                 let max_rows_per_chunk = self.calculate_rows_per_chunk(table, header_chars);
-                let total_parts = (data_rows.len() + max_rows_per_chunk - 1) / max_rows_per_chunk;
+                let total_parts = data_rows.len().div_ceil(max_rows_per_chunk);
 
                 let mut part = 1;
                 let mut row_idx = 0;
@@ -407,7 +410,7 @@ impl StructuralChunker {
                     element_id: None,
                     part: None,
                     total_parts: None,
-                    context: language.map(|s| s.to_string()),
+                    context: language.map(std::string::ToString::to_string),
                     char_start,
                     char_end,
                 });
@@ -426,7 +429,7 @@ impl StructuralChunker {
                         element_id: None,
                         part: None,
                         total_parts: None,
-                        context: language.map(|s| s.to_string()),
+                        context: language.map(std::string::ToString::to_string),
                         char_start,
                         char_end,
                     });
@@ -524,7 +527,7 @@ impl StructuralChunker {
                     element_id: None,
                     part: Some(1),
                     total_parts: Some(total_parts as u32),
-                    context: language.map(|s| s.to_string()),
+                    context: language.map(std::string::ToString::to_string),
                     char_start,
                     char_end,
                 });
@@ -536,7 +539,7 @@ impl StructuralChunker {
                     element_id: None,
                     part: Some((i + 1) as u32),
                     total_parts: Some(total_parts as u32),
-                    context: language.map(|s| s.to_string()),
+                    context: language.map(std::string::ToString::to_string),
                     char_start,
                     char_end,
                 });
@@ -616,7 +619,7 @@ impl StructuralChunker {
                 element_id: None,
                 part: Some((i + 1) as u32),
                 total_parts: Some(total_parts as u32),
-                context: language.map(|s| s.to_string()),
+                context: language.map(std::string::ToString::to_string),
                 char_start,
                 char_end,
             });
@@ -625,11 +628,13 @@ impl StructuralChunker {
 }
 
 /// Convenience function to chunk text with default options.
+#[must_use] 
 pub fn chunk_structured(doc: &StructuredDocument) -> ChunkingResult {
     StructuralChunker::default().chunk(doc)
 }
 
 /// Convenience function to chunk text with custom max chars.
+#[must_use] 
 pub fn chunk_structured_with_max(doc: &StructuredDocument, max_chars: usize) -> ChunkingResult {
     StructuralChunker::with_max_chars(max_chars).chunk(doc)
 }

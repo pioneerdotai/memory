@@ -90,7 +90,7 @@ impl SlotIndex {
     /// Get all unique slots for an entity.
     #[must_use]
     pub fn slots_for_entity(&self, entity: &str) -> Vec<String> {
-        let prefix = format!("{}:", entity);
+        let prefix = format!("{}:", entity.to_lowercase());
         let mut slots: Vec<_> = self
             .entries
             .keys()
@@ -110,7 +110,7 @@ impl SlotIndex {
     /// Get total number of card references.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.entries.values().map(|v| v.len()).sum()
+        self.entries.values().map(Vec::len).sum()
     }
 
     /// Check if the index is empty.
@@ -533,7 +533,9 @@ impl MemoriesTrack {
             });
         }
 
-        let len = u64::from_le_bytes(data[6..14].try_into().unwrap()) as usize;
+        let len = u64::from_le_bytes([
+            data[6], data[7], data[8], data[9], data[10], data[11], data[12], data[13],
+        ]) as usize;
         if data.len() < 14 + len {
             return Err(MemvidError::InvalidHeader {
                 reason: "memories track data truncated".into(),

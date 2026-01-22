@@ -99,16 +99,13 @@ impl Memvid {
             return Err(MemvidError::VecNotEnabled);
         }
         let mut ensured_vec_index = false;
-        let expected_dim = match self.effective_vec_index_dimension()? {
-            Some(dim) => dim,
-            None => {
-                self.ensure_vec_index()?;
-                ensured_vec_index = true;
-                self.vec_index
-                    .as_ref()
-                    .and_then(|index| index.entries().next().map(|(_, emb)| emb.len() as u32))
-                    .unwrap_or(0)
-            }
+        let expected_dim = if let Some(dim) = self.effective_vec_index_dimension()? { dim } else {
+            self.ensure_vec_index()?;
+            ensured_vec_index = true;
+            self.vec_index
+                .as_ref()
+                .and_then(|index| index.entries().next().map(|(_, emb)| emb.len() as u32))
+                .unwrap_or(0)
         };
         if expected_dim > 0 && query.len() as u32 != expected_dim {
             return Err(MemvidError::VecDimensionMismatch {
@@ -249,16 +246,13 @@ impl Memvid {
         // Validate embedding dimension BEFORE searching to prevent silent wrong results.
         // For segment-only memories, dimension may only be discoverable after loading segments.
         let mut ensured_vec_index = false;
-        let expected_dim = match self.effective_vec_index_dimension()? {
-            Some(dim) => dim,
-            None => {
-                self.ensure_vec_index()?;
-                ensured_vec_index = true;
-                self.vec_index
-                    .as_ref()
-                    .and_then(|index| index.entries().next().map(|(_, emb)| emb.len() as u32))
-                    .unwrap_or(0)
-            }
+        let expected_dim = if let Some(dim) = self.effective_vec_index_dimension()? { dim } else {
+            self.ensure_vec_index()?;
+            ensured_vec_index = true;
+            self.vec_index
+                .as_ref()
+                .and_then(|index| index.entries().next().map(|(_, emb)| emb.len() as u32))
+                .unwrap_or(0)
         };
         if expected_dim > 0 && query_embedding.len() as u32 != expected_dim {
             return Err(MemvidError::VecDimensionMismatch {
@@ -558,7 +552,7 @@ impl Memvid {
         Ok(Some(compute_embedding_quality(&embeddings)))
     }
 
-    /// Get frame IDs filtered by Replay parameters (as_of_frame or as_of_ts).
+    /// Get frame IDs filtered by Replay parameters (`as_of_frame` or `as_of_ts`).
     /// Used for time-travel memory views.
     pub(crate) fn get_replay_frame_ids(
         &self,
@@ -625,7 +619,7 @@ impl Memvid {
     #[allow(dead_code)]
     fn materialize_tantivy_segments(&mut self, segments: &[EmbeddedLexSegment]) -> Result<TempDir> {
         let dir = TempDir::new().map_err(|err| MemvidError::Tantivy {
-            reason: format!("failed to allocate Tantivy work directory: {}", err),
+            reason: format!("failed to allocate Tantivy work directory: {err}"),
         })?;
         if segments.is_empty() {
             return Ok(dir);
@@ -636,11 +630,11 @@ impl Memvid {
                 .metadata()
                 .map(|meta| meta.len())
                 .map_err(|err| MemvidError::Tantivy {
-                    reason: format!("failed to inspect memvid file metadata: {}", err),
+                    reason: format!("failed to inspect memvid file metadata: {err}"),
                 })?;
         let mut data_limit = self.header.footer_offset;
         let mut buffer = vec![0u8; 64 * 1024];
-        let cursor = self.file.seek(SeekFrom::Current(0))?;
+        let cursor = self.file.stream_position()?;
         for segment in segments {
             let dest = dir.path().join(&segment.path);
             if let Some(parent) = dest.parent() {
@@ -675,7 +669,7 @@ impl Memvid {
                 if self.align_footer_with_catalog()? {
                     file_len = self.file.metadata().map(|meta| meta.len()).map_err(|err| {
                         MemvidError::Tantivy {
-                            reason: format!("failed to refresh memvid file metadata: {}", err),
+                            reason: format!("failed to refresh memvid file metadata: {err}"),
                         }
                     })?;
                     data_limit = self.header.footer_offset;
@@ -720,7 +714,18 @@ impl Memvid {
             return Ok(());
         }
 
-        let segments = if !self.toc.segment_catalog.tantivy_segments.is_empty() {
+        let segments = if self.toc.segment_catalog.tantivy_segments.is_empty() {
+            match self.lex_storage.read() {
+                Ok(storage) => {
+                    if storage.is_empty() {
+                        None
+                    } else {
+                        Some(storage.segments().cloned().collect::<Vec<_>>())
+                    }
+                }
+                Err(_) => None,
+            }
+        } else {
             Some(
                 self.toc
                     .segment_catalog
@@ -734,17 +739,6 @@ impl Memvid {
                     })
                     .collect::<Vec<_>>(),
             )
-        } else {
-            match self.lex_storage.read() {
-                Ok(storage) => {
-                    if storage.is_empty() {
-                        None
-                    } else {
-                        Some(storage.segments().cloned().collect::<Vec<_>>())
-                    }
-                }
-                Err(_) => None,
-            }
         };
 
         let mut engine = match segments {
@@ -781,9 +775,7 @@ impl Memvid {
             // Trust existing Tantivy segments, don't rebuild
             false
         } else {
-            expected_docs
-                .map(|expected| expected != actual_docs)
-                .unwrap_or(true)
+            expected_docs != Some(actual_docs)
         };
 
         if needs_rebuild {
@@ -808,6 +800,7 @@ impl Memvid {
         Ok(())
     }
 
+    #[must_use] 
     pub fn vec_segment_descriptor(&self, segment_id: u64) -> Option<VecSegmentDescriptor> {
         self.toc
             .segment_catalog
@@ -833,10 +826,11 @@ impl Memvid {
 }
 
 /// Default maximum payload size for text indexing (256 MiB)
-/// Can be overridden via MEMVID_MAX_INDEX_PAYLOAD environment variable
+/// Can be overridden via `MEMVID_MAX_INDEX_PAYLOAD` environment variable
 pub const DEFAULT_MAX_INDEX_PAYLOAD: u64 = 256 * 1024 * 1024;
 
 /// Get the maximum indexable payload size from environment or use default
+#[must_use] 
 pub fn max_index_payload() -> u64 {
     std::env::var("MEMVID_MAX_INDEX_PAYLOAD")
         .ok()
@@ -845,6 +839,7 @@ pub fn max_index_payload() -> u64 {
 }
 
 /// Check if a MIME type represents text-based content that should be indexed
+#[must_use] 
 pub fn is_text_indexable_mime(mime: &str) -> bool {
     let mime_lower = mime.to_lowercase();
 
@@ -896,6 +891,7 @@ pub fn is_text_indexable_mime(mime: &str) -> bool {
 }
 
 /// Check if a frame should be indexed for text search
+#[must_use] 
 pub fn is_frame_text_indexable(frame: &crate::types::Frame) -> bool {
     // Must be active
     if frame.status != crate::types::FrameStatus::Active {
@@ -924,8 +920,7 @@ pub fn is_frame_text_indexable(frame: &crate::types::Frame) -> bool {
     frame
         .search_text
         .as_ref()
-        .map(|t| !t.trim().is_empty())
-        .unwrap_or(false)
+        .is_some_and(|t| !t.trim().is_empty())
 }
 
 #[cfg(feature = "lex")]

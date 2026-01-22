@@ -379,8 +379,19 @@ impl EmbeddedWal {
         let mut buf = [0u8; ENTRY_HEADER_SIZE];
         self.file.seek(SeekFrom::Start(absolute))?;
         self.file.read_exact(&mut buf)?;
-        let seq = u64::from_le_bytes(buf[..8].try_into().unwrap());
-        let len = u32::from_le_bytes(buf[8..12].try_into().unwrap());
+
+        // Safe byte extraction - return early if malformed (debug function)
+        let seq = buf
+            .get(..8)
+            .and_then(|s| <[u8; 8]>::try_from(s).ok())
+            .map(u64::from_le_bytes)
+            .unwrap_or(0);
+        let len = buf
+            .get(8..12)
+            .and_then(|s| <[u8; 4]>::try_from(s).ok())
+            .map(u32::from_le_bytes)
+            .unwrap_or(0);
+
         tracing::debug!(
             wal.verify_position = pos,
             wal.verify_sequence = seq,

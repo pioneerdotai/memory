@@ -178,8 +178,7 @@ impl Memvid {
                 frame
                     .uri
                     .as_deref()
-                    .map(|candidate_uri| candidate_uri == uri)
-                    .unwrap_or(false)
+                    .is_some_and(|candidate_uri| candidate_uri == uri)
                     && frame.status == FrameStatus::Active
             })
             .or_else(|| {
@@ -202,6 +201,7 @@ impl Memvid {
     /// we can skip re-ingestion. The hash is computed from the original file bytes.
     ///
     /// Returns `None` if no matching frame is found.
+    #[must_use] 
     pub fn find_frame_by_hash(&self, hash: &[u8; 32]) -> Option<&Frame> {
         self.toc
             .frames
@@ -279,7 +279,7 @@ impl Memvid {
         if let Some(text) = frame
             .metadata
             .as_ref()
-            .and_then(|meta| crate::image_preview_from_metadata(meta))
+            .and_then(crate::image_preview_from_metadata)
         {
             return Ok(text);
         }
@@ -294,8 +294,8 @@ impl Memvid {
             let label = video
                 .filename
                 .as_deref()
-                .or_else(|| frame.title.as_deref())
-                .or_else(|| frame.uri.as_deref())
+                .or(frame.title.as_deref())
+                .or(frame.uri.as_deref())
                 .unwrap_or("video");
             segments.push(format!("Video: {label}"));
             if let Some(duration) = video.duration_ms {
@@ -303,7 +303,7 @@ impl Memvid {
                 segments.push(format!("{seconds:.1}s"));
             }
             if let (Some(width), Some(height)) = (video.width, video.height) {
-                segments.push(format!("{}x{}", width, height));
+                segments.push(format!("{width}x{height}"));
             }
             if let Some(codec) = &video.codec {
                 if !codec.trim().is_empty() {
@@ -340,7 +340,7 @@ impl Memvid {
         Ok(self.vec_index.as_ref().and_then(|index| {
             index
                 .embedding_for(frame_id)
-                .map(|embedding| embedding.to_vec())
+                .map(<[f32]>::to_vec)
         }))
     }
 
@@ -355,15 +355,15 @@ impl Memvid {
         let count = query
             .split_whitespace()
             .filter(|token| !token.is_empty())
-            .map(|needle| needle.to_lowercase())
+            .map(str::to_lowercase)
             .map(|needle| content.to_lowercase().matches(&needle).count())
             .sum();
         Ok((preview, count))
     }
 
     pub(crate) fn frame_canonical_bytes(&mut self, frame: &Frame) -> Result<Vec<u8>> {
-        if frame.role == FrameRole::Document {
-            if frame.chunk_manifest.is_some() {
+        if frame.role == FrameRole::Document
+            && frame.chunk_manifest.is_some() {
                 let chunks = self.document_chunk_payloads(frame)?;
                 let mut buffer = Vec::new();
                 for (_, bytes) in chunks {
@@ -371,7 +371,6 @@ impl Memvid {
                 }
                 return Ok(buffer);
             }
-        }
         let raw = self.read_frame_payload_bytes(frame)?;
         let decoded = crate::decode_canonical_bytes(&raw, frame.canonical_encoding, frame.id)?;
         if let Some(expected) = frame.canonical_length {
@@ -409,7 +408,7 @@ impl Memvid {
             if !mime_is_text(meta) {
                 let logical = frame
                     .canonical_length
-                    .or_else(|| Some(frame.payload_length))
+                    .or(Some(frame.payload_length))
                     .unwrap_or(frame.payload_length);
                 return Ok(Self::render_binary_summary(logical as usize));
             }

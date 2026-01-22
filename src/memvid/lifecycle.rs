@@ -100,6 +100,7 @@ pub struct Memvid {
 
 /// Controls read-only open behaviour for `.mv2` memories.
 #[derive(Debug, Clone, Copy)]
+#[derive(Default)]
 pub struct OpenReadOptions {
     pub allow_repair: bool,
 }
@@ -125,13 +126,6 @@ impl Default for LockSettings {
     }
 }
 
-impl Default for OpenReadOptions {
-    fn default() -> Self {
-        Self {
-            allow_repair: false,
-        }
-    }
-}
 
 impl Memvid {
     /// Create a new, empty `.mv2` file with an embedded WAL and empty TOC.
@@ -261,6 +255,7 @@ impl Memvid {
         Ok(memvid)
     }
 
+    #[must_use] 
     pub fn lock_settings(&self) -> &LockSettings {
         &self.lock_settings
     }
@@ -276,6 +271,7 @@ impl Memvid {
     }
 
     /// Get the current vector compression mode
+    #[must_use] 
     pub fn vector_compression(&self) -> &VectorCompression {
         &self.vec_compression
     }
@@ -285,6 +281,7 @@ impl Memvid {
     /// Frame IDs are dense indices into `toc.frames`. When a memory is mutable, inserts are first
     /// appended to the embedded WAL and only materialized into `toc.frames` on commit. This helper
     /// lets frontends allocate stable frame IDs before an explicit commit.
+    #[must_use] 
     pub fn next_frame_id(&self) -> u64 {
         (self.toc.frames.len() as u64).saturating_add(self.pending_frame_inserts)
     }
@@ -313,7 +310,7 @@ impl Memvid {
         let mut header = HeaderCodec::read(&mut file)?;
         let toc = match read_toc(&mut file, &header) {
             Ok(toc) => toc,
-            Err(err @ MemvidError::Decode(_)) | Err(err @ MemvidError::InvalidToc { .. }) => {
+            Err(err @ (MemvidError::Decode(_) | MemvidError::InvalidToc { .. })) => {
                 tracing::info!("toc decode failed ({}); attempting recovery", err);
                 let (toc, recovered_offset) = recover_toc(&mut file, Some(header.footer_offset))?;
                 if recovered_offset != header.footer_offset
@@ -763,6 +760,7 @@ impl Memvid {
     ///
     /// Returns the binding if this file is bound to a dashboard memory,
     /// or None if unbound.
+    #[must_use] 
     pub fn get_memory_binding(&self) -> Option<&crate::types::MemoryBinding> {
         self.toc.memory_binding.as_ref()
     }
@@ -951,10 +949,10 @@ fn verify_toc_prefix(bytes: &[u8]) -> Result<()> {
 
 /// Ensure frame payloads do not overlap each other or exceed file boundary.
 ///
-/// Frames in the TOC are ordered by frame_id, not by payload_offset, so we must
-/// sort by payload_offset before checking for overlaps.
+/// Frames in the TOC are ordered by `frame_id`, not by `payload_offset`, so we must
+/// sort by `payload_offset` before checking for overlaps.
 ///
-/// Note: Frames with payload_length == 0 are "virtual" frames (e.g., document
+/// Note: Frames with `payload_length` == 0 are "virtual" frames (e.g., document
 /// frames that reference chunks) and are skipped from this check.
 fn ensure_non_overlapping_frames(toc: &Toc, file_len: u64) -> Result<()> {
     // Collect active frames with actual payloads and sort by payload_offset
@@ -1360,7 +1358,7 @@ pub(crate) fn cleanup_manifest_wal_public(path: &Path) {
 }
 
 /// Single source of truth: does this TOC have a lexical index?
-/// Checks all possible locations: old manifest, lex_segments, and tantivy_segments.
+/// Checks all possible locations: old manifest, `lex_segments`, and `tantivy_segments`.
 pub(crate) fn has_lex_index(toc: &Toc) -> bool {
     toc.segment_catalog.lex_enabled
         || toc.indexes.lex.is_some()
@@ -1442,16 +1440,14 @@ fn validate_segment_integrity(toc: &Toc, header: &Header, file_len: u64) -> Resu
             .checked_add(length)
             .ok_or_else(|| MemvidError::Doctor {
                 reason: format!(
-                    "Tantivy segment {} offset overflow: {} + {}",
-                    idx, offset, length
+                    "Tantivy segment {idx} offset overflow: {offset} + {length}"
                 ),
             })?;
 
         if end > file_len || end > data_limit {
             return Err(MemvidError::Doctor {
                 reason: format!(
-                    "Tantivy segment {} out of bounds: offset={}, length={}, end={}, file_len={}, data_limit={}",
-                    idx, offset, length, end, file_len, data_limit
+                    "Tantivy segment {idx} out of bounds: offset={offset}, length={length}, end={end}, file_len={file_len}, data_limit={data_limit}"
                 ),
             });
         }
@@ -1470,16 +1466,14 @@ fn validate_segment_integrity(toc: &Toc, header: &Header, file_len: u64) -> Resu
             .checked_add(length)
             .ok_or_else(|| MemvidError::Doctor {
                 reason: format!(
-                    "Time segment {} offset overflow: {} + {}",
-                    idx, offset, length
+                    "Time segment {idx} offset overflow: {offset} + {length}"
                 ),
             })?;
 
         if end > file_len || end > data_limit {
             return Err(MemvidError::Doctor {
                 reason: format!(
-                    "Time segment {} out of bounds: offset={}, length={}, end={}, file_len={}, data_limit={}",
-                    idx, offset, length, end, file_len, data_limit
+                    "Time segment {idx} out of bounds: offset={offset}, length={length}, end={end}, file_len={file_len}, data_limit={data_limit}"
                 ),
             });
         }
@@ -1498,16 +1492,14 @@ fn validate_segment_integrity(toc: &Toc, header: &Header, file_len: u64) -> Resu
             .checked_add(length)
             .ok_or_else(|| MemvidError::Doctor {
                 reason: format!(
-                    "Vec segment {} offset overflow: {} + {}",
-                    idx, offset, length
+                    "Vec segment {idx} offset overflow: {offset} + {length}"
                 ),
             })?;
 
         if end > file_len || end > data_limit {
             return Err(MemvidError::Doctor {
                 reason: format!(
-                    "Vec segment {} out of bounds: offset={}, length={}, end={}, file_len={}, data_limit={}",
-                    idx, offset, length, end, file_len, data_limit
+                    "Vec segment {idx} out of bounds: offset={offset}, length={length}, end={end}, file_len={file_len}, data_limit={data_limit}"
                 ),
             });
         }

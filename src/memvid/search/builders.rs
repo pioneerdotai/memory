@@ -96,13 +96,10 @@ impl Memvid {
                 return Ok(());
             }
 
-            let bytes = match self.read_range(manifest.bytes_offset, manifest.bytes_length) {
-                Ok(bytes) => bytes,
-                Err(_) => {
-                    // Don't disable lex if loading fails - keep it enabled
-                    self.lex_index = None;
-                    return Ok(());
-                }
+            let bytes = if let Ok(bytes) = self.read_range(manifest.bytes_offset, manifest.bytes_length) { bytes } else {
+                // Don't disable lex if loading fails - keep it enabled
+                self.lex_index = None;
+                return Ok(());
             };
             match LexIndex::decode(&bytes) {
                 Ok(mut index) => {
@@ -130,14 +127,11 @@ impl Memvid {
                 return Ok(());
             }
 
-            let bytes = match self.read_range(manifest.bytes_offset, manifest.bytes_length) {
-                Ok(bytes) => bytes,
-                Err(_) => {
-                    self.vec_index = None;
-                    // Don't disable vec if loading fails - keep it enabled
-                    // self.vec_enabled = false;
-                    return Ok(());
-                }
+            let bytes = if let Ok(bytes) = self.read_range(manifest.bytes_offset, manifest.bytes_length) { bytes } else {
+                self.vec_index = None;
+                // Don't disable vec if loading fails - keep it enabled
+                // self.vec_enabled = false;
+                return Ok(());
             };
             match catch_unwind(AssertUnwindSafe(|| VecIndex::decode(&bytes))) {
                 Ok(Ok(index)) => self.vec_index = Some(index),
@@ -166,12 +160,9 @@ impl Memvid {
                 return Ok(());
             }
 
-            let bytes = match self.read_range(manifest.bytes_offset, manifest.bytes_length) {
-                Ok(bytes) => bytes,
-                Err(_) => {
-                    self.clip_index = None;
-                    return Ok(());
-                }
+            let bytes = if let Ok(bytes) = self.read_range(manifest.bytes_offset, manifest.bytes_length) { bytes } else {
+                self.clip_index = None;
+                return Ok(());
             };
             match catch_unwind(AssertUnwindSafe(|| ClipIndex::decode(&bytes))) {
                 Ok(Ok(index)) => self.clip_index = Some(index),

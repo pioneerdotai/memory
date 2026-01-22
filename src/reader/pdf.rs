@@ -34,8 +34,7 @@ impl PdfReader {
     }
 
     fn supports_mime(mime: Option<&str>) -> bool {
-        mime.map(|m| m.eq_ignore_ascii_case("application/pdf"))
-            .unwrap_or(false)
+        mime.is_some_and(|m| m.eq_ignore_ascii_case("application/pdf"))
     }
 
     fn supports_magic(magic: Option<&[u8]>) -> bool {
@@ -169,8 +168,8 @@ impl DocumentReader for PdfReader {
         {
             let _ = hint;
             let document = Self::processor().extract_from_bytes(bytes)?;
-            return Ok(ReaderOutput::new(document, self.name())
-                .with_diagnostics(ReaderDiagnostics::default()));
+            Ok(ReaderOutput::new(document, self.name())
+                .with_diagnostics(ReaderDiagnostics::default()))
         }
     }
 }

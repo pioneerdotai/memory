@@ -27,6 +27,7 @@ pub struct LexIndexBuilder {
 }
 
 impl LexIndexBuilder {
+    #[must_use] 
     pub fn new() -> Self {
         Self::default()
     }
@@ -149,6 +150,7 @@ impl LexIndex {
         Self { documents }
     }
 
+    #[must_use] 
     pub fn search(&self, query: &str, limit: usize) -> Vec<LexSearchHit> {
         let mut query_tokens = tokenize(query);
         query_tokens.retain(|token| !token.is_empty());
@@ -413,7 +415,7 @@ fn tokenize(input: &str) -> Vec<String> {
     input
         .split(|c: char| !is_token_char(c))
         .filter_map(|token| {
-            if token.chars().any(|ch| ch.is_alphanumeric()) {
+            if token.chars().any(char::is_alphanumeric) {
                 Some(token.to_lowercase())
             } else {
                 None
@@ -524,7 +526,7 @@ fn push_section(sections: &mut Vec<LexSection>, content: &str, start: usize, end
 
 fn is_soft_boundary(ch: char, next: Option<char>) -> bool {
     match ch {
-        '.' | '!' | '?' => next.map_or(true, |n| n.is_whitespace()),
+        '.' | '!' | '?' => next.is_none_or(char::is_whitespace),
         '\n' => true,
         _ => false,
     }

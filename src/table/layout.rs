@@ -96,13 +96,13 @@ impl LineSegment {
     /// Get the Y coordinate for horizontal lines.
     #[must_use]
     pub fn y_coord(&self) -> f32 {
-        (self.y1 + self.y2) / 2.0
+        f32::midpoint(self.y1, self.y2)
     }
 
     /// Get the X coordinate for vertical lines.
     #[must_use]
     pub fn x_coord(&self) -> f32 {
-        (self.x1 + self.x2) / 2.0
+        f32::midpoint(self.x1, self.x2)
     }
 }
 
@@ -460,12 +460,12 @@ fn get_page_dimensions(document: &lopdf::Document, page_idx: usize) -> Option<(f
                 if arr.len() >= 4 {
                     let width = match &arr[2] {
                         lopdf::Object::Integer(n) => *n as f32,
-                        lopdf::Object::Real(n) => *n as f32,
+                        lopdf::Object::Real(n) => *n,
                         _ => return None,
                     };
                     let height = match &arr[3] {
                         lopdf::Object::Integer(n) => *n as f32,
-                        lopdf::Object::Real(n) => *n as f32,
+                        lopdf::Object::Real(n) => *n,
                         _ => return None,
                     };
                     return Some((width, height));
@@ -480,6 +480,7 @@ fn get_page_dimensions(document: &lopdf::Document, page_idx: usize) -> Option<(f
 ///
 /// Groups values that are within `threshold` of each other
 /// and returns cluster centroids.
+#[must_use] 
 pub fn cluster_values(values: &[f32], threshold: f32) -> Vec<f32> {
     if values.is_empty() {
         return Vec::new();

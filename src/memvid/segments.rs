@@ -119,10 +119,10 @@ impl Memvid {
 
             // Use search_text if available (covers no_raw mode), otherwise fall back to content
             let content = if let Some(ref text) = frame.search_text {
-                if !text.trim().is_empty() {
-                    text.clone()
-                } else {
+                if text.trim().is_empty() {
                     self.frame_content(&frame)?
+                } else {
+                    text.clone()
                 }
             } else {
                 self.frame_content(&frame)?
@@ -347,7 +347,7 @@ impl Memvid {
         let expected = &artifact.bytes[..verify_buf.len()];
         if verify_buf != expected {
             return Err(MemvidError::CheckpointFailed {
-                reason: format!("vec segment write verification failed at offset {}", offset),
+                reason: format!("vec segment write verification failed at offset {offset}"),
             });
         }
 
@@ -568,7 +568,7 @@ impl Memvid {
             let existing = latest
                 .get(path.as_str())
                 .map(|descriptor| (*descriptor).clone());
-            let requires_append = existing.as_ref().map_or(true, |descriptor| {
+            let requires_append = existing.as_ref().is_none_or(|descriptor| {
                 descriptor.common.checksum != blob.checksum
             });
 
@@ -661,8 +661,7 @@ impl Memvid {
             .indexes
             .lex
             .as_ref()
-            .map(|manifest| manifest.doc_count)
-            .unwrap_or(0);
+            .map_or(0, |manifest| manifest.doc_count);
         if current_doc_count != delta.doc_count {
             changed = true;
         }
@@ -672,8 +671,7 @@ impl Memvid {
             .indexes
             .lex
             .as_ref()
-            .map(|manifest| manifest.checksum)
-            .unwrap_or([0u8; 32]);
+            .map_or([0u8; 32], |manifest| manifest.checksum);
         if current_checksum != delta.checksum {
             changed = true;
         }

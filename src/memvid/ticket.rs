@@ -91,8 +91,7 @@ impl Memvid {
             .indexes
             .clip
             .as_ref()
-            .map(|c| c.vector_count)
-            .unwrap_or(0);
+            .map_or(0, |c| c.vector_count);
 
         Ok(Stats {
             frame_count: self.toc.frames.len() as u64,
@@ -248,11 +247,13 @@ impl Memvid {
         Ok(())
     }
 
+    #[must_use] 
     pub fn current_ticket(&self) -> TicketRef {
         self.toc.ticket_ref.clone()
     }
 
     /// Returns a reference to the Logic-Mesh manifest, if present.
+    #[must_use] 
     pub fn logic_mesh_manifest(&self) -> Option<&crate::types::LogicMeshManifest> {
         self.toc.logic_mesh.as_ref()
     }

@@ -12,7 +12,7 @@ use crate::types::{FrameId, MemoryCard};
 pub struct EnrichmentContext {
     /// The frame ID being processed.
     pub frame_id: FrameId,
-    /// The frame's URI (e.g., "mv2://session-1/msg-5").
+    /// The frame's URI (e.g., "<mv2://session-1/msg-5>").
     pub uri: String,
     /// The frame's text content.
     pub text: String,
@@ -136,7 +136,7 @@ pub trait EnrichmentEngine: Send + Sync {
 
     /// Check if the engine is ready for processing.
     ///
-    /// Returns true if init() has been called and the engine is ready.
+    /// Returns true if `init()` has been called and the engine is ready.
     fn is_ready(&self) -> bool {
         true
     }

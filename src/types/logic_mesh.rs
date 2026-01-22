@@ -16,16 +16,16 @@ pub const LOGIC_MESH_MAGIC: &[u8; 4] = b"MVLM";
 /// Current schema version.
 pub const LOGIC_MESH_VERSION: u16 = 1;
 
-/// Maximum nodes allowed (DoS prevention).
+/// Maximum nodes allowed (`DoS` prevention).
 pub const MAX_MESH_NODES: usize = 1_000_000;
 
-/// Maximum edges allowed (DoS prevention).
+/// Maximum edges allowed (`DoS` prevention).
 pub const MAX_MESH_EDGES: usize = 5_000_000;
 
 /// A node in the logic mesh representing an entity.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MeshNode {
-    /// Unique node ID (deterministic: hash of canonical_name + kind).
+    /// Unique node ID (deterministic: hash of `canonical_name` + kind).
     pub id: u64,
     /// Canonical entity name (lowercased, normalized).
     pub canonical_name: String,
@@ -37,12 +37,13 @@ pub struct MeshNode {
     pub confidence: u8,
     /// Frame IDs where this entity appears.
     pub frame_ids: Vec<FrameId>,
-    /// Byte spans within frames: (frame_id, byte_start, byte_len).
+    /// Byte spans within frames: (`frame_id`, `byte_start`, `byte_len`).
     pub mentions: Vec<(FrameId, u32, u16)>,
 }
 
 impl MeshNode {
     /// Create a new mesh node with computed ID.
+    #[must_use] 
     pub fn new(
         canonical_name: String,
         display_name: String,
@@ -143,6 +144,7 @@ pub struct MeshEdge {
 
 impl MeshEdge {
     /// Create a new edge.
+    #[must_use] 
     pub fn new(
         from_node: u64,
         to_node: u64,
@@ -231,7 +233,7 @@ pub enum EdgeDirection {
     Incoming,
 }
 
-/// Result from follow() traversal.
+/// Result from `follow()` traversal.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FollowResult {
     /// Entity name found.
@@ -264,9 +266,9 @@ pub struct LogicMeshStats {
 pub struct LogicMesh {
     /// All nodes, sorted by id for determinism.
     pub nodes: Vec<MeshNode>,
-    /// All edges, sorted by (from_node, to_node, link) for determinism.
+    /// All edges, sorted by (`from_node`, `to_node`, link) for determinism.
     pub edges: Vec<MeshEdge>,
-    /// Adjacency list: node_id → [(edge_idx, direction)].
+    /// Adjacency list: `node_id` → [(`edge_idx`, direction)].
     /// Built on load, not serialized.
     #[serde(skip)]
     adjacency: HashMap<u64, Vec<(usize, EdgeDirection)>>,
@@ -446,6 +448,7 @@ impl LogicMesh {
     }
 
     /// Follow edges from a start node.
+    #[must_use] 
     pub fn follow(&self, start: &str, link: &str, hops: usize) -> Vec<FollowResult> {
         let Some(start_node) = self.find_node(start) else {
             return Vec::new();

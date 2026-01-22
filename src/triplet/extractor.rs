@@ -141,9 +141,10 @@ impl TripletExtractor {
         (unique_cards, stats)
     }
 
-    /// Extract triplets from an existing EnrichmentContext.
+    /// Extract triplets from an existing `EnrichmentContext`.
     ///
     /// This is useful when you already have a context from the enrichment pipeline.
+    #[must_use] 
     pub fn extract_from_context(
         &self,
         ctx: &EnrichmentContext,
