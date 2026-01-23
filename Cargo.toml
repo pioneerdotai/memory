@@ -124,6 +124,7 @@ simd = ["dep:wide"]
 [dev-dependencies]
 fastrand = "2.0"
 tempfile = "3.10.1"
+criterion = { version = "0.8.1", features = ["html_reports"] }
 
 [[example]]
 name = "text_embedding"
@@ -136,3 +137,7 @@ required-features = ["vec"]
 [[example]]
 name = "simd_benchmark"
 required-features = ["simd"]
+
+[[bench]]
+name = "search_precision_benchmark"
+harness = false
