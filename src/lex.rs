@@ -767,10 +767,7 @@ mod tests {
         // Should have exactly one result for frame_id 42
         assert_eq!(matches.len(), 1, "Should have exactly one match");
         assert_eq!(matches[0].frame_id, 42, "Match should be for frame_id 42");
-        assert!(
-            matches[0].score > 0.0,
-            "Match should have a positive score"
-        );
+        assert!(matches[0].score > 0.0, "Match should have a positive score");
     }
 
     #[test]
@@ -810,7 +807,11 @@ mod tests {
         let matches = index.compute_matches(&query_tokens, None, None);
 
         // Should have exactly one result (deduplicated)
-        assert_eq!(matches.len(), 1, "Should have exactly one deduplicated match");
+        assert_eq!(
+            matches.len(),
+            1,
+            "Should have exactly one deduplicated match"
+        );
 
         // The match should have the higher score (from section2 with more "target" occurrences)
         // Section1 has 1 occurrence, Section2 has ~10+ occurrences
