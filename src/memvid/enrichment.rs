@@ -30,7 +30,7 @@ pub struct EnrichmentHandle {
 
 impl EnrichmentHandle {
     /// Stop the worker and wait for it to finish.
-    #[must_use] 
+    #[must_use]
     pub fn stop_and_wait(mut self) -> EnrichmentWorkerStats {
         self.handle.stop();
         if let Some(thread) = self.thread.take() {
@@ -40,13 +40,13 @@ impl EnrichmentHandle {
     }
 
     /// Check if worker is still running.
-    #[must_use] 
+    #[must_use]
     pub fn is_running(&self) -> bool {
         self.handle.is_running()
     }
 
     /// Get current statistics.
-    #[must_use] 
+    #[must_use]
     pub fn stats(&self) -> EnrichmentWorkerStats {
         self.handle.stats()
     }
@@ -216,19 +216,19 @@ where
 
 impl Memvid {
     /// Get the number of frames pending enrichment.
-    #[must_use] 
+    #[must_use]
     pub fn enrichment_queue_len(&self) -> usize {
         self.toc.enrichment_queue.len()
     }
 
     /// Check if any frames need enrichment.
-    #[must_use] 
+    #[must_use]
     pub fn has_pending_enrichment(&self) -> bool {
         !self.toc.enrichment_queue.is_empty()
     }
 
     /// Get the next task from the enrichment queue.
-    #[must_use] 
+    #[must_use]
     pub fn next_enrichment_task(&self) -> Option<EnrichmentTask> {
         self.toc.enrichment_queue.tasks.first().cloned()
     }
@@ -242,7 +242,7 @@ impl Memvid {
     /// Read frame data needed for enrichment.
     ///
     /// Returns (`search_text`, `is_skim`, `needs_embedding`) if frame exists.
-    #[must_use] 
+    #[must_use]
     pub fn read_frame_for_enrichment(&self, frame_id: FrameId) -> Option<(String, bool, bool)> {
         let frame = self
             .toc
@@ -401,7 +401,7 @@ impl Memvid {
         // Mark frame as enriched
         self.mark_frame_enriched(task.frame_id);
 
-        result.elapsed_ms = start.elapsed().as_millis() as u64;
+        result.elapsed_ms = start.elapsed().as_millis().try_into().unwrap_or(u64::MAX);
         result
     }
 
@@ -437,7 +437,7 @@ impl Memvid {
     }
 
     /// Get enrichment statistics.
-    #[must_use] 
+    #[must_use]
     pub fn enrichment_stats(&self) -> EnrichmentStats {
         let total_frames = self
             .toc
@@ -602,7 +602,7 @@ impl Memvid {
             frames_processed += 1;
 
             // Update checkpoint in queue for crash recovery
-            let chunks_done = embeddings_generated as u32;
+            let chunks_done = u32::try_from(embeddings_generated).unwrap_or(u32::MAX);
             self.toc.enrichment_queue.update_checkpoint(
                 task.frame_id,
                 chunks_done,
@@ -638,19 +638,19 @@ impl Memvid {
     }
 
     /// Check if vector embeddings are enabled.
-    #[must_use] 
+    #[must_use]
     pub fn has_embeddings(&self) -> bool {
         self.vec_enabled && self.vec_index.is_some()
     }
 
     /// Get vector count from the index.
-    #[must_use] 
+    #[must_use]
     pub fn vector_count(&self) -> usize {
-        self.toc
-            .indexes
-            .vec
-            .as_ref()
-            .map_or(0, |m| m.vector_count as usize)
+        self.toc.indexes.vec.as_ref().map_or(0, |m| {
+            #[allow(clippy::cast_possible_truncation)]
+            let count = m.vector_count as usize;
+            count
+        })
     }
 }
 

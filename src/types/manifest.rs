@@ -244,8 +244,7 @@ pub struct IndexSegmentRef {
 
 /// Segment category emitted by the parallel builder.
 /// Always defined for backwards compatibility.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum SegmentKind {
     #[default]
     Lexical,
@@ -254,7 +253,6 @@ pub enum SegmentKind {
     Temporal,
     Tantivy,
 }
-
 
 /// Build-time metrics captured for a sealed segment.
 /// Always defined for backwards compatibility.
@@ -673,8 +671,7 @@ impl<'de> Deserialize<'de> for TantivySegmentDescriptor {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct IndexManifests {
     pub lex: Option<LexIndexManifest>,
     #[serde(default)]
@@ -684,7 +681,6 @@ pub struct IndexManifests {
     #[serde(default)]
     pub clip: Option<crate::clip::ClipIndexManifest>,
 }
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LexIndexManifest {
@@ -704,14 +700,12 @@ pub struct LexSegmentManifest {
     pub checksum: [u8; 32],
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub enum VectorCompression {
     #[default]
     None, // Full f32 vectors (1,536 bytes for 384 dims)
     Pq96, // Product quantization with 96 subspaces (96 bytes)
 }
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VecIndexManifest {
@@ -725,15 +719,13 @@ pub struct VecIndexManifest {
     pub compression_mode: VectorCompression,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum SegmentCompression {
     #[default]
     None,
     Zstd,
     Lz4,
 }
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SegmentMeta {
@@ -877,7 +869,7 @@ pub struct EnrichmentQueueManifest {
 
 impl EnrichmentQueueManifest {
     /// Create a new empty enrichment queue.
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         Self {
             tasks: Vec::new(),
@@ -926,13 +918,13 @@ impl EnrichmentQueueManifest {
     }
 
     /// Check if any enrichment work is pending.
-    #[must_use] 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.tasks.is_empty()
     }
 
     /// Get count of pending tasks.
-    #[must_use] 
+    #[must_use]
     pub fn len(&self) -> usize {
         self.tasks.len()
     }

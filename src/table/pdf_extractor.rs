@@ -41,7 +41,7 @@ pub fn extract_tables_from_pdf(
 
     // Extract page layouts
     let layouts = extract_pdf_layout(bytes, options.max_pages)?;
-    let pages_processed = layouts.len() as u32;
+    let pages_processed = u32::try_from(layouts.len()).unwrap_or(0);
 
     let mut all_tables = Vec::new();
     let mut warnings = Vec::new();
@@ -102,7 +102,7 @@ pub fn extract_tables_from_pdf(
         }
     }
 
-    let total_ms = start.elapsed().as_millis() as u64;
+    let total_ms = start.elapsed().as_millis().try_into().unwrap_or(u64::MAX);
 
     if all_tables.is_empty() && pages_processed > 0 {
         warnings.push("No tables detected in document".to_string());
@@ -651,7 +651,7 @@ fn extract_raw_text(bytes: &[u8]) -> Option<String> {
     let pages = document.get_pages();
     let mut all_text = String::new();
 
-    for page_num in 1..=pages.len() as u32 {
+    for page_num in 1..=u32::try_from(pages.len()).unwrap_or(0) {
         if let Ok(text) = document.extract_text(&[page_num]) {
             all_text.push_str(&text);
             all_text.push('\n');

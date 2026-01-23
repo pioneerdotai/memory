@@ -151,7 +151,7 @@ impl RerankerConfig {
 /// ```
 pub trait Reranker: Send + Sync {
     /// Return the reranker kind identifier.
-    fn kind(&self) -> &str;
+    fn kind(&self) -> &'static str;
 
     /// Rerank documents by relevance to the query.
     ///
@@ -235,7 +235,7 @@ mod tests {
     struct MockReranker;
 
     impl Reranker for MockReranker {
-        fn kind(&self) -> &str {
+        fn kind(&self) -> &'static str {
             "mock"
         }
 

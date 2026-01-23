@@ -88,7 +88,9 @@ pub(crate) fn build_timeline(
         entries.reverse();
     }
 
-    let limit = limit.map_or(entries.len(), |nz| nz.get() as usize);
+    let limit = limit.map_or(entries.len(), |nz| {
+        usize::try_from(nz.get()).unwrap_or(usize::MAX)
+    });
     let mut result = Vec::with_capacity(entries.len().min(limit));
     #[cfg(feature = "temporal_track")]
     let temporal_track_snapshot = memvid.temporal_track_ref()?.cloned();
@@ -96,7 +98,7 @@ pub(crate) fn build_timeline(
         let frame = memvid
             .toc
             .frames
-            .get(entry.frame_id as usize)
+            .get(usize::try_from(entry.frame_id).unwrap_or(usize::MAX))
             .ok_or(MemvidError::InvalidTimeIndex {
                 reason: "frame id out of range".into(),
             })?

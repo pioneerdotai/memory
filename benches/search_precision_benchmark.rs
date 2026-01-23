@@ -39,7 +39,7 @@ fn setup_corpus(size: usize) -> std::path::PathBuf {
         let content = format!("Document {} about {}", i, topics[i % topics.len()]);
         mem.put_bytes_with_options(
             content.as_bytes(),
-            PutOptions::builder().title(&format!("Doc {}", i)).build(),
+            PutOptions::builder().title(format!("Doc {}", i)).build(),
         )
         .unwrap();
 

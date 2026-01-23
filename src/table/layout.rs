@@ -320,7 +320,7 @@ pub fn extract_pdf_layout(bytes: &[u8], max_pages: usize) -> Result<Vec<PageLayo
     let mut layouts = Vec::with_capacity(pages_to_process);
 
     for page_idx in 0..pages_to_process {
-        let page_number = (page_idx + 1) as u32;
+        let page_number = u32::try_from(page_idx + 1).unwrap_or(0);
 
         // Get page dimensions (default to standard US Letter if not available)
         let (width, height) = get_page_dimensions(&document, page_idx).unwrap_or((612.0, 792.0));
@@ -452,7 +452,7 @@ fn parse_line_into_columns(
 #[cfg(not(feature = "pdfium"))]
 fn get_page_dimensions(document: &lopdf::Document, page_idx: usize) -> Option<(f32, f32)> {
     let pages = document.get_pages();
-    let page_id = *pages.get(&((page_idx + 1) as u32))?;
+    let page_id = *pages.get(&u32::try_from(page_idx + 1).unwrap_or(0))?;
 
     if let Ok(page) = document.get_dictionary(page_id) {
         if let Ok(media_box) = page.get(b"MediaBox") {
@@ -480,7 +480,7 @@ fn get_page_dimensions(document: &lopdf::Document, page_idx: usize) -> Option<(f
 ///
 /// Groups values that are within `threshold` of each other
 /// and returns cluster centroids.
-#[must_use] 
+#[must_use]
 pub fn cluster_values(values: &[f32], threshold: f32) -> Vec<f32> {
     if values.is_empty() {
         return Vec::new();

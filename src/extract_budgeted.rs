@@ -43,7 +43,7 @@ impl Default for ExtractionBudget {
 
 impl ExtractionBudget {
     /// Create a budget with custom milliseconds.
-    #[must_use] 
+    #[must_use]
     pub fn with_ms(ms: u64) -> Self {
         Self {
             budget: Duration::from_millis(ms),
@@ -52,7 +52,7 @@ impl ExtractionBudget {
     }
 
     /// Create an unlimited budget (extract everything).
-    #[must_use] 
+    #[must_use]
     pub fn unlimited() -> Self {
         Self {
             budget: Duration::from_secs(3600), // 1 hour = effectively unlimited
@@ -81,13 +81,13 @@ pub struct BudgetedExtractionResult {
 
 impl BudgetedExtractionResult {
     /// Check if we got meaningful content.
-    #[must_use] 
+    #[must_use]
     pub fn has_content(&self) -> bool {
         !self.text.trim().is_empty()
     }
 
     /// Check if this is a skim (partial) extraction.
-    #[must_use] 
+    #[must_use]
     pub fn is_skim(&self) -> bool {
         !self.completed && self.sections_extracted < self.sections_total
     }
@@ -138,7 +138,7 @@ pub fn extract_pdf_budgeted(
                             sections_extracted: estimated_pages,
                             sections_total: estimated_pages,
                             completed,
-                            elapsed_ms: start.elapsed().as_millis() as u64,
+                            elapsed_ms: start.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
                             coverage: 1.0,
                         });
                     }
@@ -180,7 +180,7 @@ pub fn extract_pdf_budgeted(
                         sections_extracted: estimated_pages,
                         sections_total: estimated_pages,
                         completed,
-                        elapsed_ms: start.elapsed().as_millis() as u64,
+                        elapsed_ms: start.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
                         coverage: 1.0,
                     });
                 }
@@ -233,12 +233,11 @@ fn extract_pdf_budgeted_lopdf(
         })?;
 
     // Handle encryption
-    if document.is_encrypted()
-        && document.decrypt("").is_err() {
-            return Err(MemvidError::ExtractionFailed {
-                reason: "cannot decrypt password-protected PDF".into(),
-            });
-        }
+    if document.is_encrypted() && document.decrypt("").is_err() {
+        return Err(MemvidError::ExtractionFailed {
+            reason: "cannot decrypt password-protected PDF".into(),
+        });
+    }
 
     // Decompress for better extraction
     let () = document.decompress();
@@ -251,7 +250,7 @@ fn extract_pdf_budgeted_lopdf(
             sections_extracted: 0,
             sections_total: 0,
             completed: true,
-            elapsed_ms: start.elapsed().as_millis() as u64,
+            elapsed_ms: start.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
             coverage: 1.0,
         });
     }
@@ -360,7 +359,7 @@ pub fn extract_text_budgeted(
         sections_extracted: sections,
         sections_total: sections,
         completed: true,
-        elapsed_ms: start.elapsed().as_millis() as u64,
+        elapsed_ms: start.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
         coverage: 1.0,
     })
 }
@@ -429,7 +428,7 @@ fn extract_ooxml_budgeted(
                     sections_extracted: sections,
                     sections_total: sections,
                     completed: true,
-                    elapsed_ms: start.elapsed().as_millis() as u64,
+                    elapsed_ms: start.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
                     coverage: 1.0,
                 })
             }
@@ -442,7 +441,7 @@ fn extract_ooxml_budgeted(
             sections_extracted: 0,
             sections_total: 0,
             completed: true,
-            elapsed_ms: start.elapsed().as_millis() as u64,
+            elapsed_ms: start.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
             coverage: 1.0,
         })
     }
@@ -588,7 +587,7 @@ fn finish_extraction(
         sections_extracted,
         sections_total: total_pages,
         completed,
-        elapsed_ms: start.elapsed().as_millis() as u64,
+        elapsed_ms: start.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
         coverage,
     })
 }

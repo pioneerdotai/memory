@@ -533,11 +533,12 @@ impl MemoriesTrack {
             });
         }
 
-        let len = u64::from_le_bytes([
+        let len = usize::try_from(u64::from_le_bytes([
             data[6], data[7], data[8], data[9], data[10], data[11], data[12],
             data[13],
             // Safe: checked on next line that data.len() >= 14 + len, so len fits in available memory
-        ]) as usize;
+        ]))
+        .unwrap_or(0);
         if data.len() < 14 + len {
             return Err(MemvidError::InvalidHeader {
                 reason: "memories track data truncated".into(),

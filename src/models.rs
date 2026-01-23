@@ -62,12 +62,10 @@ impl ModelVerification {
     }
 }
 
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct ModelVerifyOptions {
     pub run_onnx_smoke: bool,
 }
-
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, rename_all = "kebab-case")]
@@ -105,7 +103,6 @@ pub struct ModelManifestEntry {
     pub roles: Vec<String>,
     pub kind: Option<String>,
 }
-
 
 pub fn verify_models(root: &Path, options: &ModelVerifyOptions) -> Result<Vec<ModelVerification>> {
     if !root.exists() {
@@ -317,7 +314,8 @@ fn normalize_sha256(value: &str, context: &str) -> Result<String> {
 
 fn digest_from_dir_name(path: &Path) -> Option<String> {
     let name = path.file_name()?.to_str()?;
-    name.strip_prefix("sha256-").map(std::string::ToString::to_string)
+    name.strip_prefix("sha256-")
+        .map(std::string::ToString::to_string)
 }
 
 fn compute_sha256_hex(path: &Path) -> Result<String> {

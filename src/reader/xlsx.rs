@@ -60,13 +60,11 @@ impl DocumentReader for XlsxReader {
 
     fn supports(&self, hint: &ReaderHint<'_>) -> bool {
         matches!(hint.format, Some(DocumentFormat::Xlsx))
-            || hint
-                .mime
-                .is_some_and(|mime| {
-                    mime.eq_ignore_ascii_case(
-                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    )
-                })
+            || hint.mime.is_some_and(|mime| {
+                mime.eq_ignore_ascii_case(
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+            })
     }
 
     fn extract(&self, bytes: &[u8], hint: &ReaderHint<'_>) -> Result<ReaderOutput> {

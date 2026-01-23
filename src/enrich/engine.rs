@@ -149,10 +149,10 @@ mod tests {
     struct TestEngine;
 
     impl EnrichmentEngine for TestEngine {
-        fn kind(&self) -> &str {
+        fn kind(&self) -> &'static str {
             "test"
         }
-        fn version(&self) -> &str {
+        fn version(&self) -> &'static str {
             "1.0.0"
         }
         fn enrich(&self, _ctx: &EnrichmentContext) -> EnrichmentResult {

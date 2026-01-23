@@ -86,7 +86,7 @@ impl Default for AdaptiveConfig {
 
 impl AdaptiveConfig {
     /// Create a config with absolute threshold strategy.
-    #[must_use] 
+    #[must_use]
     pub fn with_absolute_threshold(min_score: f32) -> Self {
         Self {
             strategy: CutoffStrategy::AbsoluteThreshold { min_score },
@@ -95,7 +95,7 @@ impl AdaptiveConfig {
     }
 
     /// Create a config with relative threshold strategy.
-    #[must_use] 
+    #[must_use]
     pub fn with_relative_threshold(min_ratio: f32) -> Self {
         Self {
             strategy: CutoffStrategy::RelativeThreshold { min_ratio },
@@ -104,7 +104,7 @@ impl AdaptiveConfig {
     }
 
     /// Create a config with score cliff detection.
-    #[must_use] 
+    #[must_use]
     pub fn with_score_cliff(max_drop_ratio: f32) -> Self {
         Self {
             strategy: CutoffStrategy::ScoreCliff { max_drop_ratio },
@@ -113,7 +113,7 @@ impl AdaptiveConfig {
     }
 
     /// Create a config with automatic elbow detection.
-    #[must_use] 
+    #[must_use]
     pub fn with_elbow_detection() -> Self {
         Self {
             strategy: CutoffStrategy::Elbow { sensitivity: 1.0 },
@@ -122,7 +122,7 @@ impl AdaptiveConfig {
     }
 
     /// Create a combined strategy (recommended for production).
-    #[must_use] 
+    #[must_use]
     pub fn combined(min_ratio: f32, max_drop: f32, min_score: f32) -> Self {
         Self {
             strategy: CutoffStrategy::Combined {
@@ -236,7 +236,7 @@ pub struct AdaptiveStats {
 
 impl<T> AdaptiveResult<T> {
     /// Create an empty result.
-    #[must_use] 
+    #[must_use]
     pub fn empty() -> Self {
         Self {
             results: Vec::new(),
@@ -365,9 +365,9 @@ pub fn compute_embedding_quality(embeddings: &[(u64, Vec<f32>)]) -> EmbeddingQua
         while similarities.len() < max_pairs {
             // Simple LCG random
             rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1);
-            let i = (rng_state as usize) % vector_count;
+            let i = usize::try_from(rng_state % (vector_count as u64)).unwrap_or(0);
             rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1);
-            let j = (rng_state as usize) % vector_count;
+            let j = usize::try_from(rng_state % (vector_count as u64)).unwrap_or(0);
 
             if i != j {
                 let pair = if i < j { (i, j) } else { (j, i) };
@@ -500,7 +500,7 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
 ///
 /// Returns (`cutoff_index`, `triggered_by_strategy`).
 /// Results at indices `0..cutoff_index` should be included.
-#[must_use] 
+#[must_use]
 pub fn find_adaptive_cutoff(scores: &[f32], config: &AdaptiveConfig) -> (usize, String) {
     if scores.is_empty() {
         return (0, "no_results".to_string());
@@ -758,7 +758,7 @@ mod tests {
 
         // Should stop either at relative threshold (50% of 0.95 = 0.475)
         // or at cliff (0.75 -> 0.40 is ~47% drop)
-        assert!(cutoff >= 4 && cutoff <= 6);
+        assert!((4..=6).contains(&cutoff));
     }
 
     #[test]

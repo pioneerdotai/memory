@@ -40,75 +40,77 @@ impl AutoTagger {
 }
 
 fn extract_keywords(text: &str, limit: usize) -> Vec<String> {
-    static TOKEN_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(r"(?i)[a-z0-9][a-z0-9'-]+").unwrap());
-    static STOPWORDS: std::sync::LazyLock<BTreeSet<&'static str>> = std::sync::LazyLock::new(|| {
-        [
-            "the",
-            "and",
-            "for",
-            "with",
-            "that",
-            "from",
-            "this",
-            "were",
-            "have",
-            "has",
-            "will",
-            "shall",
-            "into",
-            "about",
-            "without",
-            "within",
-            "between",
-            "because",
-            "over",
-            "under",
-            "after",
-            "before",
-            "until",
-            "while",
-            "their",
-            "there",
-            "these",
-            "those",
-            "your",
-            "into",
-            "such",
-            "been",
-            "where",
-            "when",
-            "which",
-            "using",
-            "also",
-            "than",
-            "could",
-            "would",
-            "should",
-            "might",
-            "cannot",
-            "however",
-            "therefore",
-            "thereof",
-            "hereby",
-            "herein",
-            "hereof",
-            "based",
-            "system",
-            "application",
-            "service",
-            "provide",
-            "provided",
-            "including",
-            "include",
-            "includes",
-            "version",
-            "update",
-            "updates",
-            "usage",
-        ]
-        .into_iter()
-        .collect()
-    });
+    static TOKEN_RE: std::sync::LazyLock<Regex> =
+        std::sync::LazyLock::new(|| Regex::new(r"(?i)[a-z0-9][a-z0-9'-]+").unwrap());
+    static STOPWORDS: std::sync::LazyLock<BTreeSet<&'static str>> =
+        std::sync::LazyLock::new(|| {
+            [
+                "the",
+                "and",
+                "for",
+                "with",
+                "that",
+                "from",
+                "this",
+                "were",
+                "have",
+                "has",
+                "will",
+                "shall",
+                "into",
+                "about",
+                "without",
+                "within",
+                "between",
+                "because",
+                "over",
+                "under",
+                "after",
+                "before",
+                "until",
+                "while",
+                "their",
+                "there",
+                "these",
+                "those",
+                "your",
+                "into",
+                "such",
+                "been",
+                "where",
+                "when",
+                "which",
+                "using",
+                "also",
+                "than",
+                "could",
+                "would",
+                "should",
+                "might",
+                "cannot",
+                "however",
+                "therefore",
+                "thereof",
+                "hereby",
+                "herein",
+                "hereof",
+                "based",
+                "system",
+                "application",
+                "service",
+                "provide",
+                "provided",
+                "including",
+                "include",
+                "includes",
+                "version",
+                "update",
+                "updates",
+                "usage",
+            ]
+            .into_iter()
+            .collect()
+        });
 
     let mut counts: BTreeMap<String, u32> = BTreeMap::new();
     for token in TOKEN_RE.find_iter(text) {
@@ -132,8 +134,9 @@ fn extract_keywords(text: &str, limit: usize) -> Vec<String> {
 }
 
 fn derive_labels(text: &str, limit: usize) -> Vec<String> {
-    static PHRASE_RE: std::sync::LazyLock<Regex> =
-        std::sync::LazyLock::new(|| Regex::new(r"(?m)^(?P<phrase>[A-Z][A-Za-z0-9 &/-]{3,})$").unwrap());
+    static PHRASE_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
+        Regex::new(r"(?m)^(?P<phrase>[A-Z][A-Za-z0-9 &/-]{3,})$").unwrap()
+    });
 
     let mut labels = BTreeSet::new();
     for caps in PHRASE_RE.captures_iter(text) {
@@ -218,7 +221,7 @@ mod tests {
     #[test]
     fn produces_keywords_and_labels() {
         let text = "Rust memory engines power efficient systems. Memory safety ensures reliability in 2025.";
-        let result = AutoTagger::default().analyse(text, true);
+        let result = AutoTagger.analyse(text, true);
         assert!(result.tags.iter().any(|tag| tag.contains("memory")));
         assert!(!result.content_dates.is_empty());
     }

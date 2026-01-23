@@ -21,6 +21,7 @@ fn vec_config() -> impl bincode::config::Config {
         .with_little_endian()
 }
 
+#[allow(clippy::cast_possible_truncation)]
 const VEC_DECODE_LIMIT: usize = crate::MAX_INDEX_BYTES as usize;
 
 /// Product Quantization parameters
@@ -62,11 +63,15 @@ impl SubspaceCodebook {
         let mut best_dist = f32::INFINITY;
 
         for i in 0..NUM_CENTROIDS {
+            #[allow(clippy::cast_possible_truncation)]
             let centroid = self.get_centroid(i as u8);
             let dist = l2_distance_squared(subspace, centroid);
             if dist < best_dist {
                 best_dist = dist;
-                best_idx = i as u8;
+                #[allow(clippy::cast_possible_truncation)]
+                {
+                    best_idx = i as u8;
+                }
             }
         }
 
@@ -87,9 +92,7 @@ impl ProductQuantizer {
     pub fn new(dimension: u32) -> Result<Self> {
         if dimension as usize != TOTAL_DIM {
             return Err(MemvidError::InvalidQuery {
-                reason: format!(
-                    "PQ only supports {TOTAL_DIM}-dim vectors, got {dimension}"
-                ),
+                reason: format!("PQ only supports {TOTAL_DIM}-dim vectors, got {dimension}"),
             });
         }
 
@@ -136,6 +139,7 @@ impl ProductQuantizer {
 
             // Store in codebook
             for (i, centroid) in centroids.iter().enumerate() {
+                #[allow(clippy::cast_possible_truncation)]
                 self.codebooks[subspace_idx].set_centroid(i as u8, centroid);
             }
         }
@@ -193,7 +197,7 @@ impl ProductQuantizer {
 
     /// Compute asymmetric distance between query vector and PQ-encoded vector
     /// Uses precomputed lookup tables for efficiency
-    #[must_use] 
+    #[must_use]
     pub fn asymmetric_distance(&self, query: &[f32], codes: &[u8]) -> f32 {
         if query.len() != TOTAL_DIM || codes.len() != NUM_SUBSPACES {
             return f32::INFINITY;
@@ -232,7 +236,7 @@ pub struct QuantizedVecIndexBuilder {
 }
 
 impl QuantizedVecIndexBuilder {
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -339,7 +343,7 @@ impl QuantizedVecIndex {
         // Convert old format to new format
         let quantizer = ProductQuantizer {
             codebooks: old_quantizer.codebooks,
-            dimension: (NUM_SUBSPACES * SUBSPACE_DIM) as u32,
+            dimension: u32::try_from(NUM_SUBSPACES * SUBSPACE_DIM).unwrap_or(u32::MAX),
         };
 
         Ok(Self {
@@ -349,7 +353,7 @@ impl QuantizedVecIndex {
     }
 
     /// Search using asymmetric distance computation
-    #[must_use] 
+    #[must_use]
     pub fn search(&self, query: &[f32], limit: usize) -> Vec<VecSearchHit> {
         if query.is_empty() {
             return Vec::new();
@@ -382,7 +386,7 @@ impl QuantizedVecIndex {
     }
 
     /// Get compression statistics
-    #[must_use] 
+    #[must_use]
     pub fn compression_stats(&self) -> CompressionStats {
         let original_bytes = self.documents.len() * TOTAL_DIM * std::mem::size_of::<f32>();
         let compressed_bytes = self.documents.len() * NUM_SUBSPACES; // 96 bytes per vector
@@ -556,7 +560,7 @@ mod tests {
         }
 
         // Train quantizer
-        let mut pq = ProductQuantizer::new(TOTAL_DIM as u32).unwrap();
+        let mut pq = ProductQuantizer::new(u32::try_from(TOTAL_DIM).unwrap()).unwrap();
         pq.train(&training_vecs, 10).unwrap();
 
         // Encode a vector
@@ -588,7 +592,7 @@ mod tests {
         // Build index
         let mut builder = QuantizedVecIndexBuilder::new();
         builder
-            .train_quantizer(&training_vecs, TOTAL_DIM as u32)
+            .train_quantizer(&training_vecs, u32::try_from(TOTAL_DIM).unwrap())
             .unwrap();
 
         for (i, vec) in training_vecs.iter().take(10).enumerate() {
@@ -599,7 +603,7 @@ mod tests {
 
         let artifact = builder.finish().unwrap();
         assert_eq!(artifact.vector_count, 10);
-        assert_eq!(artifact.dimension, TOTAL_DIM as u32);
+        assert_eq!(artifact.dimension, u32::try_from(TOTAL_DIM).unwrap());
         assert!(artifact.compression_ratio > 10.0);
 
         // Decode and search

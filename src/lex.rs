@@ -15,6 +15,7 @@ fn lex_config() -> impl bincode::config::Config {
         .with_little_endian()
 }
 
+#[allow(clippy::cast_possible_truncation)]
 const LEX_DECODE_LIMIT: usize = crate::MAX_INDEX_BYTES as usize;
 const LEX_SECTION_SOFT_CHARS: usize = 900;
 const LEX_SECTION_HARD_CHARS: usize = 1400;
@@ -27,7 +28,7 @@ pub struct LexIndexBuilder {
 }
 
 impl LexIndexBuilder {
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -150,7 +151,7 @@ impl LexIndex {
         Self { documents }
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn search(&self, query: &str, limit: usize) -> Vec<LexSearchHit> {
         let mut query_tokens = tokenize(query);
         query_tokens.retain(|token| !token.is_empty());
@@ -684,7 +685,7 @@ mod tests {
 
         let artifact = builder.finish().expect("finish");
         assert_eq!(artifact.doc_count, 2);
-        assert!(artifact.bytes.len() > 0);
+        assert!(!artifact.bytes.is_empty());
 
         let index = LexIndex::decode(&artifact.bytes).expect("decode");
         let hits = index.search("rust", 10);

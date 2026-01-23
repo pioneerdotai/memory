@@ -193,13 +193,13 @@ pub struct GraphMatcher<'a> {
 
 impl<'a> GraphMatcher<'a> {
     /// Create a new graph matcher.
-    #[must_use] 
+    #[must_use]
     pub fn new(memvid: &'a Memvid) -> Self {
         Self { memvid }
     }
 
     /// Execute a graph pattern and return matching results.
-    #[must_use] 
+    #[must_use]
     pub fn execute(&self, pattern: &GraphPattern) -> Vec<GraphMatchResult> {
         let mut results = Vec::new();
 

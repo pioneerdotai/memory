@@ -9,6 +9,7 @@ fn vec_config() -> impl bincode::config::Config {
         .with_little_endian()
 }
 
+#[allow(clippy::cast_possible_truncation)]
 const VEC_DECODE_LIMIT: usize = crate::MAX_INDEX_BYTES as usize;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -23,7 +24,7 @@ pub struct VecIndexBuilder {
 }
 
 impl VecIndexBuilder {
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -45,7 +46,7 @@ impl VecIndexBuilder {
         let dimension = self
             .documents
             .first()
-            .map_or(0, |doc| doc.embedding.len() as u32);
+            .map_or(0, |doc| u32::try_from(doc.embedding.len()).unwrap_or(0));
         #[cfg(feature = "parallel_segments")]
         let bytes_uncompressed = self
             .documents
@@ -149,7 +150,7 @@ impl VecIndex {
         }
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn search(&self, query: &[f32], limit: usize) -> Vec<VecSearchHit> {
         if query.is_empty() {
             return Vec::new();
@@ -178,7 +179,7 @@ impl VecIndex {
         }
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn entries(&self) -> Box<dyn Iterator<Item = (FrameId, &[f32])> + '_> {
         match self {
             VecIndex::Uncompressed { documents } => Box::new(
@@ -193,7 +194,7 @@ impl VecIndex {
         }
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn embedding_for(&self, frame_id: FrameId) -> Option<&[f32]> {
         match self {
             VecIndex::Uncompressed { documents } => documents

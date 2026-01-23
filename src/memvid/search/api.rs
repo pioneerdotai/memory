@@ -99,15 +99,24 @@ impl Memvid {
             return Err(MemvidError::VecNotEnabled);
         }
         let mut ensured_vec_index = false;
-        let expected_dim = if let Some(dim) = self.effective_vec_index_dimension()? { dim } else {
+        let expected_dim = if let Some(dim) = self.effective_vec_index_dimension()? {
+            dim
+        } else {
             self.ensure_vec_index()?;
             ensured_vec_index = true;
             self.vec_index
                 .as_ref()
-                .and_then(|index| index.entries().next().map(|(_, emb)| emb.len() as u32))
+                .and_then(|index| {
+                    index
+                        .entries()
+                        .next()
+                        .map(|(_, emb)| u32::try_from(emb.len()).unwrap_or(0))
+                })
                 .unwrap_or(0)
         };
-        if expected_dim > 0 && query.len() as u32 != expected_dim {
+        // Safe: embedding dimensions are small (< few thousands)
+        #[allow(clippy::cast_possible_truncation)]
+        if expected_dim > 0 && (query.len() as u32) != expected_dim {
             return Err(MemvidError::VecDimensionMismatch {
                 expected: expected_dim,
                 actual: query.len(),
@@ -246,15 +255,24 @@ impl Memvid {
         // Validate embedding dimension BEFORE searching to prevent silent wrong results.
         // For segment-only memories, dimension may only be discoverable after loading segments.
         let mut ensured_vec_index = false;
-        let expected_dim = if let Some(dim) = self.effective_vec_index_dimension()? { dim } else {
+        let expected_dim = if let Some(dim) = self.effective_vec_index_dimension()? {
+            dim
+        } else {
             self.ensure_vec_index()?;
             ensured_vec_index = true;
             self.vec_index
                 .as_ref()
-                .and_then(|index| index.entries().next().map(|(_, emb)| emb.len() as u32))
+                .and_then(|index| {
+                    index
+                        .entries()
+                        .next()
+                        .map(|(_, emb)| u32::try_from(emb.len()).unwrap_or(0))
+                })
                 .unwrap_or(0)
         };
-        if expected_dim > 0 && query_embedding.len() as u32 != expected_dim {
+        // Safe: embedding dimensions are small
+        #[allow(clippy::cast_possible_truncation)]
+        if expected_dim > 0 && (query_embedding.len() as u32) != expected_dim {
             return Err(MemvidError::VecDimensionMismatch {
                 expected: expected_dim,
                 actual: query_embedding.len(),
@@ -297,7 +315,14 @@ impl Memvid {
 
         for vec_hit in vec_hits {
             // Apply scope filter if provided
-            let frame = match self.toc.frames.get(vec_hit.frame_id as usize) {
+            // Apply scope filter if provided
+            let frame_idx = if let Ok(idx) = usize::try_from(vec_hit.frame_id) {
+                idx
+            } else {
+                continue;
+            };
+
+            let frame = match self.toc.frames.get(frame_idx) {
                 Some(f) => f.clone(),
                 None => continue,
             };
@@ -690,6 +715,8 @@ impl Memvid {
             self.file.seek(SeekFrom::Start(segment.bytes_offset))?;
             let mut remaining = segment.bytes_length;
             while remaining > 0 {
+                // Safe: chunk is at most buffer.len() which is usize
+                #[allow(clippy::cast_possible_truncation)]
                 let chunk = remaining.min(buffer.len() as u64) as usize;
                 if let Err(err) = self.file.read_exact(&mut buffer[..chunk]) {
                     return Err(MemvidError::Tantivy {
@@ -800,7 +827,7 @@ impl Memvid {
         Ok(())
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn vec_segment_descriptor(&self, segment_id: u64) -> Option<VecSegmentDescriptor> {
         self.toc
             .segment_catalog
@@ -830,7 +857,7 @@ impl Memvid {
 pub const DEFAULT_MAX_INDEX_PAYLOAD: u64 = 256 * 1024 * 1024;
 
 /// Get the maximum indexable payload size from environment or use default
-#[must_use] 
+#[must_use]
 pub fn max_index_payload() -> u64 {
     std::env::var("MEMVID_MAX_INDEX_PAYLOAD")
         .ok()
@@ -839,7 +866,7 @@ pub fn max_index_payload() -> u64 {
 }
 
 /// Check if a MIME type represents text-based content that should be indexed
-#[must_use] 
+#[must_use]
 pub fn is_text_indexable_mime(mime: &str) -> bool {
     let mime_lower = mime.to_lowercase();
 
@@ -891,7 +918,7 @@ pub fn is_text_indexable_mime(mime: &str) -> bool {
 }
 
 /// Check if a frame should be indexed for text search
-#[must_use] 
+#[must_use]
 pub fn is_frame_text_indexable(frame: &crate::types::Frame) -> bool {
     // Must be active
     if frame.status != crate::types::FrameStatus::Active {

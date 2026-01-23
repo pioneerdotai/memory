@@ -158,16 +158,12 @@ impl QueryPlanner<'_> {
                 )))
             }
             FieldTerm::DateRange(range) => {
-                let lower = range
-                    .start
-                    .map_or(Bound::Unbounded, |value| {
-                        Bound::Included(Term::from_field_i64(self.engine.timestamp, value))
-                    });
-                let upper = range
-                    .end
-                    .map_or(Bound::Unbounded, |value| {
-                        Bound::Included(Term::from_field_i64(self.engine.timestamp, value))
-                    });
+                let lower = range.start.map_or(Bound::Unbounded, |value| {
+                    Bound::Included(Term::from_field_i64(self.engine.timestamp, value))
+                });
+                let upper = range.end.map_or(Bound::Unbounded, |value| {
+                    Bound::Included(Term::from_field_i64(self.engine.timestamp, value))
+                });
                 Ok(Box::new(RangeQuery::new(lower, upper)))
             }
         }

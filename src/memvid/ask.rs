@@ -502,12 +502,17 @@ impl Memvid {
             .map(|manifest| manifest.dimension)
             .filter(|dim| *dim > 0)
             .or_else(|| {
-                self.vec_index
-                    .as_ref()
-                    .and_then(|index| index.entries().next().map(|(_, emb)| emb.len() as u32))
+                self.vec_index.as_ref().and_then(|index| {
+                    index
+                        .entries()
+                        .next()
+                        .map(|(_, emb)| u32::try_from(emb.len()).unwrap_or(0))
+                })
             })
             .unwrap_or(0);
-        if stored_dimension > 0 && query_embedding.len() as u32 != stored_dimension {
+        if stored_dimension > 0
+            && u32::try_from(query_embedding.len()).unwrap_or(u32::MAX) != stored_dimension
+        {
             return Err(MemvidError::VecDimensionMismatch {
                 expected: stored_dimension,
                 actual: query_embedding.len(),

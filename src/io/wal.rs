@@ -231,7 +231,8 @@ impl EmbeddedWal {
         let digest = blake3::hash(payload);
         let mut header = [0u8; ENTRY_HEADER_SIZE];
         header[..8].copy_from_slice(&sequence.to_le_bytes());
-        header[8..12].copy_from_slice(&(payload.len() as u32).to_le_bytes());
+        header[8..12]
+            .copy_from_slice(&(u32::try_from(payload.len()).unwrap_or(u32::MAX)).to_le_bytes());
         header[16..48].copy_from_slice(digest.as_bytes());
 
         // Atomic write: combine header and payload into single buffer
@@ -264,6 +265,7 @@ impl EmbeddedWal {
         if remaining < ENTRY_HEADER_SIZE as u64 {
             if remaining > 0 {
                 // Safe: remaining < ENTRY_HEADER_SIZE (48) so always fits in usize
+                #[allow(clippy::cast_possible_truncation)]
                 let zero_tail = vec![0u8; remaining as usize];
                 self.seek_and_write(pos, &zero_tail)?;
             }
@@ -458,13 +460,13 @@ mod tests {
         let (file, mut header) = prepare_wal(size);
         let mut wal = EmbeddedWal::open(&file, &header).expect("open wal");
 
-        wal.append_entry(&vec![0xAA; 32]).expect("append a");
-        wal.append_entry(&vec![0xBB; 32]).expect("append b");
+        wal.append_entry(&[0xAA; 32]).expect("append a");
+        wal.append_entry(&[0xBB; 32]).expect("append b");
         wal.record_checkpoint(&mut header).expect("checkpoint");
 
         assert!(wal.pending_records().expect("pending").is_empty());
 
-        wal.append_entry(&vec![0xCC; 32]).expect("append c");
+        wal.append_entry(&[0xCC; 32]).expect("append c");
         let records = wal.pending_records().expect("after append");
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].payload, vec![0xCC; 32]);

@@ -189,10 +189,10 @@ impl Memvid {
             .filter(|(_, score)| *score >= opts.min_score)
             .map(|(frame_id, score)| {
                 let entry = self.sketch_track.get(frame_id);
-                let hamming_distance = entry
-                    .map_or(64, |e| e.hamming_distance(query_sketch.simhash));
-                let matching_top_terms = entry
-                    .map_or(0, |e| e.count_matching_top_terms(&query_sketch.top_terms));
+                let hamming_distance =
+                    entry.map_or(64, |e| e.hamming_distance(query_sketch.simhash));
+                let matching_top_terms =
+                    entry.map_or(0, |e| e.count_matching_top_terms(&query_sketch.top_terms));
 
                 SketchCandidate {
                     frame_id,
@@ -255,10 +255,10 @@ impl Memvid {
             .into_iter()
             .map(|(frame_id, score)| {
                 let entry = self.sketch_track.get(frame_id);
-                let hamming_distance = entry
-                    .map_or(64, |e| e.hamming_distance(query_sketch.simhash));
-                let matching_top_terms = entry
-                    .map_or(0, |e| e.count_matching_top_terms(&query_sketch.top_terms));
+                let hamming_distance =
+                    entry.map_or(64, |e| e.hamming_distance(query_sketch.simhash));
+                let matching_top_terms =
+                    entry.map_or(0, |e| e.count_matching_top_terms(&query_sketch.top_terms));
 
                 SketchCandidate {
                     frame_id,
@@ -274,7 +274,7 @@ impl Memvid {
             term_filter_hits,
             simhash_hits,
             candidates_returned,
-            scan_us: start.elapsed().as_micros() as u64,
+            scan_us: u64::try_from(start.elapsed().as_micros()).unwrap_or(u64::MAX),
         };
 
         (result, stats)
@@ -303,7 +303,7 @@ mod tests {
         let candidates = mem.find_sketch_candidates("cats pets", None);
 
         // Should find some candidates
-        assert!(!candidates.is_empty() || mem.sketches().len() > 0);
+        assert!(!candidates.is_empty() || !mem.sketches().is_empty());
     }
 
     #[test]

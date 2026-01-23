@@ -35,6 +35,7 @@ use crate::{MemvidError, Result, types::FrameId};
 // ============================================================================
 
 /// CLIP index decode limit (512MB max)
+#[allow(clippy::cast_possible_truncation)]
 const CLIP_DECODE_LIMIT: usize = crate::MAX_INDEX_BYTES as usize;
 
 /// MobileCLIP-S2 embedding dimensions
@@ -140,7 +141,7 @@ pub static CLIP_MODELS: &[ClipModelInfo] = &[
 ];
 
 /// Get model info by name, defaults to mobileclip-s2
-#[must_use] 
+#[must_use]
 pub fn get_model_info(name: &str) -> &'static ClipModelInfo {
     CLIP_MODELS
         .iter()
@@ -154,7 +155,7 @@ pub fn get_model_info(name: &str) -> &'static ClipModelInfo {
 }
 
 /// Get the default model info
-#[must_use] 
+#[must_use]
 pub fn default_model_info() -> &'static ClipModelInfo {
     CLIP_MODELS
         .iter()
@@ -185,7 +186,7 @@ pub struct ClipIndexBuilder {
 }
 
 impl ClipIndexBuilder {
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -210,7 +211,7 @@ impl ClipIndexBuilder {
         let dimension = self
             .documents
             .first()
-            .map_or(0, |doc| doc.embedding.len() as u32);
+            .map_or(0, |doc| u32::try_from(doc.embedding.len()).unwrap_or(0));
 
         Ok(ClipIndexArtifact {
             bytes,
@@ -248,7 +249,7 @@ impl Default for ClipIndex {
 
 impl ClipIndex {
     /// Create a new empty CLIP index
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         Self {
             documents: Vec::new(),
@@ -297,7 +298,7 @@ impl ClipIndex {
     }
 
     /// Search for similar embeddings using L2 distance
-    #[must_use] 
+    #[must_use]
     pub fn search(&self, query: &[f32], limit: usize) -> Vec<ClipSearchHit> {
         if query.is_empty() {
             return Vec::new();
@@ -333,7 +334,7 @@ impl ClipIndex {
     }
 
     /// Get embedding for a specific frame
-    #[must_use] 
+    #[must_use]
     pub fn embedding_for(&self, frame_id: FrameId) -> Option<&[f32]> {
         self.documents
             .iter()
@@ -347,13 +348,13 @@ impl ClipIndex {
     }
 
     /// Number of documents in the index
-    #[must_use] 
+    #[must_use]
     pub fn len(&self) -> usize {
         self.documents.len()
     }
 
     /// Check if index is empty
-    #[must_use] 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.documents.is_empty()
     }
@@ -366,7 +367,7 @@ impl ClipIndex {
         let dimension = self
             .documents
             .first()
-            .map_or(0, |doc| doc.embedding.len() as u32);
+            .map_or(0, |doc| u32::try_from(doc.embedding.len()).unwrap_or(0));
 
         Ok(ClipIndexArtifact {
             bytes,
@@ -411,7 +412,7 @@ pub struct ImageInfo {
 
 impl ImageInfo {
     /// Check if this image should be processed for CLIP embedding
-    #[must_use] 
+    #[must_use]
     pub fn should_embed(&self) -> bool {
         // Skip tiny images (icons, bullets)
         if self.width < MIN_IMAGE_DIM || self.height < MIN_IMAGE_DIM {

@@ -305,7 +305,10 @@ pub fn list_tables(mem: &mut Memvid) -> Result<Vec<TableSummary>> {
             .to_string();
         let page_start = meta["page_start"].as_u64().unwrap_or(0);
         let page_end = meta["page_end"].as_u64().unwrap_or(0);
+        // Safe: table dimensions fit throughout supported platforms
+        #[allow(clippy::cast_possible_truncation)]
         let n_rows = meta["n_rows"].as_u64().unwrap_or(0) as usize;
+        #[allow(clippy::cast_possible_truncation)]
         let n_cols = meta["n_cols"].as_u64().unwrap_or(0) as usize;
         let quality = meta["quality"].as_str().unwrap_or("unknown").to_string();
         let headers = meta["headers"]
@@ -321,8 +324,8 @@ pub fn list_tables(mem: &mut Memvid) -> Result<Vec<TableSummary>> {
         summaries.push(TableSummary {
             table_id,
             source_file,
-            page_start: page_start as u32,
-            page_end: page_end as u32,
+            page_start: u32::try_from(page_start).unwrap_or(0),
+            page_end: u32::try_from(page_end).unwrap_or(0),
             n_rows,
             n_cols,
             quality: quality.parse().unwrap_or(TableQuality::Medium),
@@ -377,11 +380,20 @@ pub fn get_table(mem: &mut Memvid, table_id: &str) -> Result<Option<ExtractedTab
     );
 
     table.source_uri = meta["source_uri"].as_str().map(String::from);
-    table.page_start = meta["page_start"].as_u64().unwrap_or(1) as u32;
-    table.page_end = meta["page_end"].as_u64().unwrap_or(1) as u32;
-    table.n_cols = meta["n_cols"].as_u64().unwrap_or(0) as usize;
-    table.n_rows = meta["n_rows"].as_u64().unwrap_or(0) as usize;
-    table.confidence_score = meta["confidence_score"].as_f64().unwrap_or(0.5) as f32;
+    table.page_start = u32::try_from(meta["page_start"].as_u64().unwrap_or(1)).unwrap_or(1);
+    #[allow(clippy::cast_possible_truncation)]
+    {
+        table.page_end = meta["page_end"].as_u64().unwrap_or(1) as u32;
+    }
+    #[allow(clippy::cast_possible_truncation)]
+    {
+        table.n_cols = meta["n_cols"].as_u64().unwrap_or(0) as usize;
+        table.n_rows = meta["n_rows"].as_u64().unwrap_or(0) as usize;
+    }
+    #[allow(clippy::cast_possible_truncation)]
+    {
+        table.confidence_score = meta["confidence_score"].as_f64().unwrap_or(0.5) as f32;
+    }
     table.extraction_ms = meta["extraction_ms"].as_u64().unwrap_or(0);
 
     table.headers = meta["headers"]
@@ -443,7 +455,9 @@ pub fn get_table(mem: &mut Memvid, table_id: &str) -> Result<Option<ExtractedTab
                 reason: format!("failed to parse row data: {e}"),
             })?;
 
+        #[allow(clippy::cast_possible_truncation)]
         let row_index = row_data["row_index"].as_u64().unwrap_or(0) as usize;
+        #[allow(clippy::cast_possible_truncation)]
         let page = row_data["page"].as_u64().unwrap_or(1) as u32;
 
         let cells: Vec<super::types::TableCell> =
@@ -480,7 +494,7 @@ pub fn get_table(mem: &mut Memvid, table_id: &str) -> Result<Option<ExtractedTab
 ///
 /// # Returns
 /// CSV formatted string
-#[must_use] 
+#[must_use]
 pub fn export_to_csv(table: &ExtractedTable) -> String {
     let mut output = String::new();
 

@@ -130,7 +130,7 @@ pub struct AuditReport {
 
 impl AuditReport {
     /// Format the report as human-readable text.
-    #[must_use] 
+    #[must_use]
     pub fn to_text(&self) -> String {
         let mut output = String::new();
 
@@ -270,7 +270,7 @@ impl AuditReport {
     }
 
     /// Format the report as Markdown.
-    #[must_use] 
+    #[must_use]
     pub fn to_markdown(&self) -> String {
         let mut output = String::new();
 
@@ -415,13 +415,12 @@ fn format_snippet_block(text: &str, width: usize, prefix: &str) -> String {
     let mut line = String::new();
 
     for word in cleaned.split_whitespace() {
-        if line.len() + word.len() + 1 > width
-            && !line.is_empty() {
-                result.push_str(prefix);
-                result.push_str(&line);
-                result.push('\n');
-                line.clear();
-            }
+        if line.len() + word.len() + 1 > width && !line.is_empty() {
+            result.push_str(prefix);
+            result.push_str(&line);
+            result.push('\n');
+            line.clear();
+        }
         if !line.is_empty() {
             line.push(' ');
         }
@@ -477,6 +476,8 @@ fn format_timestamp(ts: i64) -> String {
 
     // Approximate year/month/day calculation
     let mut year = 1970i32;
+    // Safe: days will fit in i32 for any reasonable usage (millions of years)
+    #[allow(clippy::cast_possible_truncation)]
     let mut remaining_days = days as i32;
 
     loop {
@@ -505,9 +506,7 @@ fn format_timestamp(ts: i64) -> String {
 
     let day = remaining_days + 1;
 
-    format!(
-        "{year:04}-{month:02}-{day:02}T{hours:02}:{minutes:02}:{seconds:02}Z"
-    )
+    format!("{year:04}-{month:02}-{day:02}T{hours:02}:{minutes:02}:{seconds:02}Z")
 }
 
 fn is_leap_year(year: i32) -> bool {

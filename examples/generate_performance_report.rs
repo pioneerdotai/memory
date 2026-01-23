@@ -33,7 +33,7 @@ fn main() -> memvid_core::Result<()> {
         mem.put_bytes_with_options(
             content.as_bytes(),
             PutOptions::builder()
-                .title(&format!("Doc {} - {}", i, topic.0))
+                .title(format!("Doc {} - {}", i, topic.0))
                 .build(),
         )?;
 

@@ -123,7 +123,7 @@ pub(super) fn try_tantivy_search(
         let frame_meta = memvid
             .toc
             .frames
-            .get(hit.frame_id as usize)
+            .get(usize::try_from(hit.frame_id).unwrap_or(usize::MAX))
             .cloned()
             .ok_or(MemvidError::InvalidTimeIndex {
                 reason: "frame id out of range".into(),
@@ -201,6 +201,7 @@ pub(super) fn try_tantivy_search(
             .map(|(hit, occurrences, slices, chunk_info, timestamp)| {
                 let bm25_score = hit.score;
                 // Age relative to the most recent document in results
+                #[allow(clippy::cast_precision_loss)]
                 let age_seconds = (max_ts - timestamp).max(0) as f32;
                 // Decay factor: half-life of ~1 day for aggressive recency preference
                 // This ensures even a few days difference has significant impact
@@ -268,7 +269,7 @@ pub(super) fn try_tantivy_search(
         let frame_meta = memvid
             .toc
             .frames
-            .get(hit.frame_id as usize)
+            .get(usize::try_from(hit.frame_id).unwrap_or(usize::MAX))
             .cloned()
             .ok_or(MemvidError::InvalidTimeIndex {
                 reason: "frame id out of range".into(),
@@ -383,7 +384,7 @@ fn uri_matches(candidate: Option<&str>, expected: &str) -> bool {
 /// Parse content dates (from frame metadata) to find the most relevant timestamp.
 /// Content dates are strings like "2023/06/30 (Fri) 14:20", ISO dates, or spelled-out dates.
 /// Returns the most recent timestamp found, or None if parsing fails.
-#[must_use] 
+#[must_use]
 pub fn parse_content_date_to_timestamp(content_dates: &[String]) -> Option<i64> {
     if content_dates.is_empty() {
         return None;

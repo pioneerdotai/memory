@@ -30,7 +30,7 @@ pub struct ExtractedDocument {
 }
 
 impl ExtractedDocument {
-    #[must_use] 
+    #[must_use]
     pub fn empty() -> Self {
         Self {
             text: None,
@@ -285,7 +285,7 @@ impl Default for DocumentProcessor {
 
 #[cfg(not(feature = "extractous"))]
 impl DocumentProcessor {
-    #[must_use] 
+    #[must_use]
     pub fn new(config: ProcessorConfig) -> Self {
         Self {
             max_length: config.max_text_chars,
@@ -790,12 +790,11 @@ fn pdf_text_extract_lopdf(bytes: &[u8]) -> Result<Option<String>> {
         })?;
 
     // Try to decrypt if encrypted (empty password for unprotected PDFs)
-    if document.is_encrypted()
-        && document.decrypt("").is_err() {
-            return Err(MemvidError::ExtractionFailed {
-                reason: "cannot decrypt password-protected PDF".into(),
-            });
-        }
+    if document.is_encrypted() && document.decrypt("").is_err() {
+        return Err(MemvidError::ExtractionFailed {
+            reason: "cannot decrypt password-protected PDF".into(),
+        });
+    }
 
     // Decompress streams for better text extraction
     let () = document.decompress();

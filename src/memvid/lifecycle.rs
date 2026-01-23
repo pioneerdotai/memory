@@ -99,8 +99,7 @@ pub struct Memvid {
 }
 
 /// Controls read-only open behaviour for `.mv2` memories.
-#[derive(Debug, Clone, Copy)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct OpenReadOptions {
     pub allow_repair: bool,
 }
@@ -125,7 +124,6 @@ impl Default for LockSettings {
         }
     }
 }
-
 
 impl Memvid {
     /// Create a new, empty `.mv2` file with an embedded WAL and empty TOC.
@@ -255,7 +253,7 @@ impl Memvid {
         Ok(memvid)
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn lock_settings(&self) -> &LockSettings {
         &self.lock_settings
     }
@@ -271,7 +269,7 @@ impl Memvid {
     }
 
     /// Get the current vector compression mode
-    #[must_use] 
+    #[must_use]
     pub fn vector_compression(&self) -> &VectorCompression {
         &self.vec_compression
     }
@@ -281,7 +279,7 @@ impl Memvid {
     /// Frame IDs are dense indices into `toc.frames`. When a memory is mutable, inserts are first
     /// appended to the embedded WAL and only materialized into `toc.frames` on commit. This helper
     /// lets frontends allocate stable frame IDs before an explicit commit.
-    #[must_use] 
+    #[must_use]
     pub fn next_frame_id(&self) -> u64 {
         (self.toc.frames.len() as u64).saturating_add(self.pending_frame_inserts)
     }
@@ -619,6 +617,13 @@ impl Memvid {
         };
 
         // Read the compressed data from the file
+        if manifest.bytes_length > crate::MAX_INDEX_BYTES {
+            return Err(MemvidError::InvalidToc {
+                reason: "memories track exceeds safety limit".into(),
+            });
+        }
+        // Safe: guarded by MAX_INDEX_BYTES check above
+        #[allow(clippy::cast_possible_truncation)]
         let mut buf = vec![0u8; manifest.bytes_length as usize];
         self.file
             .seek(std::io::SeekFrom::Start(manifest.bytes_offset))?;
@@ -646,6 +651,13 @@ impl Memvid {
         };
 
         // Read the serialized data from the file
+        if manifest.bytes_length > crate::MAX_INDEX_BYTES {
+            return Err(MemvidError::InvalidToc {
+                reason: "logic mesh exceeds safety limit".into(),
+            });
+        }
+        // Safe: guarded by MAX_INDEX_BYTES check above
+        #[allow(clippy::cast_possible_truncation)]
         let mut buf = vec![0u8; manifest.bytes_length as usize];
         self.file
             .seek(std::io::SeekFrom::Start(manifest.bytes_offset))?;
@@ -760,7 +772,7 @@ impl Memvid {
     ///
     /// Returns the binding if this file is bound to a dashboard memory,
     /// or None if unbound.
-    #[must_use] 
+    #[must_use]
     pub fn get_memory_binding(&self) -> Option<&crate::types::MemoryBinding> {
         self.toc.memory_binding.as_ref()
     }
@@ -860,7 +872,14 @@ pub(crate) fn read_toc(file: &mut File, header: &Header) -> Result<Toc> {
 
     // Read the entire region from footer_offset to EOF (includes TOC + footer)
     file.seek(SeekFrom::Start(header.footer_offset))?;
+    // Safe: total_size bounded by file length, and we check MAX_INDEX_BYTES before reading
+    #[allow(clippy::cast_possible_truncation)]
     let total_size = (len - header.footer_offset) as usize;
+    if total_size as u64 > crate::MAX_INDEX_BYTES {
+        return Err(MemvidError::InvalidToc {
+            reason: "toc region exceeds safety limit".into(),
+        });
+    }
 
     if total_size < FOOTER_SIZE {
         return Err(MemvidError::InvalidToc {
@@ -880,6 +899,7 @@ pub(crate) fn read_toc(file: &mut File, header: &Header) -> Result<Toc> {
 
     // Extract only the TOC bytes (excluding the footer)
     let toc_bytes = &buf[..footer_start];
+    #[allow(clippy::cast_possible_truncation)]
     if toc_bytes.len() != footer.toc_len as usize {
         return Err(MemvidError::InvalidToc {
             reason: "toc length mismatch".into(),
@@ -1024,6 +1044,8 @@ pub(crate) fn recover_toc(file: &mut File, hint: Option<u64>) -> Result<(Toc, u6
     if let Some(hint_offset) = hint {
         use crate::footer::FOOTER_SIZE;
 
+        // Safe: file successfully mmapped so length fits in usize
+        #[allow(clippy::cast_possible_truncation)]
         let start = (hint_offset.min(len)) as usize;
         if mmap.len().saturating_sub(start) >= FOOTER_SIZE {
             let toc_end = mmap.len().saturating_sub(FOOTER_SIZE);
@@ -1047,6 +1069,8 @@ pub(crate) fn recover_toc(file: &mut File, hint: Option<u64>) -> Result<(Toc, u6
     // Fallback to manual scan if footer-based recovery failed
     let mut ranges = Vec::new();
     if let Some(hint_offset) = hint {
+        // Safe: file successfully mmapped so length fits in usize
+        #[allow(clippy::cast_possible_truncation)]
         let hint_idx = hint_offset.min(len) as usize;
         ranges.push((hint_idx, mmap.len()));
         if hint_idx > 0 {
@@ -1439,9 +1463,7 @@ fn validate_segment_integrity(toc: &Toc, header: &Header, file_len: u64) -> Resu
         let end = offset
             .checked_add(length)
             .ok_or_else(|| MemvidError::Doctor {
-                reason: format!(
-                    "Tantivy segment {idx} offset overflow: {offset} + {length}"
-                ),
+                reason: format!("Tantivy segment {idx} offset overflow: {offset} + {length}"),
             })?;
 
         if end > file_len || end > data_limit {
@@ -1465,9 +1487,7 @@ fn validate_segment_integrity(toc: &Toc, header: &Header, file_len: u64) -> Resu
         let end = offset
             .checked_add(length)
             .ok_or_else(|| MemvidError::Doctor {
-                reason: format!(
-                    "Time segment {idx} offset overflow: {offset} + {length}"
-                ),
+                reason: format!("Time segment {idx} offset overflow: {offset} + {length}"),
             })?;
 
         if end > file_len || end > data_limit {
@@ -1491,9 +1511,7 @@ fn validate_segment_integrity(toc: &Toc, header: &Header, file_len: u64) -> Resu
         let end = offset
             .checked_add(length)
             .ok_or_else(|| MemvidError::Doctor {
-                reason: format!(
-                    "Vec segment {idx} offset overflow: {offset} + {length}"
-                ),
+                reason: format!("Vec segment {idx} offset overflow: {offset} + {length}"),
             })?;
 
         if end > file_len || end > data_limit {

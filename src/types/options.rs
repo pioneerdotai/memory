@@ -107,21 +107,19 @@ impl Default for PutOptions {
 
 impl PutOptions {
     /// Start a fluent builder for `PutOptions`.
-    #[must_use] 
+    #[must_use]
     pub fn builder() -> PutOptionsBuilder {
         PutOptionsBuilder::default()
     }
 }
 
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct PutOptionsBuilder {
     inner: PutOptions,
 }
 
-
 impl PutOptionsBuilder {
-    #[must_use] 
+    #[must_use]
     pub fn timestamp(mut self, timestamp: i64) -> Self {
         self.inner.timestamp = Some(timestamp);
         self
@@ -152,7 +150,7 @@ impl PutOptionsBuilder {
         self
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn metadata(mut self, metadata: DocMetadata) -> Self {
         self.inner.metadata = Some(metadata);
         self
@@ -183,44 +181,44 @@ impl PutOptionsBuilder {
         self
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn enable_embedding(mut self, enable: bool) -> Self {
         self.inner.enable_embedding = enable;
         self
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn auto_tag(mut self, enabled: bool) -> Self {
         self.inner.auto_tag = enabled;
         self
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn extract_dates(mut self, enabled: bool) -> Self {
         self.inner.extract_dates = enabled;
         self
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn extract_triplets(mut self, enabled: bool) -> Self {
         self.inner.extract_triplets = enabled;
         self
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn parent_id(mut self, parent_id: FrameId) -> Self {
         self.inner.parent_id = Some(parent_id);
         self
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn role(mut self, role: FrameRole) -> Self {
         self.inner.role = role;
         self
     }
 
     /// Don't store raw binary content, only extracted text + SHA256 hash.
-    #[must_use] 
+    #[must_use]
     pub fn no_raw(mut self, enabled: bool) -> Self {
         self.inner.no_raw = enabled;
         self
@@ -233,7 +231,7 @@ impl PutOptionsBuilder {
     }
 
     /// Skip ingestion if a frame with matching BLAKE3 hash already exists.
-    #[must_use] 
+    #[must_use]
     pub fn dedup(mut self, enabled: bool) -> Self {
         self.inner.dedup = enabled;
         self
@@ -241,7 +239,7 @@ impl PutOptionsBuilder {
 
     /// Enable instant indexing for immediate searchability.
     /// When disabled, full commit is deferred (faster for batches).
-    #[must_use] 
+    #[must_use]
     pub fn instant_index(mut self, enabled: bool) -> Self {
         self.inner.instant_index = enabled;
         self
@@ -249,13 +247,13 @@ impl PutOptionsBuilder {
 
     /// Set extraction time budget in milliseconds.
     /// 0 means no budget (extract everything, slower but complete).
-    #[must_use] 
+    #[must_use]
     pub fn extraction_budget_ms(mut self, ms: u64) -> Self {
         self.inner.extraction_budget_ms = ms;
         self
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn build(self) -> PutOptions {
         self.inner
     }

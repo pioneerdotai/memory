@@ -1,5 +1,15 @@
 #![deny(clippy::all, clippy::pedantic)]
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+#![cfg_attr(
+    test,
+    allow(
+        clippy::useless_vec,
+        clippy::uninlined_format_args,
+        clippy::cast_possible_truncation,
+        clippy::float_cmp,
+        clippy::cast_precision_loss
+    )
+)]
 #![allow(clippy::module_name_repetitions)]
 //
 // Strategic lint exceptions - these are allowed project-wide for pragmatic reasons:
@@ -13,7 +23,6 @@
 // Cast safety: All casts in this codebase are carefully reviewed and bounded by
 // real-world constraints (file sizes, frame counts, etc). Using try_into() everywhere
 // would add significant complexity without safety benefits in our use case.
-#![allow(clippy::cast_possible_truncation)]
 #![allow(clippy::cast_precision_loss)]
 #![allow(clippy::cast_possible_wrap)]
 #![allow(clippy::cast_sign_loss)]
@@ -322,6 +331,7 @@ const MAX_FRAME_BYTES: u64 = 256 * 1024 * 1024;
 const DEFAULT_SEARCH_TEXT_LIMIT: usize = 32_768;
 
 #[cfg(test)]
+#[allow(clippy::non_std_lazy_statics)]
 static SERIAL_TEST_MUTEX: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
 #[cfg(test)]
@@ -1160,7 +1170,7 @@ mod tests {
                     .expect("open file");
                 file.seek(SeekFrom::Start(manifest.bytes_offset))
                     .expect("seek");
-                let zeros = vec![0u8; manifest.bytes_length as usize];
+                let zeros = vec![0u8; usize::try_from(manifest.bytes_length).unwrap_or(0)];
                 file.write_all(&zeros).expect("corrupt time index");
                 file.flush().expect("flush");
                 file.sync_all().expect("sync");
@@ -1178,7 +1188,7 @@ mod tests {
                     assert_eq!(report.overall_status, VerificationStatus::Failed);
                 }
                 Err(e) => {
-                    println!("test: verify failed with error (expected): {}", e);
+                    println!("test: verify failed with error (expected): {e}");
                 }
             }
 
@@ -1330,6 +1340,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn ticket_sequence_enforced() {
         run_serial_test(|| {
             let dir = tempdir().expect("tmp");
@@ -1347,6 +1358,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn capacity_limit_enforced() {
         run_serial_test(|| {
             let dir = tempdir().expect("tmp");
@@ -1360,9 +1372,7 @@ mod tests {
             mem.put_bytes(&vec![0xFF; 32]).expect("first put");
             mem.commit().expect("commit");
 
-            let err = mem
-                .put_bytes(&vec![0xFF; 40])
-                .expect_err("capacity exceeded");
+            let err = mem.put_bytes(&[0xFF; 40]).expect_err("capacity exceeded");
             assert!(matches!(err, MemvidError::CapacityExceeded { .. }));
         });
     }

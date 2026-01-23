@@ -33,7 +33,7 @@ pub enum DocumentFormat {
 }
 
 impl DocumentFormat {
-    #[must_use] 
+    #[must_use]
     pub fn label(self) -> &'static str {
         match self {
             Self::Pdf => "pdf",
@@ -126,7 +126,7 @@ impl ReaderDiagnostics {
         self.fallback = true;
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn with_metadata(mut self, value: Value) -> Self {
         self.extra_metadata = value;
         self

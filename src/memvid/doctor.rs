@@ -106,6 +106,7 @@ fn try_recover_from_wal_corruption(path: &Path) -> Result<Memvid> {
     );
 
     // Zero out the entire WAL region to create a clean slate
+    #[allow(clippy::cast_possible_truncation)]
     let wal_size = header.wal_size as usize;
     let zeros = vec![0u8; min(1024 * 1024, wal_size)]; // Write in 1MB chunks
     let mut written = 0;
@@ -619,6 +620,7 @@ impl DoctorPlanner {
                 ));
                 return;
             }
+            #[allow(clippy::cast_possible_truncation)]
             let mut buf = vec![0u8; manifest.bytes_length as usize];
             if let Err(err) = file.seek(SeekFrom::Start(manifest.bytes_offset)) {
                 probe.index.needs_lex = true;
@@ -728,6 +730,7 @@ impl DoctorPlanner {
                 }
 
                 // Read and validate segment
+                #[allow(clippy::cast_possible_truncation)]
                 let mut buf = vec![0u8; segment.common.bytes_length as usize];
                 if let Err(err) = file.seek(SeekFrom::Start(segment.common.bytes_offset)) {
                     probe.index.needs_vec = true;
@@ -799,6 +802,7 @@ impl DoctorPlanner {
             return;
         }
 
+        #[allow(clippy::cast_possible_truncation)]
         let mut buf = vec![0u8; manifest.bytes_length as usize];
         if let Err(err) = file.seek(SeekFrom::Start(manifest.bytes_offset)) {
             probe.index.needs_vec = true;
@@ -1225,7 +1229,11 @@ impl DoctorExecutor {
 
             metrics.phase_durations.push(DoctorPhaseDuration {
                 phase: phase.phase,
-                duration_ms: phase_start.elapsed().as_millis() as u64,
+                duration_ms: phase_start
+                    .elapsed()
+                    .as_millis()
+                    .try_into()
+                    .unwrap_or(u64::MAX),
             });
             metrics.actions_completed += actions
                 .iter()
@@ -1251,7 +1259,7 @@ impl DoctorExecutor {
             }
         }
 
-        metrics.total_duration_ms = start.elapsed().as_millis() as u64;
+        metrics.total_duration_ms = start.elapsed().as_millis().try_into().unwrap_or(u64::MAX);
 
         if overall_failed {
             if let Some(original) = &original_header {
@@ -1499,10 +1507,10 @@ impl DoctorExecutor {
         );
         let mut remaining = mem.header.wal_size;
         let mut offset = mem.header.wal_offset;
-        let chunk_size = min(remaining as usize, 4096).max(1);
+        let chunk_size = (remaining.min(4096) as usize).max(1);
         let zeros = vec![0u8; chunk_size];
         while remaining > 0 {
-            let write_len = min(remaining as usize, zeros.len());
+            let write_len = usize::try_from(remaining.min(zeros.len() as u64)).unwrap_or(0);
             mem.file.seek(SeekFrom::Start(offset))?;
             mem.file.write_all(&zeros[..write_len])?;
             remaining -= write_len as u64;

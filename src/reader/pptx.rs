@@ -60,13 +60,11 @@ impl DocumentReader for PptxReader {
 
     fn supports(&self, hint: &ReaderHint<'_>) -> bool {
         matches!(hint.format, Some(DocumentFormat::Pptx))
-            || hint
-                .mime
-                .is_some_and(|mime| {
-                    mime.eq_ignore_ascii_case(
-                        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-                    )
-                })
+            || hint.mime.is_some_and(|mime| {
+                mime.eq_ignore_ascii_case(
+                    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                )
+            })
     }
 
     fn extract(&self, bytes: &[u8], hint: &ReaderHint<'_>) -> Result<ReaderOutput> {

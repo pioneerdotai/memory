@@ -116,7 +116,6 @@ pub enum SketchVariant {
     Large = 2,
 }
 
-
 impl SketchVariant {
     /// Get the entry size in bytes for this variant.
     #[must_use]
@@ -591,7 +590,9 @@ pub fn hash_token(token: &str) -> u64 {
 #[must_use]
 pub fn hash_token_u32(token: &str) -> u32 {
     let h = hash_token(token);
-    (h ^ (h >> 32)) as u32
+    #[allow(clippy::cast_possible_truncation)]
+    let res = (h ^ (h >> 32)) as u32;
+    res
 }
 
 // ============================================================================
@@ -609,9 +610,9 @@ pub fn build_term_filter(token_hashes: &[u64], filter_size_bytes: usize) -> Vec<
 
     for &hash in token_hashes {
         // Use 3 hash functions (simulated via rotation)
-        let h1 = hash as usize % filter_bits;
-        let h2 = (hash >> 16) as usize % filter_bits;
-        let h3 = (hash >> 32) as usize % filter_bits;
+        let h1 = usize::try_from(hash % (filter_bits as u64)).unwrap_or(0);
+        let h2 = usize::try_from((hash >> 16) % (filter_bits as u64)).unwrap_or(0);
+        let h3 = usize::try_from((hash >> 32) % (filter_bits as u64)).unwrap_or(0);
 
         filter[h1 / 8] |= 1 << (h1 % 8);
         filter[h2 / 8] |= 1 << (h2 % 8);
@@ -625,9 +626,9 @@ pub fn build_term_filter(token_hashes: &[u64], filter_size_bytes: usize) -> Vec<
 #[must_use]
 pub fn term_filter_maybe_contains(filter: &[u8], token_hash: u64) -> bool {
     let filter_bits = filter.len() * 8;
-    let h1 = token_hash as usize % filter_bits;
-    let h2 = (token_hash >> 16) as usize % filter_bits;
-    let h3 = (token_hash >> 32) as usize % filter_bits;
+    let h1 = usize::try_from(token_hash % (filter_bits as u64)).unwrap_or(0);
+    let h2 = usize::try_from((token_hash >> 16) % (filter_bits as u64)).unwrap_or(0);
+    let h3 = usize::try_from((token_hash >> 32) % (filter_bits as u64)).unwrap_or(0);
 
     (filter[h1 / 8] & (1 << (h1 % 8)) != 0)
         && (filter[h2 / 8] & (1 << (h2 % 8)) != 0)
@@ -684,6 +685,7 @@ pub fn compute_token_weights(
                 .copied()
                 .unwrap_or(1.0)
                 .max(0.1); // Default IDF = 1.0
+            #[allow(clippy::cast_possible_truncation)]
             let weight = (capped_tf * idf * 100.0) as i32; // Scale to integer
             (hash_token(token), weight.max(1))
         })
@@ -701,7 +703,11 @@ pub fn extract_top_terms(weighted_tokens: &[(u64, i32)], k: usize) -> Vec<u32> {
     weighted_tokens
         .iter()
         .take(k)
-        .map(|(h, _)| (*h ^ (*h >> 32)) as u32)
+        .map(|(h, _)| {
+            #[allow(clippy::cast_possible_truncation)]
+            let res = (*h ^ (*h >> 32)) as u32;
+            res
+        })
         .collect()
 }
 
@@ -746,6 +752,7 @@ pub fn generate_sketch(
         .sum();
 
     // Length hint: bucket token count (0-255 = 0-2550 tokens in steps of 10)
+    #[allow(clippy::cast_possible_truncation)]
     let length_hint = ((token_count / 10).min(255)) as u16;
 
     let mut flags = SketchFlags::all();
@@ -753,12 +760,15 @@ pub fn generate_sketch(
         flags.set(SketchFlags::SHORT_TEXT);
     }
 
+    #[allow(clippy::cast_possible_truncation)]
+    let term_weight_sum = term_weight_sum.min(u32::from(u16::MAX)) as u16;
+
     SketchEntry {
         frame_id,
         simhash,
         term_filter,
         top_terms,
-        term_weight_sum: term_weight_sum.min(u32::from(u16::MAX)) as u16,
+        term_weight_sum,
         flags,
         length_hint,
     }
@@ -1005,10 +1015,13 @@ impl SketchTrackHeader {
     /// Create a new header.
     #[must_use]
     pub fn new(variant: SketchVariant, entry_count: u64) -> Self {
+        #[allow(clippy::cast_possible_truncation)]
+        let entry_size = variant.entry_size() as u16;
+
         Self {
             magic: SKETCH_TRACK_MAGIC,
             version: SKETCH_TRACK_VERSION,
-            entry_size: variant.entry_size() as u16,
+            entry_size,
             entry_count,
             flags: 0,
             reserved: 0,
@@ -1122,10 +1135,8 @@ pub fn read_sketch_track<R: Read + Seek>(
         SketchTrackHeader::SIZE as u64 + header.entry_count * u64::from(header.entry_size);
     if length < expected_length {
         return Err(MemvidError::InvalidSketchTrack {
-            reason: format!(
-                "Sketch track length {length} less than expected {expected_length}"
-            )
-            .into(),
+            reason: format!("Sketch track length {length} less than expected {expected_length}")
+                .into(),
         });
     }
 
@@ -1200,7 +1211,7 @@ mod tests {
 
     #[test]
     fn test_term_filter() {
-        let tokens = vec!["hello", "world", "test"];
+        let tokens = ["hello", "world", "test"];
         let hashes: Vec<u64> = tokens.iter().map(|t| hash_token(t)).collect();
         let filter = build_term_filter(&hashes, 16);
 
@@ -1306,7 +1317,7 @@ mod tests {
         // Should find at least some candidates with relaxed threshold
         // The sketch is optimized for approximate matching, not exact
         assert!(
-            !candidates.is_empty() || track.len() > 0,
+            !candidates.is_empty() || !track.is_empty(),
             "Track should have entries"
         );
     }

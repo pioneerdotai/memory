@@ -105,7 +105,7 @@ impl PdfReader {
             pages += 1;
         }
 
-        let duration_ms = start.elapsed().as_millis() as u64;
+        let duration_ms = start.elapsed().as_millis().try_into().unwrap_or(u64::MAX);
         let trimmed = combined.trim();
         if trimmed.is_empty() {
             return Err(crate::MemvidError::ExtractionFailed {

@@ -19,7 +19,7 @@ use super::types::{ExtractedTable, TableExtractionOptions, TableQuality, TableRo
 ///
 /// # Returns
 /// Vector of tables with multi-page tables merged
-#[must_use] 
+#[must_use]
 pub fn merge_multi_page_tables(
     tables: Vec<ExtractedTable>,
     options: &TableExtractionOptions,
@@ -263,7 +263,7 @@ fn combined_quality(q1: TableQuality, q2: TableQuality) -> TableQuality {
 ///
 /// This is a utility function that identifies tables that might
 /// be continuations of other tables without actually merging them.
-#[must_use] 
+#[must_use]
 pub fn find_continuation_candidates(
     tables: &[ExtractedTable],
     options: &TableExtractionOptions,
@@ -301,7 +301,7 @@ mod tests {
         let mut table = ExtractedTable::new(id, source);
         table.page_start = page_start;
         table.page_end = page_end;
-        table.headers = headers.iter().map(|s| s.to_string()).collect();
+        table.headers = headers.iter().map(|s| (*s).to_string()).collect();
         table.n_cols = headers.len();
         table.n_rows = n_rows;
 

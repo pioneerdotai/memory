@@ -413,7 +413,7 @@ impl Memvid {
     ///
     /// # Returns
     /// A vector of (index, error) tuples for invalid cards.
-    #[must_use] 
+    #[must_use]
     pub fn validate_cards(&self, cards: &[MemoryCard]) -> Vec<(usize, SchemaError)> {
         cards
             .iter()
@@ -540,8 +540,9 @@ impl Memvid {
             .into_iter()
             .map(|schema| {
                 let stats = predicate_stats.get(&schema.id);
-                let (entity_count, value_count, unique_values) = stats
-                    .map_or((0, 0, 0), |s| (s.entities.len(), s.value_count, s.unique_values.len()));
+                let (entity_count, value_count, unique_values) = stats.map_or((0, 0, 0), |s| {
+                    (s.entities.len(), s.value_count, s.unique_values.len())
+                });
 
                 // Check if there's an existing (builtin) schema
                 let is_builtin = self
@@ -590,7 +591,11 @@ impl Memvid {
 
         for frame_id in unenriched {
             // Get frame data
-            let Some(frame) = self.toc.frames.get(frame_id as usize) else {
+            // Safe frame lookup
+            let Ok(index) = usize::try_from(frame_id) else {
+                continue;
+            };
+            let Some(frame) = self.toc.frames.get(index) else {
                 continue;
             };
             let frame = frame.clone();

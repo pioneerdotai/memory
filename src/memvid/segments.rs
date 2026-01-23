@@ -103,12 +103,15 @@ impl Memvid {
         let mut builder = LexIndexBuilder::new();
         let empty_tags = std::collections::HashMap::new();
         for frame_id in frame_ids {
-            let frame = self.toc.frames.get(*frame_id as usize).cloned().ok_or(
-                MemvidError::InvalidFrame {
+            let frame = self
+                .toc
+                .frames
+                .get(usize::try_from(*frame_id).unwrap_or(0))
+                .cloned()
+                .ok_or(MemvidError::InvalidFrame {
                     frame_id: *frame_id,
                     reason: "frame id out of range for lex segment",
-                },
-            )?;
+                })?;
 
             if frame.status != FrameStatus::Active {
                 continue;
@@ -174,7 +177,7 @@ impl Memvid {
                 continue;
             }
             non_empty_count = non_empty_count.saturating_add(1);
-            let vec_dim = vector.len() as u32;
+            let vec_dim = u32::try_from(vector.len()).unwrap_or(0);
             match dimension {
                 None => dimension = Some(vec_dim),
                 Some(existing) if existing == vec_dim => {}
@@ -568,9 +571,9 @@ impl Memvid {
             let existing = latest
                 .get(path.as_str())
                 .map(|descriptor| (*descriptor).clone());
-            let requires_append = existing.as_ref().is_none_or(|descriptor| {
-                descriptor.common.checksum != blob.checksum
-            });
+            let requires_append = existing
+                .as_ref()
+                .is_none_or(|descriptor| descriptor.common.checksum != blob.checksum);
 
             let artifact = if requires_append {
                 Some(TantivySegmentArtifact {

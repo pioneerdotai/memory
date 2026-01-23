@@ -19,8 +19,7 @@ use super::{
 // Note: AnchorSource is always defined (not feature-gated) to maintain binary compatibility
 
 /// Timeline query parameters for scanning frames chronologically or in reverse.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TimelineQuery {
     pub limit: Option<NonZeroU64>,
     pub since: Option<i64>,
@@ -33,12 +32,11 @@ pub struct TimelineQuery {
 
 impl TimelineQuery {
     /// Start a fluent builder for timeline queries.
-    #[must_use] 
+    #[must_use]
     pub fn builder() -> TimelineQueryBuilder {
         TimelineQueryBuilder::default()
     }
 }
-
 
 #[derive(Debug, Default)]
 pub struct TimelineQueryBuilder {
@@ -46,25 +44,25 @@ pub struct TimelineQueryBuilder {
 }
 
 impl TimelineQueryBuilder {
-    #[must_use] 
+    #[must_use]
     pub fn limit(mut self, limit: NonZeroU64) -> Self {
         self.inner.limit = Some(limit);
         self
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn since(mut self, ts: i64) -> Self {
         self.inner.since = Some(ts);
         self
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn until(mut self, ts: i64) -> Self {
         self.inner.until = Some(ts);
         self
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn reverse(mut self, reverse: bool) -> Self {
         self.inner.reverse = reverse;
         self
@@ -76,13 +74,13 @@ impl TimelineQueryBuilder {
         self
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn no_limit(mut self) -> Self {
         self.inner.limit = None;
         self
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn build(mut self) -> TimelineQuery {
         if self.inner.limit.is_none() {
             self.inner.limit = NonZeroU64::new(100);

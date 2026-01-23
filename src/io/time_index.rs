@@ -96,6 +96,7 @@ pub fn read_track<R: Read + Seek>(
     }
 
     // Safe: count validated by checked_mul and payload_bytes comparison above
+    #[allow(clippy::cast_possible_truncation)]
     let mut entries = Vec::with_capacity(count as usize);
     let mut prev: Option<TimeIndexEntry> = None;
     for _ in 0..count {

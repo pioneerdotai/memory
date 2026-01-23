@@ -50,13 +50,13 @@ pub struct ReplayResult {
 
 impl ReplayResult {
     /// Check if the replay was successful (all actions matched).
-    #[must_use] 
+    #[must_use]
     pub fn is_success(&self) -> bool {
         self.mismatched_actions == 0
     }
 
     /// Get the match rate as a percentage.
-    #[must_use] 
+    #[must_use]
     pub fn match_rate(&self) -> f64 {
         if self.total_actions == 0 {
             100.0
@@ -366,9 +366,8 @@ impl<'a> ReplayEngine<'a> {
 
                         // If model override is set, show it (CLI handles actual LLM re-execution)
                         if let Some(ref override_model) = self.config.use_model {
-                            details.push_str(&format!(
-                                "\n         Override Model: {override_model}"
-                            ));
+                            details
+                                .push_str(&format!("\n         Override Model: {override_model}"));
                         }
 
                         // Show original answer
@@ -377,9 +376,8 @@ impl<'a> ReplayEngine<'a> {
                         } else {
                             original_answer.clone()
                         };
-                        details.push_str(&format!(
-                            "\n         Original Answer: \"{answer_preview}\""
-                        ));
+                        details
+                            .push_str(&format!("\n         Original Answer: \"{answer_preview}\""));
 
                         // In audit mode with frozen frames, we consider it verified
                         if action.affected_frames.is_empty() {
@@ -503,7 +501,11 @@ impl<'a> ReplayEngine<'a> {
                 }
             }
 
-            action_result.duration_ms = action_start.elapsed().as_millis() as u64;
+            action_result.duration_ms = action_start
+                .elapsed()
+                .as_millis()
+                .try_into()
+                .unwrap_or(u64::MAX);
             result.action_results.push(action_result);
 
             // Stop on mismatch if configured
@@ -515,7 +517,11 @@ impl<'a> ReplayEngine<'a> {
             }
         }
 
-        result.total_duration_ms = start_time.elapsed().as_millis() as u64;
+        result.total_duration_ms = start_time
+            .elapsed()
+            .as_millis()
+            .try_into()
+            .unwrap_or(u64::MAX);
 
         if self.config.verbose {
             tracing::info!(
@@ -530,7 +536,7 @@ impl<'a> ReplayEngine<'a> {
     }
 
     /// Compare two sessions to find differences.
-    #[must_use] 
+    #[must_use]
     pub fn compare_sessions(
         session_a: &ReplaySession,
         session_b: &ReplaySession,
@@ -643,7 +649,7 @@ pub struct SessionComparison {
 
 impl SessionComparison {
     /// Check if the sessions are identical.
-    #[must_use] 
+    #[must_use]
     pub fn is_identical(&self) -> bool {
         self.actions_only_in_a.is_empty()
             && self.actions_only_in_b.is_empty()

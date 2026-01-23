@@ -390,7 +390,8 @@ fn try_detect_heading(
     patterns: &Patterns,
 ) -> Option<DocumentElement> {
     let caps = patterns.heading.captures(line)?;
-    let level = caps.get(1)?.as_str().len() as u8;
+    // Safe: markdown headers are ### (max few chars).
+    let level = u8::try_from(caps.get(1)?.as_str().len()).unwrap_or(0);
     let text = caps.get(2)?.as_str().to_string();
     let char_end = char_start + line.len();
 
@@ -592,14 +593,14 @@ mod tests {
 
     #[test]
     fn test_detect_markdown_table() {
-        let text = r#"Some text before.
+        let text = r"Some text before.
 
 | Name | Age | City |
 |------|-----|------|
 | Alice | 30 | NYC |
 | Bob | 25 | LA |
 
-Some text after."#;
+Some text after.";
 
         let doc = detect_structure(text);
         assert_eq!(doc.table_count, 1);
@@ -641,7 +642,7 @@ And more text."#;
 
     #[test]
     fn test_detect_lists() {
-        let text = r#"Shopping list:
+        let text = r"Shopping list:
 
 - Apples
 - Bananas
@@ -651,7 +652,7 @@ Steps:
 
 1. First step
 2. Second step
-3. Third step"#;
+3. Third step";
 
         let doc = detect_structure(text);
 
@@ -666,7 +667,7 @@ Steps:
 
     #[test]
     fn test_detect_headings() {
-        let text = r#"# Main Title
+        let text = r"# Main Title
 
 Some intro text.
 
@@ -676,7 +677,7 @@ Content here.
 
 ### Subsection
 
-More content."#;
+More content.";
 
         let doc = detect_structure(text);
 
@@ -696,7 +697,7 @@ More content."#;
 
     #[test]
     fn test_complex_document() {
-        let text = r#"# Report
+        let text = r"# Report
 
 ## Summary
 
@@ -724,7 +725,7 @@ def calculate_growth(current, previous):
 
 ## Conclusion
 
-Strong performance overall."#;
+Strong performance overall.";
 
         let doc = detect_structure(text);
 
@@ -772,10 +773,10 @@ Strong performance overall."#;
 
     #[test]
     fn test_ascii_table_detection() {
-        let text = r#"Name          Age    City
+        let text = r"Name          Age    City
 Alice         30     NYC
 Bob           25     LA
-Charlie       35     SF"#;
+Charlie       35     SF";
 
         let tables = detect_ascii_tables(text);
         assert_eq!(tables.len(), 1);

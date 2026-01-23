@@ -205,10 +205,12 @@ mod tests {
     }
 
     impl EmbeddingProvider for MockProvider {
+        #[allow(clippy::unnecessary_literal_bound)]
         fn kind(&self) -> &str {
             "mock"
         }
 
+        #[allow(clippy::unnecessary_literal_bound)]
         fn model(&self) -> &str {
             "mock-model"
         }

@@ -128,7 +128,7 @@ impl TripletExtractor {
             0
         };
 
-        let elapsed_ms = start.elapsed().as_millis() as u64;
+        let elapsed_ms = start.elapsed().as_millis().try_into().unwrap_or(u64::MAX);
         let rules_count = all_cards.len();
 
         // Deduplicate cards with same entity:slot
@@ -144,7 +144,7 @@ impl TripletExtractor {
     /// Extract triplets from an existing `EnrichmentContext`.
     ///
     /// This is useful when you already have a context from the enrichment pipeline.
-    #[must_use] 
+    #[must_use]
     pub fn extract_from_context(
         &self,
         ctx: &EnrichmentContext,

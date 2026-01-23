@@ -313,8 +313,7 @@ impl TableExtractionOptions {
 }
 
 /// Builder for `TableExtractionOptions`.
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct TableExtractionOptionsBuilder {
     inner: TableExtractionOptions,
 }
@@ -389,7 +388,6 @@ impl TableExtractionOptionsBuilder {
         self.inner
     }
 }
-
 
 /// Extraction mode controls quality vs coverage tradeoff.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

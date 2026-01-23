@@ -11,7 +11,7 @@ use wide::f32x8;
 /// Uses 8-wide SIMD lanes (AVX2 on `x86_64`, NEON on aarch64).
 /// Falls back to scalar for remainder elements.
 #[cfg(feature = "simd")]
-#[must_use] 
+#[must_use]
 pub fn l2_distance_squared_simd(a: &[f32], b: &[f32]) -> f32 {
     debug_assert_eq!(a.len(), b.len(), "vectors must have same length");
 
@@ -64,7 +64,7 @@ pub fn l2_distance_squared_simd(a: &[f32], b: &[f32]) -> f32 {
 
 /// Compute L2 distance (with sqrt) using SIMD.
 #[cfg(feature = "simd")]
-#[must_use] 
+#[must_use]
 pub fn l2_distance_simd(a: &[f32], b: &[f32]) -> f32 {
     l2_distance_squared_simd(a, b).sqrt()
 }

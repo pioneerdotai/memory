@@ -153,11 +153,7 @@ fn registry_root() -> Result<PathBuf> {
     }
 
     Err(last_err
-        .unwrap_or_else(|| {
-            io::Error::other(
-                "failed to establish memvid lock registry directory",
-            )
-        })
+        .unwrap_or_else(|| io::Error::other("failed to establish memvid lock registry directory"))
         .into())
 }
 
@@ -216,8 +212,7 @@ pub fn write_record(record: &LockRecord) -> Result<()> {
         .create(true)
         .truncate(true)
         .open(path)?;
-    serde_json::to_writer(&mut file, record)
-        .map_err(io::Error::other)?;
+    serde_json::to_writer(&mut file, record).map_err(io::Error::other)?;
     file.flush()?;
     file.sync_all()?;
     Ok(())
@@ -240,8 +235,7 @@ pub fn read_record(file_id: &FileId) -> Result<Option<LockRecord>> {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(err) => return Err(err.into()),
     };
-    let record: LockRecord =
-        serde_json::from_reader(file).map_err(io::Error::other)?;
+    let record: LockRecord = serde_json::from_reader(file).map_err(io::Error::other)?;
     Ok(Some(record))
 }
 

@@ -10,6 +10,7 @@ use crate::{
     },
 };
 
+#[allow(clippy::cast_possible_truncation)]
 fn canonical_config() -> impl bincode::config::Config {
     bincode::config::standard()
         .with_fixed_int_encoding()
@@ -121,7 +122,9 @@ impl Toc {
         }
 
         // Try V2 format (with memories_track/logic_mesh, without replay_manifest)
-        if let Ok((legacy, bytes_read)) = decode_from_slice::<LegacyTocV2, _>(bytes, canonical_config()) {
+        if let Ok((legacy, bytes_read)) =
+            decode_from_slice::<LegacyTocV2, _>(bytes, canonical_config())
+        {
             if bytes_read != bytes.len() {
                 return Err(MemvidError::InvalidToc {
                     reason: "unexpected trailing bytes in V2 format".into(),
@@ -185,7 +188,7 @@ impl LegacyTocV2 {
 
 impl Toc {
     /// Computes the BLAKE3 checksum used for the TOC integrity field.
-    #[must_use] 
+    #[must_use]
     pub fn calculate_checksum(bytes: &[u8]) -> [u8; 32] {
         let mut hasher = Hasher::new();
         hasher.update(bytes);

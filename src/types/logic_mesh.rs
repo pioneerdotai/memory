@@ -43,7 +43,7 @@ pub struct MeshNode {
 
 impl MeshNode {
     /// Create a new mesh node with computed ID.
-    #[must_use] 
+    #[must_use]
     pub fn new(
         canonical_name: String,
         display_name: String,
@@ -54,12 +54,15 @@ impl MeshNode {
         byte_len: u16,
     ) -> Self {
         let id = compute_node_id(&canonical_name, kind);
+        #[allow(clippy::cast_possible_truncation)]
+        let confidence = (confidence * 100.0).min(100.0) as u8;
+
         Self {
             id,
             canonical_name,
             display_name,
             kind,
-            confidence: (confidence * 100.0).min(100.0) as u8,
+            confidence,
             frame_ids: vec![frame_id],
             mentions: vec![(frame_id, byte_start, byte_len)],
         }
@@ -144,7 +147,7 @@ pub struct MeshEdge {
 
 impl MeshEdge {
     /// Create a new edge.
-    #[must_use] 
+    #[must_use]
     pub fn new(
         from_node: u64,
         to_node: u64,
@@ -152,11 +155,14 @@ impl MeshEdge {
         confidence: f32,
         frame_id: FrameId,
     ) -> Self {
+        #[allow(clippy::cast_possible_truncation)]
+        let confidence = (confidence * 100.0).min(100.0) as u8;
+
         Self {
             from_node,
             to_node,
             link,
-            confidence: (confidence * 100.0).min(100.0) as u8,
+            confidence,
             frame_id,
         }
     }
@@ -372,11 +378,12 @@ impl LogicMesh {
             });
         }
 
-        let compressed_len = u64::from_le_bytes(bytes[6..14].try_into().map_err(|_| {
-            MemvidError::InvalidLogicMesh {
+        let compressed_len = usize::try_from(u64::from_le_bytes(bytes[6..14].try_into().map_err(
+            |_| MemvidError::InvalidLogicMesh {
                 reason: "invalid length header".into(),
-            }
-        })?) as usize;
+            },
+        )?))
+        .unwrap_or(0);
 
         if bytes.len() < 14 + compressed_len {
             return Err(MemvidError::InvalidLogicMesh {
@@ -448,7 +455,7 @@ impl LogicMesh {
     }
 
     /// Follow edges from a start node.
-    #[must_use] 
+    #[must_use]
     pub fn follow(&self, start: &str, link: &str, hops: usize) -> Vec<FollowResult> {
         let Some(start_node) = self.find_node(start) else {
             return Vec::new();

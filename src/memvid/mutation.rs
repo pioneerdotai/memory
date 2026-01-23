@@ -381,7 +381,7 @@ fn finalize_reader_output(output: ReaderOutput, start: Instant) -> ExtractedDocu
 fn log_reader_result(reader: &str, diagnostics: &ReaderDiagnostics, elapsed: Duration) {
     let duration_ms = diagnostics
         .duration_ms
-        .unwrap_or(elapsed.as_millis() as u64);
+        .unwrap_or(elapsed.as_millis().try_into().unwrap_or(u64::MAX));
     let warnings = diagnostics.warnings.len();
     let pages = diagnostics.pages_processed;
 
@@ -671,9 +671,11 @@ impl Memvid {
             let chunk = min(remaining, buffer.len() as u64);
             let src = data_start + remaining - chunk;
             self.file.seek(SeekFrom::Start(src))?;
+            #[allow(clippy::cast_possible_truncation)]
             self.file.read_exact(&mut buffer[..chunk as usize])?;
             let dst = src + delta;
             self.file.seek(SeekFrom::Start(dst))?;
+            #[allow(clippy::cast_possible_truncation)]
             self.file.write_all(&buffer[..chunk as usize])?;
             remaining -= chunk;
         }
@@ -683,6 +685,7 @@ impl Memvid {
         let mut remaining = delta;
         while remaining > 0 {
             let write = min(remaining, zero_buf.len() as u64);
+            #[allow(clippy::cast_possible_truncation)]
             self.file.write_all(&zero_buf[..write as usize])?;
             remaining -= write;
         }
@@ -1127,7 +1130,13 @@ impl Memvid {
                                     reason: "reused payload entry contained inline bytes",
                                 });
                             }
-                            let source = self.toc.frames.get(source_id as usize).cloned().ok_or(
+                            let source_idx = usize::try_from(source_id).map_err(|_| {
+                                MemvidError::InvalidFrame {
+                                    frame_id: source_id,
+                                    reason: "frame id too large for memory",
+                                }
+                            })?;
+                            let source = self.toc.frames.get(source_idx).cloned().ok_or(
                                 MemvidError::InvalidFrame {
                                     frame_id: source_id,
                                     reason: "reused payload source missing",
@@ -1248,21 +1257,21 @@ impl Memvid {
                                 if entry.role == FrameRole::DocumentChunk {
                                     // Look backwards through recently inserted frames
                                     for &candidate_id in delta.inserted_frames.iter().rev() {
-                                        if let Some(candidate) =
-                                            self.toc.frames.get(candidate_id as usize)
-                                        {
-                                            if candidate.role == FrameRole::Document
-                                                && candidate.chunk_manifest.is_some()
-                                            {
-                                                // Found a parent document - use it
-                                                frame.parent_id = Some(candidate_id);
-                                                tracing::debug!(
-                                                    chunk_frame_id = frame_id,
-                                                    parent_frame_id = candidate_id,
-                                                    parent_seq = parent_seq,
-                                                    "resolved chunk parent via fallback"
-                                                );
-                                                break;
+                                        if let Ok(idx) = usize::try_from(candidate_id) {
+                                            if let Some(candidate) = self.toc.frames.get(idx) {
+                                                if candidate.role == FrameRole::Document
+                                                    && candidate.chunk_manifest.is_some()
+                                                {
+                                                    // Found a parent document - use it
+                                                    frame.parent_id = Some(candidate_id);
+                                                    tracing::debug!(
+                                                        chunk_frame_id = frame_id,
+                                                        parent_frame_id = candidate_id,
+                                                        parent_seq = parent_seq,
+                                                        "resolved chunk parent via fallback"
+                                                    );
+                                                    break;
+                                                }
                                             }
                                         }
                                     }
@@ -1366,18 +1375,21 @@ impl Memvid {
             .inserted_frames
             .iter()
             .filter_map(|&frame_id| {
-                let frame = self.toc.frames.get(frame_id as usize)?;
+                let idx = usize::try_from(frame_id).ok()?;
+                let frame = self.toc.frames.get(idx)?;
                 if frame.role != FrameRole::DocumentChunk || frame.parent_id.is_some() {
                     return None;
                 }
                 // Find the most recent Document frame before this chunk that has a manifest
                 for candidate_id in (0..frame_id).rev() {
-                    if let Some(candidate) = self.toc.frames.get(candidate_id as usize) {
-                        if candidate.role == FrameRole::Document
-                            && candidate.chunk_manifest.is_some()
-                            && candidate.status == FrameStatus::Active
-                        {
-                            return Some((frame_id, candidate_id));
+                    if let Ok(idx) = usize::try_from(candidate_id) {
+                        if let Some(candidate) = self.toc.frames.get(idx) {
+                            if candidate.role == FrameRole::Document
+                                && candidate.chunk_manifest.is_some()
+                                && candidate.status == FrameStatus::Active
+                            {
+                                return Some((frame_id, candidate_id));
+                            }
                         }
                     }
                 }
@@ -1387,13 +1399,15 @@ impl Memvid {
 
         // Now apply the resolutions
         for (chunk_id, parent_id) in orphan_resolutions {
-            if let Some(frame) = self.toc.frames.get_mut(chunk_id as usize) {
-                frame.parent_id = Some(parent_id);
-                tracing::debug!(
-                    chunk_frame_id = chunk_id,
-                    parent_frame_id = parent_id,
-                    "resolved orphan chunk parent in second pass"
-                );
+            if let Ok(idx) = usize::try_from(chunk_id) {
+                if let Some(frame) = self.toc.frames.get_mut(idx) {
+                    frame.parent_id = Some(parent_id);
+                    tracing::debug!(
+                        chunk_frame_id = chunk_id,
+                        parent_frame_id = parent_id,
+                        "resolved orphan chunk parent in second pass"
+                    );
+                }
             }
         }
 
@@ -1884,14 +1898,18 @@ impl Memvid {
     }
 
     fn mark_frame_superseded(&mut self, frame_id: FrameId, successor_id: FrameId) -> Result<()> {
-        let frame =
-            self.toc
-                .frames
-                .get_mut(frame_id as usize)
-                .ok_or(MemvidError::InvalidFrame {
-                    frame_id,
-                    reason: "supersede target missing",
-                })?;
+        let index = usize::try_from(frame_id).map_err(|_| MemvidError::InvalidFrame {
+            frame_id,
+            reason: "frame id too large",
+        })?;
+        let frame = self
+            .toc
+            .frames
+            .get_mut(index)
+            .ok_or(MemvidError::InvalidFrame {
+                frame_id,
+                reason: "supersede target missing",
+            })?;
         frame.status = FrameStatus::Superseded;
         frame.superseded_by = Some(successor_id);
         self.remove_frame_from_indexes(frame_id)
@@ -2311,6 +2329,7 @@ impl Memvid {
             bytes_offset: sketch_offset,
             bytes_length: sketch_length,
             entry_count: stats.entry_count,
+            #[allow(clippy::cast_possible_truncation)]
             entry_size: stats.variant.entry_size() as u16,
             flags: 0,
             checksum: sketch_checksum,
@@ -2471,14 +2490,18 @@ impl Memvid {
     }
 
     fn mark_frame_deleted(&mut self, frame_id: FrameId) -> Result<()> {
-        let frame =
-            self.toc
-                .frames
-                .get_mut(frame_id as usize)
-                .ok_or(MemvidError::InvalidFrame {
-                    frame_id,
-                    reason: "delete target missing",
-                })?;
+        let index = usize::try_from(frame_id).map_err(|_| MemvidError::InvalidFrame {
+            frame_id,
+            reason: "frame id too large",
+        })?;
+        let frame = self
+            .toc
+            .frames
+            .get_mut(index)
+            .ok_or(MemvidError::InvalidFrame {
+                frame_id,
+                reason: "delete target missing",
+            })?;
         frame.status = FrameStatus::Deleted;
         frame.superseded_by = None;
         self.remove_frame_from_indexes(frame_id)
@@ -2500,9 +2523,12 @@ impl Memvid {
     }
 
     pub(crate) fn frame_is_active(&self, frame_id: FrameId) -> bool {
+        let Ok(index) = usize::try_from(frame_id) else {
+            return false;
+        };
         self.toc
             .frames
-            .get(frame_id as usize)
+            .get(index)
             .is_some_and(|frame| frame.status == FrameStatus::Active)
     }
 
@@ -3087,7 +3113,9 @@ impl Memvid {
 
             if let Some(ref vector) = embedding {
                 if !vector.is_empty() {
-                    dim = Some(vector.len() as u32);
+                    #[allow(clippy::cast_possible_truncation)]
+                    let len = vector.len() as u32;
+                    dim = Some(len);
                 }
             }
 
@@ -3096,7 +3124,7 @@ impl Memvid {
                     if vector.is_empty() {
                         continue;
                     }
-                    let vec_dim = vector.len() as u32;
+                    let vec_dim = u32::try_from(vector.len()).unwrap_or(0);
                     match dim {
                         None => dim = Some(vec_dim),
                         Some(existing) if existing == vec_dim => {}
@@ -3168,6 +3196,7 @@ impl Memvid {
                 .unwrap_or(0)
         });
 
+        #[allow(unused_assignments)]
         let mut reuse_bytes: Option<Vec<u8>> = None;
         let payload_for_processing = if let Some(bytes) = payload {
             Some(bytes)
@@ -3412,7 +3441,7 @@ impl Memvid {
         let triplet_title = title_value.clone();
 
         if let Some(plan) = chunk_plan.as_ref() {
-            let chunk_total = plan.chunks.len() as u32;
+            let chunk_total = u32::try_from(plan.chunks.len()).unwrap_or(0);
             parent_chunk_manifest = Some(plan.manifest.clone());
             parent_chunk_count = Some(chunk_total);
 
@@ -3470,7 +3499,7 @@ impl Memvid {
                     chunk_manifest: None,
                     role: FrameRole::DocumentChunk,
                     parent_sequence: None,
-                    chunk_index: Some(idx as u32),
+                    chunk_index: Some(u32::try_from(idx).unwrap_or(0)),
                     chunk_count: Some(chunk_total),
                     op: FrameWalOp::Insert,
                     target_frame_id: None,
@@ -3494,9 +3523,9 @@ impl Memvid {
             // Since frame.id corresponds to the array index, we need to find the sequence
             // For now, we'll use the frame_id + WAL_START_SEQUENCE as an approximation
             // This works because sequence numbers are assigned incrementally
-            self.toc
-                .frames
-                .get(parent_id as usize)
+            usize::try_from(parent_id)
+                .ok()
+                .and_then(|idx| self.toc.frames.get(idx))
                 .map(|_| parent_id + 2) // WAL sequences start at 2
         } else {
             None
