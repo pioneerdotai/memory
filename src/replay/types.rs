@@ -64,7 +64,7 @@ impl ReplayAction {
     /// - **Size Validation**: Enforces strict 10MB limit, rejecting larger payloads
     /// - **Content Sanitization**: Removes control characters that could enable injection
     /// - **Memory Safety**: Uses safe UTF-8 conversion with lossy handling
-    /// - **DoS Prevention**: Prevents memory exhaustion and resource abuse
+    /// - **`DoS` Prevention**: Prevents memory exhaustion and resource abuse
     ///
     /// Data exceeding limits is rejected by storing empty values.
     #[must_use]
@@ -120,7 +120,7 @@ impl ReplayAction {
     /// - **Size Validation**: Enforces strict 10MB limit, rejecting larger payloads
     /// - **Content Sanitization**: Removes control characters that could enable injection
     /// - **Memory Safety**: Uses safe UTF-8 conversion with lossy handling
-    /// - **DoS Prevention**: Prevents memory exhaustion and resource abuse
+    /// - **`DoS` Prevention**: Prevents memory exhaustion and resource abuse
     ///
     /// Data exceeding limits is rejected by storing empty values.
     #[must_use]
