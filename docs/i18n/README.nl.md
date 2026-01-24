@@ -10,8 +10,12 @@
  <a href="README.so.md">🇸🇴 Soomaali</a>
  <a href="README.ar.md">🇸🇦 العربية</a>
  <a href="README.nl.md">🇧🇪/🇳🇱 Nederlands</a>
+ <a href="README.hi.md">🇮🇳 हिन्दी</a>
+ <a href="README.bn.md">🇧🇩 বাংলা</a>
+ <a href="README.cs.md">🇨🇿 Čeština</a>
  <a href="README.ko.md">🇰🇷 한국어</a>
  <a href="README.ja.md">🇯🇵 日本語</a>
+ <!-- Next Flag -->
 </p>
 <!-- FLAGS:END -->
 
