@@ -1,21 +1,33 @@
+<!-- HEADER:START -->
 <img width="2000" height="524" alt="Social Cover (9)" src="https://github.com/user-attachments/assets/cf66f045-c8be-494b-b696-b8d7e4fb709c" />
+<!-- HEADER:END -->
 
+<!-- FLAGS:START -->
 <p align="center">
-<strong>Memvidは、AIエージェントのための即時検索と長期記憶を備えた単一ファイル型メモリレイヤーです。</strong>
-</br>
-データベースを必要とせず、永続化、バージョン管理、ポータブル性を備えたメモリを実現します。
+ <a href="../../README.md">🇺🇸 English</a>
+ <a href="README.es.md">🇪🇸 Español</a>
+ <a href="README.fr.md">🇫🇷 Français</a>
+ <a href="README.so.md">🇸🇴 Soomaali</a>
+ <a href="README.ar.md">🇸🇦 العربية</a>
+ <a href="README.nl.md">🇧🇪/🇳🇱 Nederlands</a>
+ <a href="README.ko.md">🇰🇷 한국어</a>
+ <a href="README.ja.md">🇯🇵 日本語</a>
 </p>
+<!-- FLAGS:END -->
 
+<!-- NAV:START -->
 <p align="center">
-  <a href="https://www.memvid.com">ウェブサイト</a>
+  <a href="https://www.memvid.com">Website</a>
   ·
-  <a href="https://sandbox.memvid.com">サンドボックスを試す</a>
+  <a href="https://sandbox.memvid.com">Try Sandbox</a>
   ·
-  <a href="https://docs.memvid.com">ドキュメント</a>
+  <a href="https://docs.memvid.com">Docs</a>
   ·
-  <a href="https://github.com/memvid/memvid/discussions">ディスカッション</a>
+  <a href="https://github.com/memvid/memvid/discussions">Discussions</a>
 </p>
+<!-- NAV:END -->
 
+<!-- BADGES:START -->
 <p align="center">
   <a href="https://crates.io/crates/memvid-core"><img src="https://img.shields.io/crates/v/memvid-core?style=flat-square&logo=rust" alt="Crates.io" /></a>
   <a href="https://docs.rs/memvid-core"><img src="https://img.shields.io/docsrs/memvid-core?style=flat-square&logo=docs.rs" alt="docs.rs" /></a>
@@ -30,7 +42,14 @@
 </p>
 
 <p align="center">
-    <a href="https://trendshift.io/repositories/17293" target="_blank"><img src="https://trendshift.io/api/badge/repositories/17293" alt="memvid%2Fmemvid | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/</a>
+    <a href="https://trendshift.io/repositories/17293" target="_blank"><img src="https://trendshift.io/api/badge/repositories/17293" alt="memvid%2Fmemvid | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
+</p>
+<!-- BADGES:END -->
+
+<p align="center">
+<strong>Memvidは、AIエージェントのための即時検索と長期記憶を備えた単一ファイル型メモリレイヤーです。</strong>
+</br>
+データベースを必要とせず、永続化、バージョン管理、ポータブル性を備えたメモリを実現します。
 </p>
 
 <h2 align="center">⭐️ スターで応援お願いします ⭐️</h2>
