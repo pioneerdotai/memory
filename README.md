@@ -12,6 +12,10 @@
  <a href="docs/i18n/README.nl.md">🇧🇪/🇳🇱 Nederlands</a>
  <a href="docs/i18n/README.ko.md">🇰🇷 한국어</a>
  <a href="docs/i18n/README.ja.md">🇯🇵 日本語</a>
+ <a href="docs/i18n/README.bn.md">🇧🇩 বাংলা</a>
+ <a href="docs/i18n/README.cs.md">🇨🇿 Česko</a>
+ <a href="docs/i18n/README.hi.md">🇮🇳 हिन्दी</a>
+ <!-- Next Flag -->
 </p>
 <!-- FLAGS:END -->
 
