@@ -156,7 +156,7 @@ pub(super) fn try_tantivy_search(
         let eval_text = frame_meta
             .search_text
             .as_deref()
-            .map(|s| s.to_ascii_lowercase())
+            .map(str::to_ascii_lowercase)
             .unwrap_or_else(|| chunk_info.text.to_ascii_lowercase());
 
         // Evaluate the parsed query to filter results. This is necessary for:
