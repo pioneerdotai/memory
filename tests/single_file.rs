@@ -5,6 +5,18 @@ use memvid_core::{Memvid, PutOptions};
 use std::fs;
 use tempfile::TempDir;
 
+/// Windows needs extra time for Tantivy to release file handles.
+/// Without this delay, TempDir cleanup fails with "Access is denied".
+#[cfg(target_os = "windows")]
+fn windows_file_handle_delay() {
+    std::thread::sleep(std::time::Duration::from_millis(100));
+}
+
+#[cfg(not(target_os = "windows"))]
+fn windows_file_handle_delay() {
+    // No-op on Unix systems
+}
+
 /// Helper to count files in a directory (excluding hidden).
 fn count_files(dir: &std::path::Path) -> usize {
     fs::read_dir(dir)
@@ -310,6 +322,9 @@ fn no_wal_sidecar_files() {
         mem.commit().unwrap();
     }
 
+    // Windows needs extra time for Tantivy to release file handles
+    windows_file_handle_delay();
+
     let files = list_files(dir.path());
 
     // Check for forbidden sidecar patterns
@@ -400,6 +415,9 @@ fn large_file_maintains_single_file() {
 
         mem.commit().unwrap();
     }
+
+    // Windows needs extra time for Tantivy to release file handles
+    windows_file_handle_delay();
 
     let file_count = count_files(dir.path());
     assert_eq!(
