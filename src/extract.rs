@@ -16,7 +16,7 @@ use serde_json::{Value, json};
 #[cfg(feature = "extractous")]
 use extractous::Extractor;
 #[cfg(feature = "extractous")]
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 #[cfg(feature = "extractous")]
 use std::sync::{Mutex, OnceLock};
 
@@ -54,6 +54,89 @@ impl Default for ProcessorConfig {
 }
 
 // ============================================================================
+// Extraction Cache with LRU Eviction
+// ============================================================================
+
+/// Default capacity for extraction cache (number of documents)
+#[cfg(feature = "extractous")]
+const DEFAULT_EXTRACTION_CACHE_CAPACITY: usize = 100;
+
+/// LRU cache for extracted documents to avoid re-extracting the same content.
+///
+/// This cache has a maximum capacity and evicts the least recently used entries
+/// when full, following the same pattern as `EmbeddingCache` in `text_embed.rs`.
+#[cfg(feature = "extractous")]
+struct ExtractionCache {
+    /// Cache storage: document hash -> extracted document
+    cache: HashMap<blake3::Hash, ExtractedDocument>,
+    /// LRU queue: tracks access order (most recent at front)
+    lru_queue: VecDeque<blake3::Hash>,
+    /// Maximum capacity
+    capacity: usize,
+    /// Cache hit count
+    hits: usize,
+    /// Cache miss count
+    misses: usize,
+}
+
+#[cfg(feature = "extractous")]
+impl ExtractionCache {
+    fn new(capacity: usize) -> Self {
+        Self {
+            cache: HashMap::with_capacity(capacity),
+            lru_queue: VecDeque::with_capacity(capacity),
+            capacity,
+            hits: 0,
+            misses: 0,
+        }
+    }
+
+    fn get(&mut self, key: &blake3::Hash) -> Option<ExtractedDocument> {
+        if let Some(document) = self.cache.get(key) {
+            // Move to front (most recently used)
+            self.lru_queue.retain(|k| k != key);
+            self.lru_queue.push_front(*key);
+            self.hits += 1;
+            Some(document.clone())
+        } else {
+            self.misses += 1;
+            None
+        }
+    }
+
+    fn insert(&mut self, key: blake3::Hash, value: ExtractedDocument) {
+        // Check if already exists
+        if self.cache.contains_key(&key) {
+            // Update and move to front
+            self.cache.insert(key, value);
+            self.lru_queue.retain(|k| *k != key);
+            self.lru_queue.push_front(key);
+            return;
+        }
+
+        // Evict if at capacity
+        if self.cache.len() >= self.capacity {
+            if let Some(oldest_key) = self.lru_queue.pop_back() {
+                self.cache.remove(&oldest_key);
+                tracing::debug!(
+                    evicted_hash = ?oldest_key,
+                    "Evicted oldest entry from extraction cache"
+                );
+            }
+        }
+
+        // Insert new entry
+        self.cache.insert(key, value);
+        self.lru_queue.push_front(key);
+    }
+
+    #[allow(dead_code)]
+    fn stats(&self) -> (usize, usize, usize) {
+        (self.hits, self.misses, self.cache.len())
+    }
+}
+
+// ============================================================================
 // DocumentProcessor - only available with extractous feature
 // ============================================================================
 
@@ -72,8 +155,7 @@ impl Default for DocumentProcessor {
 }
 
 #[cfg(feature = "extractous")]
-static EXTRACTION_CACHE: OnceLock<Mutex<HashMap<blake3::Hash, ExtractedDocument>>> =
-    OnceLock::new();
+static EXTRACTION_CACHE: OnceLock<Mutex<ExtractionCache>> = OnceLock::new();
 
 #[cfg(feature = "extractous")]
 impl DocumentProcessor {
@@ -538,13 +620,15 @@ fn value_to_mime(value: &Value) -> Option<String> {
 
 #[cfg(feature = "extractous")]
 fn cache_lookup(hash: &blake3::Hash) -> Option<ExtractedDocument> {
-    let cache = EXTRACTION_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    cache.lock().ok().and_then(|map| map.get(hash).cloned())
+    let cache = EXTRACTION_CACHE
+        .get_or_init(|| Mutex::new(ExtractionCache::new(DEFAULT_EXTRACTION_CACHE_CAPACITY)));
+    cache.lock().ok().and_then(|mut map| map.get(hash))
 }
 
 #[cfg(feature = "extractous")]
 fn cache_store(hash: blake3::Hash, document: &ExtractedDocument) {
-    let cache = EXTRACTION_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let cache = EXTRACTION_CACHE
+        .get_or_init(|| Mutex::new(ExtractionCache::new(DEFAULT_EXTRACTION_CACHE_CAPACITY)));
     if let Ok(mut map) = cache.lock() {
         map.insert(hash, document.clone());
     }
@@ -883,5 +967,120 @@ mod pdf_fix_tests {
         // Normal text should NOT be detected as PDF structure
         let normal_text = "This is perfectly normal extracted text from a document.";
         assert!(!looks_like_pdf_structure_dump(normal_text));
+    }
+}
+
+// ============================================================================
+// Tests for ExtractionCache LRU eviction
+// ============================================================================
+
+#[cfg(all(test, feature = "extractous"))]
+mod extraction_cache_tests {
+    use super::*;
+
+    fn make_doc(content: &str) -> ExtractedDocument {
+        ExtractedDocument {
+            text: Some(content.to_string()),
+            metadata: serde_json::json!({}),
+            mime_type: Some("text/plain".to_string()),
+        }
+    }
+
+    #[test]
+    fn test_extraction_cache_basic() {
+        let mut cache = ExtractionCache::new(10);
+        let hash = blake3::hash(b"test document");
+        let doc = make_doc("test content");
+
+        cache.insert(hash, doc.clone());
+        let retrieved = cache.get(&hash);
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap().text, Some("test content".to_string()));
+    }
+
+    #[test]
+    fn test_extraction_cache_stats() {
+        let mut cache = ExtractionCache::new(10);
+        let hash = blake3::hash(b"test");
+        cache.insert(hash, make_doc("test"));
+
+        // Hit
+        let _ = cache.get(&hash);
+        // Miss
+        let missing = blake3::hash(b"missing");
+        let _ = cache.get(&missing);
+
+        let (hits, misses, size) = cache.stats();
+        assert_eq!(hits, 1);
+        assert_eq!(misses, 1);
+        assert_eq!(size, 1);
+    }
+
+    #[test]
+    fn test_extraction_cache_eviction() {
+        let mut cache = ExtractionCache::new(3);
+
+        // Insert 4 items, first should be evicted
+        for i in 0..4u8 {
+            let hash = blake3::hash(&[i]);
+            cache.insert(hash, make_doc(&format!("doc{}", i)));
+        }
+
+        // First item should be evicted
+        let evicted = blake3::hash(&[0u8]);
+        assert!(cache.get(&evicted).is_none());
+
+        // Last 3 should still exist
+        for i in 1..4u8 {
+            let hash = blake3::hash(&[i]);
+            assert!(cache.get(&hash).is_some());
+        }
+    }
+
+    #[test]
+    fn test_extraction_cache_lru_promotion() {
+        let mut cache = ExtractionCache::new(3);
+
+        // Insert 3 items: 0, 1, 2
+        for i in 0..3u8 {
+            let hash = blake3::hash(&[i]);
+            cache.insert(hash, make_doc(&format!("doc{}", i)));
+        }
+
+        // Access first item (promotes it to front)
+        let first = blake3::hash(&[0u8]);
+        let _ = cache.get(&first);
+
+        // Insert 4th item - should evict second (index 1, now oldest)
+        let new_hash = blake3::hash(&[3u8]);
+        cache.insert(new_hash, make_doc("doc3"));
+
+        // First should still exist (was accessed, got promoted)
+        assert!(cache.get(&first).is_some());
+
+        // Second should be evicted (was oldest after first was promoted)
+        let second = blake3::hash(&[1u8]);
+        assert!(cache.get(&second).is_none());
+
+        // Third and fourth should exist
+        let third = blake3::hash(&[2u8]);
+        assert!(cache.get(&third).is_some());
+        assert!(cache.get(&new_hash).is_some());
+    }
+
+    #[test]
+    fn test_extraction_cache_update_existing() {
+        let mut cache = ExtractionCache::new(3);
+        let hash = blake3::hash(b"test");
+
+        cache.insert(hash, make_doc("original"));
+        cache.insert(hash, make_doc("updated"));
+
+        let retrieved = cache.get(&hash);
+        assert_eq!(retrieved.unwrap().text, Some("updated".to_string()));
+
+        // Size should still be 1
+        let (_, _, size) = cache.stats();
+        assert_eq!(size, 1);
     }
 }

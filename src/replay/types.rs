@@ -322,8 +322,9 @@ impl ReplaySession {
     #[must_use]
     pub fn duration_secs(&self) -> u64 {
         match self.ended_secs {
-            Some(end) => (end - self.created_secs).max(0) as u64,
-            None => (chrono::Utc::now().timestamp() - self.created_secs).max(0) as u64,
+            Some(end) => u64::try_from((end - self.created_secs).max(0)).unwrap_or(0),
+            None => u64::try_from((chrono::Utc::now().timestamp() - self.created_secs).max(0))
+                .unwrap_or(0),
         }
     }
 

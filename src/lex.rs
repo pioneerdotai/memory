@@ -263,6 +263,7 @@ impl LexIndex {
                 }
 
                 occurrences.sort_by_key(|(start, _)| *start);
+                #[allow(clippy::cast_precision_loss)]
                 let mut score = occurrences.len() as f32;
                 if !phrase.is_empty() && section.content_lower.contains(&phrase) {
                     score += 1000.0;
