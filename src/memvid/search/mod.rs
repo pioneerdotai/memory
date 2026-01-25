@@ -55,7 +55,7 @@ impl Memvid {
         query_tokens.retain(|token| !token.trim().is_empty());
         query_tokens = query_tokens
             .into_iter()
-            .map(|token| token.to_ascii_lowercase())
+            .map(|s| s.as_str().to_ascii_lowercase())
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect();
