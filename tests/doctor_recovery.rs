@@ -9,6 +9,18 @@ use memvid_core::{
     io::header::HeaderCodec,
 };
 
+/// Windows needs extra time for Tantivy to release file handles.
+/// Without this delay, TempDir cleanup fails with "Access is denied".
+#[cfg(target_os = "windows")]
+fn windows_file_handle_delay() {
+    std::thread::sleep(std::time::Duration::from_millis(100));
+}
+
+#[cfg(not(target_os = "windows"))]
+fn windows_file_handle_delay() {
+    // No-op on Unix systems
+}
+
 /// Test that doctor can rebuild a Tantivy-based lex index from scratch.
 #[test]
 #[cfg(feature = "lex")]
@@ -39,6 +51,8 @@ fn doctor_rebuilds_tantivy_index() {
 
         mem.commit().unwrap();
     }
+    // Windows needs extra time for Tantivy to release file handles
+    windows_file_handle_delay();
 
     // Step 2: Verify search works before doctor rebuild
     {
@@ -65,6 +79,8 @@ fn doctor_rebuilds_tantivy_index() {
         );
         assert!(results.total_hits >= 10, "Should have at least 10 hits");
     }
+    // Windows needs extra time for Tantivy to release file handles
+    windows_file_handle_delay();
 
     // Step 3: Run doctor to rebuild indexes
     {
@@ -83,8 +99,11 @@ fn doctor_rebuilds_tantivy_index() {
 
         // Doctor ran - we'll verify it worked by testing search below
         // Note: Doctor may report Failed if verification is strict, but rebuilt indexes may still work
+        // Note: Doctor may report Failed if verification is strict, but rebuilt indexes may still work
         eprintln!("Doctor status: {:?}", report.status);
     }
+    // Windows needs extra time for Tantivy to release file handles
+    windows_file_handle_delay();
 
     // Step 4: Verify search still works after doctor rebuild
     {
@@ -115,6 +134,8 @@ fn doctor_rebuilds_tantivy_index() {
             "Should return exactly 10 results (top_k)"
         );
     }
+    // Windows needs extra time for Tantivy to release file handles
+    windows_file_handle_delay();
 }
 
 /// Test that doctor correctly handles files with 0 frames.
@@ -130,6 +151,8 @@ fn doctor_handles_empty_file() {
         mem.enable_lex().unwrap();
         mem.commit().unwrap();
     }
+    // Windows needs extra time for Tantivy to release file handles
+    windows_file_handle_delay();
 
     // Run doctor on empty file (should not error)
     {
@@ -147,14 +170,19 @@ fn doctor_handles_empty_file() {
         .unwrap();
 
         // Doctor ran - we'll verify it worked by testing search below
+        // Doctor ran - we'll verify it worked by testing search below
         eprintln!("Doctor status: {:?}", report.status);
     }
+    // Windows needs extra time for Tantivy to release file handles
+    windows_file_handle_delay();
 
     // Verify file still opens after doctor
     {
         let _mem = Memvid::open_read_only(path).unwrap();
         // Note: Doctor may disable lex on empty files, so we just verify the file opens
     }
+    // Windows needs extra time for Tantivy to release file handles
+    windows_file_handle_delay();
 }
 
 /// Test that doctor can handle files with lex disabled.
@@ -226,6 +254,8 @@ fn open_file_with_tantivy_segments_enables_lex() {
 
         mem.commit().unwrap();
     }
+    // Windows needs extra time for Tantivy to release file handles
+    windows_file_handle_delay();
 
     // Step 2: Open file and verify search works (proves lex_enabled is true)
     {
@@ -252,6 +282,8 @@ fn open_file_with_tantivy_segments_enables_lex() {
         let results = result.unwrap();
         assert!(!results.hits.is_empty(), "Should find the test document");
     }
+    // Windows needs extra time for Tantivy to release file handles
+    windows_file_handle_delay();
 }
 
 /// Test that doctor rebuilds produce valid, searchable indexes.
@@ -288,6 +320,8 @@ fn doctor_rebuild_produces_searchable_index() {
 
         mem.commit().unwrap();
     }
+    // Windows needs extra time for Tantivy to release file handles
+    windows_file_handle_delay();
 
     // Run doctor rebuild
     {
@@ -305,8 +339,11 @@ fn doctor_rebuild_produces_searchable_index() {
         .unwrap();
 
         // Doctor ran - we'll verify it worked by testing search below
+        // Doctor ran - we'll verify it worked by testing search below
         eprintln!("Doctor status: {:?}", report.status);
     }
+    // Windows needs extra time for Tantivy to release file handles
+    windows_file_handle_delay();
 
     // Verify specific search queries work correctly
     {
@@ -358,6 +395,8 @@ fn doctor_rebuild_produces_searchable_index() {
 
         assert_eq!(results.hits.len(), 2, "Should find both physics documents");
     }
+    // Windows needs extra time for Tantivy to release file handles
+    windows_file_handle_delay();
 }
 
 /*
