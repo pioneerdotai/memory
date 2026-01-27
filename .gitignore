@@ -17,7 +17,7 @@ doc.mv2
 
 /target
 **/*.rs.bk
-Cargo.lock
+# Cargo.lock - now committed for reproducible CI builds
 .idea
 
 
