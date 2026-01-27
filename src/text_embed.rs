@@ -48,9 +48,9 @@ use tokenizers::{
 
 #[cfg(target_os = "macos")]
 mod stderr_suppress {
-    use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
     use std::fs::File;
     use std::io;
+    use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 
     pub struct StderrSuppressor {
         original_stderr: RawFd,

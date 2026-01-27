@@ -38,9 +38,9 @@ use crate::{MemvidError, Result, types::FrameId};
 
 #[cfg(all(feature = "clip", target_os = "macos"))]
 mod stderr_suppress {
-    use std::os::unix::io::{AsRawFd, RawFd};
     use std::fs::File;
     use std::io;
+    use std::os::unix::io::{AsRawFd, RawFd};
 
     pub struct StderrSuppressor {
         original_stderr: RawFd,
@@ -60,7 +60,10 @@ mod stderr_suppress {
                 unsafe { libc::close(original_stderr) };
                 return Err(io::Error::last_os_error());
             }
-            Ok(Self { original_stderr, dev_null })
+            Ok(Self {
+                original_stderr,
+                dev_null,
+            })
         }
     }
 
@@ -78,7 +81,9 @@ mod stderr_suppress {
 mod stderr_suppress {
     pub struct StderrSuppressor;
     impl StderrSuppressor {
-        pub fn new() -> std::io::Result<Self> { Ok(Self) }
+        pub fn new() -> std::io::Result<Self> {
+            Ok(Self)
+        }
     }
 }
 
