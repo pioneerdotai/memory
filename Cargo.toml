@@ -56,11 +56,6 @@ same-file = "1.0"
 fs-err = "3.2"
 atomic-write-file = "0.3"
 dirs-next = "2.0"
-
-# Platform-specific: libc for stderr suppression on macOS
-[target.'cfg(target_os = "macos")'.dependencies]
-libc = "0.2"
-
 smallvec = { version = "1.13", features = ["serde", "union", "const_generics", "write"] }
 tantivy = { version = "0.25.0", optional = true, default-features = false, features = ["mmap"] }
 ort = { version = "=2.0.0-rc.10", optional = true }
@@ -96,6 +91,10 @@ space = { version = "0.17", optional = true }
 
 # HTTP client for API-based embedding providers (OpenAI, etc.)
 reqwest = { version = "0.12", optional = true, default-features = false, features = ["blocking", "json", "rustls-tls"] }
+
+# Platform-specific: libc for stderr suppression on macOS
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"
 
 [features]
 default = ["lex", "pdf_extract", "simd"]
