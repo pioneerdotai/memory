@@ -31,6 +31,58 @@ use std::time::Duration;
 use crate::{MemvidError, Result, types::FrameId};
 
 // ============================================================================
+// Stderr Suppression for macOS
+// ============================================================================
+// ONNX Runtime on macOS emits "Context leak detected, msgtracer returned -1"
+// warnings from Apple's tracing infrastructure. These are harmless but noisy.
+
+#[cfg(all(feature = "clip", target_os = "macos"))]
+mod stderr_suppress {
+    use std::os::unix::io::{AsRawFd, RawFd};
+    use std::fs::File;
+    use std::io;
+
+    pub struct StderrSuppressor {
+        original_stderr: RawFd,
+        #[allow(dead_code)]
+        dev_null: File,
+    }
+
+    impl StderrSuppressor {
+        pub fn new() -> io::Result<Self> {
+            let dev_null = File::open("/dev/null")?;
+            let original_stderr = unsafe { libc::dup(2) };
+            if original_stderr == -1 {
+                return Err(io::Error::last_os_error());
+            }
+            let result = unsafe { libc::dup2(dev_null.as_raw_fd(), 2) };
+            if result == -1 {
+                unsafe { libc::close(original_stderr) };
+                return Err(io::Error::last_os_error());
+            }
+            Ok(Self { original_stderr, dev_null })
+        }
+    }
+
+    impl Drop for StderrSuppressor {
+        fn drop(&mut self) {
+            unsafe {
+                libc::dup2(self.original_stderr, 2);
+                libc::close(self.original_stderr);
+            }
+        }
+    }
+}
+
+#[cfg(all(feature = "clip", not(target_os = "macos")))]
+mod stderr_suppress {
+    pub struct StderrSuppressor;
+    impl StderrSuppressor {
+        pub fn new() -> std::io::Result<Self> { Ok(Self) }
+    }
+}
+
+// ============================================================================
 // Configuration Constants
 // ============================================================================
 
@@ -680,6 +732,9 @@ mod model {
 
             tracing::debug!(path = %vision_path.display(), "Loading CLIP vision model");
 
+            // Suppress stderr during ONNX session creation (macOS emits harmless warnings)
+            let _stderr_guard = stderr_suppress::StderrSuppressor::new().ok();
+
             let session = Session::builder()
                 .map_err(|e| ClipError::InferenceError {
                     cause: e.to_string(),
@@ -696,6 +751,8 @@ mod model {
                 .map_err(|e| ClipError::InferenceError {
                     cause: format!("Failed to load vision model: {}", e),
                 })?;
+
+            // _stderr_guard dropped here, restoring stderr
 
             *session_guard = Some(session);
             tracing::info!(model = %self.model_info.name, "CLIP vision model loaded");
@@ -718,6 +775,9 @@ mod model {
 
             tracing::debug!(path = %text_path.display(), "Loading CLIP text model");
 
+            // Suppress stderr during ONNX session creation (macOS emits harmless warnings)
+            let _stderr_guard = stderr_suppress::StderrSuppressor::new().ok();
+
             let session = Session::builder()
                 .map_err(|e| ClipError::InferenceError {
                     cause: e.to_string(),
@@ -734,6 +794,8 @@ mod model {
                 .map_err(|e| ClipError::InferenceError {
                     cause: format!("Failed to load text model: {}", e),
                 })?;
+
+            // _stderr_guard dropped here, restoring stderr
 
             *session_guard = Some(session);
             tracing::info!(model = %self.model_info.name, "CLIP text model loaded");

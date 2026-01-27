@@ -40,6 +40,98 @@ use tokenizers::{
 };
 
 // ============================================================================
+// Stderr Suppression for macOS
+// ============================================================================
+// ONNX Runtime on macOS emits "Context leak detected, msgtracer returned -1"
+// warnings from Apple's tracing infrastructure. These are harmless but noisy.
+// We suppress stderr during model loading to avoid these warnings.
+
+#[cfg(target_os = "macos")]
+mod stderr_suppress {
+    use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
+    use std::fs::File;
+    use std::io;
+
+    pub struct StderrSuppressor {
+        original_stderr: RawFd,
+        dev_null: File,
+    }
+
+    impl StderrSuppressor {
+        pub fn new() -> io::Result<Self> {
+            // Open /dev/null
+            let dev_null = File::open("/dev/null")?;
+
+            // Duplicate stderr to save it
+            let original_stderr = unsafe { libc::dup(2) };
+            if original_stderr == -1 {
+                return Err(io::Error::last_os_error());
+            }
+
+            // Redirect stderr to /dev/null
+            let result = unsafe { libc::dup2(dev_null.as_raw_fd(), 2) };
+            if result == -1 {
+                unsafe { libc::close(original_stderr) };
+                return Err(io::Error::last_os_error());
+            }
+
+            Ok(Self {
+                original_stderr,
+                dev_null,
+            })
+        }
+    }
+
+    impl Drop for StderrSuppressor {
+        fn drop(&mut self) {
+            // Restore original stderr
+            unsafe {
+                libc::dup2(self.original_stderr, 2);
+                libc::close(self.original_stderr);
+            }
+            // dev_null is closed automatically when dropped
+            let _ = &self.dev_null;
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+mod stderr_suppress {
+    pub struct StderrSuppressor;
+
+    impl StderrSuppressor {
+        pub fn new() -> std::io::Result<Self> {
+            Ok(Self)
+        }
+    }
+}
+
+// ============================================================================
+// Global ONNX Runtime Initialization (with stderr suppression on macOS)
+// ============================================================================
+// ONNX Runtime's global environment is lazily initialized on first session creation.
+// On macOS, this triggers "Context leak detected, msgtracer returned -1" warnings
+// from Apple's tracing infrastructure. We initialize early with stderr suppressed.
+
+use once_cell::sync::Lazy;
+
+static ORT_INIT: Lazy<()> = Lazy::new(|| {
+    // Suppress stderr during ONNX Runtime initialization on macOS
+    let _stderr_guard = stderr_suppress::StderrSuppressor::new().ok();
+
+    // Force ONNX Runtime initialization by creating a minimal session builder
+    // This triggers the global environment init which emits the warnings
+    let _ = Session::builder();
+
+    tracing::debug!("ONNX Runtime global environment initialized");
+});
+
+/// Ensure ONNX Runtime is initialized (call this before any ONNX operations)
+fn ensure_ort_init() {
+    Lazy::force(&ORT_INIT);
+}
+
+// ============================================================================
 // Configuration Constants
 // ============================================================================
 
@@ -413,6 +505,9 @@ impl LocalTextEmbedder {
 
     /// Load ONNX session lazily
     fn load_session(&self) -> Result<()> {
+        // Ensure ONNX Runtime is initialized (with stderr suppressed on macOS)
+        ensure_ort_init();
+
         let mut session_guard = self
             .session
             .lock()
@@ -425,6 +520,9 @@ impl LocalTextEmbedder {
         let model_path = self.ensure_model_file()?;
 
         tracing::debug!(path = %model_path.display(), "Loading text embedding model");
+
+        // Suppress stderr during ONNX session creation (macOS emits harmless warnings)
+        let _stderr_guard = stderr_suppress::StderrSuppressor::new().ok();
 
         let session = Session::builder()
             .map_err(|e| MemvidError::EmbeddingFailed {
@@ -442,6 +540,8 @@ impl LocalTextEmbedder {
             .map_err(|e| MemvidError::EmbeddingFailed {
                 reason: format!("Failed to load text embedding model: {}", e).into(),
             })?;
+
+        // _stderr_guard is dropped here, restoring stderr
 
         *session_guard = Some(session);
         tracing::info!(model = %self.model_info.name, "Text embedding model loaded");
@@ -519,6 +619,10 @@ impl LocalTextEmbedder {
         }
 
         // 2. Cache miss - generate embedding normally
+        // Suppress stderr during model loading (macOS emits harmless "Context leak detected" warnings)
+        // This must be set before load_session() to catch ONNX Runtime's global initialization
+        let _stderr_guard = stderr_suppress::StderrSuppressor::new().ok();
+
         // Ensure session and tokenizer are loaded
         self.load_session()?;
         self.load_tokenizer()?;
@@ -613,6 +717,9 @@ impl LocalTextEmbedder {
             Tensor::from_array(token_type_ids_array).map_err(|e| MemvidError::EmbeddingFailed {
                 reason: format!("Failed to create token_type_ids tensor: {}", e).into(),
             })?;
+
+        // Suppress stderr during inference (macOS emits harmless "Context leak detected" warnings)
+        let _stderr_guard = stderr_suppress::StderrSuppressor::new().ok();
 
         // Build inputs based on what the model expects
         let outputs = if input_names.len() >= 3 {
