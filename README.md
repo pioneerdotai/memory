@@ -1,6 +1,10 @@
 <!-- HEADER:START -->
-<img width="2000" height="524" alt="Social Cover (9)" src="https://github.com/user-attachments/assets/cf66f045-c8be-494b-b696-b8d7e4fb709c" />
+<img width="2000" height="524" alt="Social Cover (9)"
+     src="https://github.com/user-attachments/assets/cf66f045-c8be-494b-b696-b8d7e4fb709c" />
 <!-- HEADER:END -->
+
+<div style="height: 16px;"></div>
+
 
 <p align="center">
     <a href="https://trendshift.io/repositories/17293" target="_blank"><img src="https://trendshift.io/api/badge/repositories/17293" alt="memvid%2Fmemvid | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
