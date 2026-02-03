@@ -2,22 +2,10 @@
 <img width="2000" height="524" alt="Social Cover (9)" src="https://github.com/user-attachments/assets/cf66f045-c8be-494b-b696-b8d7e4fb709c" />
 <!-- HEADER:END -->
 
-<!-- FLAGS:START -->
 <p align="center">
- <a href="README.md">🇺🇸 English</a>
- <a href="docs/i18n/README.es.md">🇪🇸 Español</a>
- <a href="docs/i18n/README.fr.md">🇫🇷 Français</a>
- <a href="docs/i18n/README.so.md">🇸🇴 Soomaali</a>
- <a href="docs/i18n/README.ar.md">🇸🇦 العربية</a>
- <a href="docs/i18n/README.nl.md">🇧🇪/🇳🇱 Nederlands</a>
- <a href="docs/i18n/README.ko.md">🇰🇷 한국어</a>
- <a href="docs/i18n/README.ja.md">🇯🇵 日本語</a>
- <a href="docs/i18n/README.bn.md">🇧🇩 বাংলা</a>
- <a href="docs/i18n/README.cs.md">🇨🇿 Česko</a>
- <a href="docs/i18n/README.hi.md">🇮🇳 हिन्दी</a>
- <!-- Next Flag -->
+    <a href="https://trendshift.io/repositories/17293" target="_blank"><img src="https://trendshift.io/api/badge/repositories/17293" alt="memvid%2Fmemvid | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
 </p>
-<!-- FLAGS:END -->
+<!-- BADGES:END -->
 
 <p align="center">
   <strong>Memvid is a single-file memory layer for AI agents with instant retrieval and long-term memory.</strong><br/>
@@ -50,10 +38,7 @@
   <a href="https://discord.gg/2mynS7fcK7"><img src="https://img.shields.io/discord/1442910055233224745?style=flat-square&logo=discord&label=discord" alt="Discord" /></a>
 </p>
 
-<p align="center">
-    <a href="https://trendshift.io/repositories/17293" target="_blank"><img src="https://trendshift.io/api/badge/repositories/17293" alt="memvid%2Fmemvid | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
-</p>
-<!-- BADGES:END -->
+
 
 <h2 align="center">⭐️ Leave a STAR to support the project ⭐️</h2>
 
