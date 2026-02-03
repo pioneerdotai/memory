@@ -65,7 +65,7 @@ Instead of running complex RAG pipelines or server-based vector databases, Memvi
 
 The result is a model-agnostic, infrastructure-free memory layer that gives AI agents persistent, long-term memory they can carry anywhere.
 
----
+-
 
 ## What are Smart Frames?
 
