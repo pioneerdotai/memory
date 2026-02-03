@@ -65,8 +65,7 @@ Instead of running complex RAG pipelines or server-based vector databases, Memvi
 
 The result is a model-agnostic, infrastructure-free memory layer that gives AI agents persistent, long-term memory they can carry anywhere.
 
--
-
+    
 ## What are Smart Frames?
 
 Memvid draws inspiration from video encoding, not to store video, but to **organize AI memory as an append-only, ultra-efficient sequence of Smart Frames.**
@@ -84,7 +83,6 @@ This frame-based design enables:
 
 The result is a single file that behaves like a rewindable memory timeline for AI systems.
 
----
 
 ## Core Concepts
 
@@ -103,7 +101,6 @@ The result is a single file that behaves like a rewindable memory timeline for A
 -   **Codec Intelligence**
     Auto-selects and upgrades compression over time.
 
----
 
 ## Use Cases
 
@@ -121,7 +118,6 @@ Memvid is a portable, serverless memory layer that gives AI agents persistent me
 -   Auditable and Debuggable AI Workflows
 -   Custom Applications
 
----
 
 ## SDKs & CLI
 
@@ -171,7 +167,6 @@ Enable features as needed:
 memvid-core = { version = "2.0", features = ["lex", "vec", "temporal_track"] }
 ```
 
----
 
 ## Quick Start
 
@@ -341,7 +336,6 @@ let result = transcriber.transcribe_file("audio.mp3")?;
 println!("{}", result.text);
 ```
 
----
 
 ## Text Embedding Models
 
@@ -430,7 +424,7 @@ mem.set_vec_model("bge-small-en-v1.5")?;
 
 This binding is persistent. Once set, future attempts to use a different model name will fail fast with a `ModelMismatch` error.
 
----
+
 
 ## API Embeddings (OpenAI)
 
@@ -472,7 +466,7 @@ let embedder = OpenAIEmbedder::new(config)?;
 
 See `examples/openai_embedding.rs` for a complete example.
 
----
+
 
 ## File Format
 
@@ -500,7 +494,7 @@ No `.wal`, `.lock`, `.shm`, or sidecar files. Ever.
 
 See [MV2_SPEC.md](MV2_SPEC.md) for the complete file format specification.
 
----
+
 
 ## Support
 
