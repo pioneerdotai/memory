@@ -504,7 +504,7 @@ Email: contact@memvid.com
 
 ---
 
-> ⚠️ **Memvid v1 (QR-based memory) is deprecated**
+> **Memvid v1 (QR-based memory) is deprecated**
 >
 > If you are referencing QR codes, you are using outdated information.
 >
