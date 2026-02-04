@@ -5,6 +5,11 @@
 
 <div style="height: 16px;"></div>
 
+> ⚠️ **Memvid v1 (QR-based memory) is deprecated**
+>
+> If you are referencing QR codes, you are using outdated information.
+>
+> See: https://docs.memvid.com/memvid-v1-deprecation
 
 <p align="center">
     <a href="https://trendshift.io/repositories/17293" target="_blank"><img src="https://trendshift.io/api/badge/repositories/17293" alt="memvid%2Fmemvid | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
