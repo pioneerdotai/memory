@@ -28,8 +28,8 @@ use crate::types::FrameId;
 #[cfg(feature = "parallel_segments")]
 use crate::types::IndexSegmentRef;
 use crate::types::{
-    FrameStatus, Header, IndexManifests, LogicMesh, MemoriesTrack, SchemaRegistry, SegmentCatalog,
-    SketchTrack, TicketRef, Tier, Toc, VectorCompression,
+    FrameStatus, Header, IndexManifests, LogicMesh, MemoriesTrack, PutManyOpts, SchemaRegistry,
+    SegmentCatalog, SketchTrack, TicketRef, Tier, Toc, VectorCompression,
 };
 #[cfg(feature = "temporal_track")]
 use crate::{TemporalTrack, temporal_track_read};
@@ -58,6 +58,9 @@ pub struct Memvid {
     /// This lets frontends predict stable frame IDs before an explicit commit.
     pub(crate) pending_frame_inserts: u64,
     pub(crate) data_end: u64,
+    /// Cached end of the payload region (max of payload_offset + payload_length across all frames).
+    /// Updated incrementally on frame insert to avoid O(n) scans.
+    pub(crate) cached_payload_end: u64,
     pub(crate) generation: u64,
     pub(crate) lock_settings: LockSettings,
     pub(crate) lex_enabled: bool,
@@ -91,6 +94,8 @@ pub struct Memvid {
     pub(crate) schema_registry: SchemaRegistry,
     /// Whether to enforce strict schema validation on card insert.
     pub(crate) schema_strict: bool,
+    /// Active batch mode options (set by `begin_batch`, cleared by `end_batch`).
+    pub(crate) batch_opts: Option<PutManyOpts>,
     /// Active replay session being recorded (if any).
     #[cfg(feature = "replay")]
     pub(crate) active_session: Option<crate::replay::ActiveSession>,
@@ -170,6 +175,9 @@ impl Memvid {
         #[cfg(feature = "parallel_segments")]
         let manifest_wal_entries = manifest_wal.replay()?;
 
+        // No frames yet, so payload region ends at WAL boundary
+        let cached_payload_end = header.wal_offset + header.wal_size;
+
         let mut memvid = Self {
             file,
             path: path_ref.to_path_buf(),
@@ -180,6 +188,7 @@ impl Memvid {
             wal,
             pending_frame_inserts: 0,
             data_end,
+            cached_payload_end,
             generation: 0,
             lock_settings: LockSettings::default(),
             lex_enabled: cfg!(feature = "lex"), // Enable by default if feature is enabled
@@ -206,6 +215,7 @@ impl Memvid {
             sketch_track: SketchTrack::default(),
             schema_registry: SchemaRegistry::new(),
             schema_strict: false,
+            batch_opts: None,
             #[cfg(feature = "replay")]
             active_session: None,
             #[cfg(feature = "replay")]
@@ -359,6 +369,7 @@ impl Memvid {
             wal,
             pending_frame_inserts: 0,
             data_end: 0,
+            cached_payload_end: 0,
             generation,
             lock_settings: LockSettings::default(),
             lex_enabled: false,
@@ -385,12 +396,15 @@ impl Memvid {
             sketch_track: SketchTrack::default(),
             schema_registry: SchemaRegistry::new(),
             schema_strict: false,
+            batch_opts: None,
             #[cfg(feature = "replay")]
             active_session: None,
             #[cfg(feature = "replay")]
             completed_sessions: Vec::new(),
         };
         memvid.data_end = compute_data_end(&memvid.toc, &memvid.header);
+        // One-time O(n) scan to initialize cached_payload_end from existing frames
+        memvid.cached_payload_end = compute_payload_region_end(&memvid.toc, &memvid.header);
         // Use consolidated helper for lex_enabled check
         memvid.lex_enabled = has_lex_index(&memvid.toc);
         if memvid.lex_enabled {
@@ -478,6 +492,8 @@ impl Memvid {
             &toc.indexes.lex_segments,
         )));
 
+        let cached_payload_end = compute_payload_region_end(&toc, &header);
+
         let mut memvid = Self {
             file,
             path: path_ref.to_path_buf(),
@@ -488,6 +504,7 @@ impl Memvid {
             wal,
             pending_frame_inserts: 0,
             data_end,
+            cached_payload_end,
             generation,
             lock_settings: LockSettings::default(),
             lex_enabled: false,
@@ -514,6 +531,7 @@ impl Memvid {
             sketch_track: SketchTrack::default(),
             schema_registry: SchemaRegistry::new(),
             schema_strict: false,
+            batch_opts: None,
             #[cfg(feature = "replay")]
             active_session: None,
             #[cfg(feature = "replay")]
@@ -1175,6 +1193,21 @@ pub(crate) fn empty_toc() -> Toc {
         merkle_root: [0u8; 32],
         toc_checksum: [0u8; 32],
     }
+}
+
+/// Compute the end of the payload region from frame payloads only.
+/// Used once at open time to seed `cached_payload_end`.
+pub(crate) fn compute_payload_region_end(toc: &Toc, header: &Header) -> u64 {
+    let wal_region_end = header.wal_offset.saturating_add(header.wal_size);
+    let mut max_end = wal_region_end;
+    for frame in &toc.frames {
+        if frame.payload_length != 0 {
+            if let Some(end) = frame.payload_offset.checked_add(frame.payload_length) {
+                max_end = max_end.max(end);
+            }
+        }
+    }
+    max_end
 }
 
 pub(crate) fn compute_data_end(toc: &Toc, header: &Header) -> u64 {

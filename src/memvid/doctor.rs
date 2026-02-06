@@ -1458,7 +1458,7 @@ impl DoctorExecutor {
         }
 
         doctor_log!("doctor: rebuild_indexes start");
-        mem.rebuild_indexes(&[])?;
+        mem.rebuild_indexes(&[], &[])?;
         doctor_log!("doctor: rebuild_indexes done");
 
         // Preserve footer_offset that was just set by rebuild_indexes

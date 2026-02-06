@@ -36,6 +36,7 @@ pub struct EmbeddedWal {
     checkpoint_sequence: u64,
     appends_since_checkpoint: u64,
     read_only: bool,
+    skip_sync: bool,
 }
 
 impl EmbeddedWal {
@@ -80,6 +81,7 @@ impl EmbeddedWal {
             checkpoint_sequence,
             appends_since_checkpoint: 0,
             read_only,
+            skip_sync: false,
         };
 
         if !wal.read_only {
@@ -222,6 +224,23 @@ impl EmbeddedWal {
         &self.file
     }
 
+    /// Enable or disable per-entry fsync.
+    ///
+    /// When `skip` is `true`, `write_record()` will not call `sync_all()` after
+    /// each WAL append. The caller **must** call [`flush()`](Self::flush) after
+    /// the batch to ensure durability.
+    pub fn set_skip_sync(&mut self, skip: bool) {
+        self.skip_sync = skip;
+    }
+
+    /// Force an `fsync` on the underlying WAL file.
+    ///
+    /// Call this after a batch of appends performed with `skip_sync = true`
+    /// to ensure all data is durable on disk.
+    pub fn flush(&mut self) -> Result<()> {
+        self.file.sync_all().map_err(Into::into)
+    }
+
     fn initialise_sentinel(&mut self) -> Result<()> {
         self.maybe_write_sentinel()
     }
@@ -250,7 +269,10 @@ impl EmbeddedWal {
 
         // Force fsync to ensure data is durable before returning
         // Critical for preventing corruption during rapid file operations
-        self.file.sync_all()?;
+        // In batch mode (skip_sync=true), fsync is deferred to flush() for performance
+        if !self.skip_sync {
+            self.file.sync_all()?;
+        }
 
         Ok(())
     }

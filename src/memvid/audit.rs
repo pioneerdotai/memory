@@ -71,6 +71,8 @@ impl Memvid {
             as_of_frame: None,
             as_of_ts: None,
             adaptive: None,
+            acl_context: None,
+            acl_enforcement_mode: crate::types::AclEnforcementMode::Audit,
         };
 
         let response = self.ask(request, embedder)?;

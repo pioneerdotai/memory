@@ -31,7 +31,7 @@ pub use api::{
 
 #[cfg(feature = "lex")]
 use fallback::{search_with_filters_only, search_with_lex_fallback};
-use helpers::empty_search_response;
+use helpers::{build_context, empty_search_response};
 #[cfg(feature = "lex")]
 pub use tantivy::parse_content_date_to_timestamp;
 #[cfg(feature = "lex")]
@@ -255,6 +255,16 @@ impl Memvid {
                 )?
             }
         };
+
+        self.apply_acl_to_search_hits(
+            &mut response.hits,
+            request.acl_context.as_ref(),
+            request.acl_enforcement_mode,
+        )?;
+        if request.acl_enforcement_mode == crate::types::AclEnforcementMode::Enforce {
+            response.total_hits = response.hits.len();
+            response.context = build_context(&response.hits);
+        }
 
         // Enrich hits with Logic-Mesh entities if mesh is available
         if self.has_logic_mesh() {

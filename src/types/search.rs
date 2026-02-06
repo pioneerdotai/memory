@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::acl::{AclContext, AclEnforcementMode};
 use super::common::FrameId;
 #[cfg(feature = "temporal_track")]
 use super::frame::AnchorSource;
@@ -65,6 +66,12 @@ pub struct SearchRequest {
     #[serde(default)]
     /// Disable sketch pre-filtering for this query.
     pub no_sketch: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Optional caller identity context used for ACL filtering.
+    pub acl_context: Option<AclContext>,
+    #[serde(default)]
+    /// ACL evaluation mode (`audit` or `enforce`).
+    pub acl_enforcement_mode: AclEnforcementMode,
 }
 
 /// A single ranked hit with snippet metadata.

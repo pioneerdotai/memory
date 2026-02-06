@@ -54,8 +54,8 @@ use crate::triplet::TripletExtractor;
 #[cfg(feature = "lex")]
 use crate::types::TantivySegmentDescriptor;
 use crate::types::{
-    CanonicalEncoding, DocMetadata, Frame, FrameId, FrameRole, FrameStatus, PutOptions,
-    SegmentCommon, TextChunkManifest, Tier,
+    CanonicalEncoding, DocMetadata, Frame, FrameId, FrameRole, FrameStatus, PutManyOpts,
+    PutOptions, SegmentCommon, TextChunkManifest, Tier,
 };
 #[cfg(feature = "parallel_segments")]
 use crate::types::{IndexSegmentRef, SegmentKind, SegmentSpan, SegmentStats};
@@ -561,43 +561,7 @@ impl Memvid {
     }
 
     fn payload_region_end(&self) -> u64 {
-        let wal_region_end = self.header.wal_offset + self.header.wal_size;
-        let frames_with_payload: Vec<_> = self
-            .toc
-            .frames
-            .iter()
-            .filter(|frame| frame.payload_length != 0)
-            .collect();
-
-        tracing::info!(
-            "payload_region_end: found {} frames with payloads out of {} total frames, wal_region_end={}",
-            frames_with_payload.len(),
-            self.toc.frames.len(),
-            wal_region_end
-        );
-
-        for (idx, frame) in frames_with_payload.iter().enumerate().take(3) {
-            tracing::info!(
-                "  frame[{}]: id={} offset={} length={} status={:?}",
-                idx,
-                frame.id,
-                frame.payload_offset,
-                frame.payload_length,
-                frame.status
-            );
-        }
-
-        let result = frames_with_payload
-            .iter()
-            .fold(wal_region_end, |max_end, frame| {
-                match frame.payload_offset.checked_add(frame.payload_length) {
-                    Some(end) => max_end.max(end),
-                    None => max_end,
-                }
-            });
-
-        tracing::info!("payload_region_end: returning {}", result);
-        result
+        self.cached_payload_end
     }
 
     fn append_wal_entry(&mut self, payload: &[u8]) -> Result<u64> {
@@ -787,6 +751,172 @@ impl Memvid {
         self.commit_with_options(CommitOptions::new(CommitMode::Full))
     }
 
+    /// Enter batch mode for high-throughput ingestion.
+    ///
+    /// While batch mode is active:
+    /// - WAL fsync is skipped on every append (controlled by `opts.skip_sync`)
+    /// - Auto-checkpoint is suppressed (controlled by `opts.disable_auto_checkpoint`)
+    /// - Compression level is lowered (controlled by `opts.compression_level`)
+    /// - WAL is pre-sized to avoid expensive mid-batch growth (controlled by `opts.wal_pre_size_bytes`)
+    ///
+    /// **You must call [`end_batch()`](Self::end_batch) when done** to flush the WAL
+    /// and restore normal operation.
+    pub fn begin_batch(&mut self, opts: PutManyOpts) -> Result<()> {
+        if opts.wal_pre_size_bytes > 0 {
+            self.ensure_wal_capacity(opts.wal_pre_size_bytes)?;
+        }
+        self.wal.set_skip_sync(opts.skip_sync);
+        self.batch_opts = Some(opts);
+        Ok(())
+    }
+
+    /// Pre-grow the embedded WAL to at least `min_bytes` in a single operation.
+    ///
+    /// When `disable_auto_checkpoint` is true, all WAL entries accumulate for
+    /// the entire batch.  If the region is too small it must grow repeatedly,
+    /// and every growth shifts **all** payload data — O(file_size) per shift.
+    ///
+    /// Calling this once before the batch eliminates all mid-batch shifts.
+    /// On a freshly-created file the shift is essentially free (no data to move).
+    fn ensure_wal_capacity(&mut self, min_bytes: u64) -> Result<()> {
+        if min_bytes <= self.header.wal_size {
+            return Ok(());
+        }
+        // Jump directly to the target size (next power of two for alignment)
+        let target = min_bytes.next_power_of_two();
+        let delta = target.saturating_sub(self.header.wal_size);
+        if delta == 0 {
+            return Ok(());
+        }
+
+        tracing::info!(
+            current_wal = self.header.wal_size,
+            target_wal = target,
+            delta,
+            "pre-sizing WAL for batch mode"
+        );
+
+        self.shift_data_for_wal_growth(delta)?;
+        self.header.wal_size = target;
+        self.header.footer_offset = self.header.footer_offset.saturating_add(delta);
+        self.data_end = self.data_end.saturating_add(delta);
+        self.adjust_offsets_after_wal_growth(delta);
+
+        let catalog_end = self.catalog_data_end();
+        self.header.footer_offset = catalog_end
+            .max(self.header.footer_offset)
+            .max(self.data_end);
+
+        self.rewrite_toc_footer()?;
+        self.header.toc_checksum = self.toc.toc_checksum;
+        crate::persist_header(&mut self.file, &self.header)?;
+        self.file.sync_all()?;
+        self.wal = EmbeddedWal::open(&self.file, &self.header)?;
+        Ok(())
+    }
+
+    /// Exit batch mode, flushing the WAL and restoring per-entry fsync.
+    ///
+    /// This performs a single `fsync` for all appends accumulated during the batch,
+    /// then clears batch options so subsequent puts use default behaviour.
+    pub fn end_batch(&mut self) -> Result<()> {
+        // Single fsync for the entire batch
+        self.wal.flush()?;
+        self.wal.set_skip_sync(false);
+        self.batch_opts = None;
+        Ok(())
+    }
+
+    /// Commit pending WAL records without rebuilding any indexes.
+    ///
+    /// Optimized for bulk ingestion: payloads and frame metadata are persisted,
+    /// but time index, Tantivy, vec index, and other index structures are NOT
+    /// rebuilt. The caller must do a full `commit()` (which triggers
+    /// `rebuild_indexes()`) after all batches are written.
+    ///
+    /// Skips the staging lock for performance — not crash-safe.
+    pub fn commit_skip_indexes(&mut self) -> Result<()> {
+        self.ensure_writable()?;
+        let records = self.wal.pending_records()?;
+        if records.is_empty() && !self.dirty {
+            return Ok(());
+        }
+        self.commit_skip_indexes_inner(records)
+    }
+
+    fn commit_skip_indexes_inner(&mut self, records: Vec<WalRecord>) -> Result<()> {
+        self.generation = self.generation.wrapping_add(1);
+
+        // Temporarily remove Tantivy engine to avoid per-frame indexing work
+        // and disk reads in apply_records(). We won't persist Tantivy state anyway.
+        #[cfg(feature = "lex")]
+        let tantivy_backup = self.tantivy.take();
+
+        let result = self.apply_records(records);
+
+        // Restore Tantivy engine (unchanged — no dirty frames added)
+        #[cfg(feature = "lex")]
+        {
+            self.tantivy = tantivy_backup;
+            self.tantivy_dirty = false;
+        }
+
+        let _delta = result?;
+
+        // Set footer_offset to right after payloads (no index data written)
+        self.header.footer_offset = self.data_end;
+
+        // Clear stale index manifests so next open() doesn't try to load
+        // garbage data. Indexes will be rebuilt in the finalize step.
+        self.toc.time_index = None;
+        self.toc.indexes.lex_segments.clear();
+        // Preserve vec manifest (holds dimension info) but zero out data pointers
+        if let Some(vec) = self.toc.indexes.vec.as_mut() {
+            vec.bytes_offset = 0;
+            vec.bytes_length = 0;
+            vec.vector_count = 0;
+        }
+        self.toc.indexes.lex = None;
+        self.toc.indexes.clip = None;
+        self.toc.segment_catalog.lex_segments.clear();
+        self.toc.segment_catalog.vec_segments.clear();
+        self.toc.segment_catalog.time_segments.clear();
+        self.toc.segment_catalog.tantivy_segments.clear();
+        #[cfg(feature = "temporal_track")]
+        {
+            self.toc.temporal_track = None;
+            self.toc.segment_catalog.temporal_segments.clear();
+        }
+        self.toc.memories_track = None;
+        self.toc.logic_mesh = None;
+        self.toc.sketch_track = None;
+
+        self.rewrite_toc_footer()?;
+        self.header.toc_checksum = self.toc.toc_checksum;
+        self.wal.record_checkpoint(&mut self.header)?;
+        self.header.toc_checksum = self.toc.toc_checksum;
+        crate::persist_header(&mut self.file, &self.header)?;
+        self.file.sync_all()?;
+        self.pending_frame_inserts = 0;
+        self.dirty = false;
+        Ok(())
+    }
+
+    /// Rebuild all indexes (time, Tantivy, vec) and persist the TOC.
+    ///
+    /// Use after bulk ingestion with `commit_skip_indexes()` to build
+    /// all search indexes in one O(n) pass. This is the complement to
+    /// `commit_skip_indexes()` — call it once after all batches are done.
+    pub fn finalize_indexes(&mut self) -> Result<()> {
+        self.ensure_writable()?;
+        self.rebuild_indexes(&[], &[])?;
+        self.rewrite_toc_footer()?;
+        self.header.toc_checksum = self.toc.toc_checksum;
+        crate::persist_header(&mut self.file, &self.header)?;
+        self.file.sync_all()?;
+        Ok(())
+    }
+
     fn commit_from_records(&mut self, records: Vec<WalRecord>, _mode: CommitMode) -> Result<()> {
         self.generation = self.generation.wrapping_add(1);
 
@@ -804,7 +934,7 @@ impl Memvid {
                 clip_needs_persist = clip_needs_persist,
                 "commit applied delta"
             );
-            self.rebuild_indexes(&delta.inserted_embeddings)?;
+            self.rebuild_indexes(&delta.inserted_embeddings, &delta.inserted_frames)?;
             indexes_rebuilt = true;
         }
 
@@ -1014,7 +1144,7 @@ impl Memvid {
                 );
             } else {
                 // Fall back to sequential rebuild if no segments were generated
-                self.rebuild_indexes(&delta.inserted_embeddings)?;
+                self.rebuild_indexes(&delta.inserted_embeddings, &delta.inserted_frames)?;
                 indexes_rebuilt = true;
             }
         }
@@ -1082,7 +1212,7 @@ impl Memvid {
                 inserted_time_entries = delta.inserted_time_entries.len(),
                 "recover applied delta"
             );
-            self.rebuild_indexes(&delta.inserted_embeddings)?;
+            self.rebuild_indexes(&delta.inserted_embeddings, &delta.inserted_frames)?;
         } else if self.tantivy_index_pending() {
             self.flush_tantivy()?;
         }
@@ -1184,6 +1314,8 @@ impl Memvid {
                                 };
                             let payload_offset = data_cursor;
                             data_cursor += payload_length;
+                            // Keep cached_payload_end in sync (monotonically increasing)
+                            self.cached_payload_end = self.cached_payload_end.max(data_cursor);
                             (
                                 payload_offset,
                                 payload_length,
@@ -1927,7 +2059,11 @@ impl Memvid {
         self.remove_frame_from_indexes(frame_id)
     }
 
-    pub(crate) fn rebuild_indexes(&mut self, new_vec_docs: &[(FrameId, Vec<f32>)]) -> Result<()> {
+    pub(crate) fn rebuild_indexes(
+        &mut self,
+        new_vec_docs: &[(FrameId, Vec<f32>)],
+        inserted_frame_ids: &[FrameId],
+    ) -> Result<()> {
         if self.toc.frames.is_empty() && !self.lex_enabled && !self.vec_enabled {
             return Ok(());
         }
@@ -1985,22 +2121,83 @@ impl Memvid {
         if self.lex_enabled {
             #[cfg(feature = "lex")]
             {
-                // Clear embedded storage to avoid carrying stale segments between rebuilds.
-                if let Ok(mut storage) = self.lex_storage.write() {
-                    storage.clear();
-                    storage.set_generation(0);
-                }
-
-                // Initialize Tantivy engine (loads existing segments if any)
-                self.init_tantivy()?;
-
-                if let Some(mut engine) = self.tantivy.take() {
-                    self.rebuild_tantivy_engine(&mut engine)?;
-                    self.tantivy = Some(engine);
+                if self.tantivy_dirty {
+                    // instant_index was used: frames were added to Tantivy with WAL
+                    // sequence numbers as IDs, which don't match the actual frame IDs
+                    // assigned during apply_records(). Must do a full rebuild to fix IDs.
+                    if let Ok(mut storage) = self.lex_storage.write() {
+                        storage.clear();
+                        storage.set_generation(0);
+                    }
+                    self.init_tantivy()?;
+                    if let Some(mut engine) = self.tantivy.take() {
+                        self.rebuild_tantivy_engine(&mut engine)?;
+                        self.tantivy = Some(engine);
+                    } else {
+                        return Err(MemvidError::InvalidToc {
+                            reason: "tantivy engine missing during rebuild".into(),
+                        });
+                    }
+                } else if self.tantivy.is_some() && !inserted_frame_ids.is_empty() {
+                    // Incremental path: engine exists (from open() or previous commit),
+                    // instant_index was NOT used so no wrong IDs. Just add new frames.
+                    // This is O(batch_size) — the key optimization for bulk ingestion.
+                    //
+                    // Collect frames + text first to avoid borrow conflicts with engine.
+                    let max_payload = crate::memvid::search::max_index_payload();
+                    let mut prepared_docs: Vec<(Frame, String)> = Vec::new();
+                    for &frame_id in inserted_frame_ids {
+                        let frame = match self.toc.frames.get(frame_id as usize) {
+                            Some(f) => f.clone(),
+                            None => continue,
+                        };
+                        if frame.status != FrameStatus::Active {
+                            continue;
+                        }
+                        if let Some(search_text) = frame.search_text.clone() {
+                            if !search_text.trim().is_empty() {
+                                prepared_docs.push((frame, search_text));
+                                continue;
+                            }
+                        }
+                        let mime = frame
+                            .metadata
+                            .as_ref()
+                            .and_then(|m| m.mime.as_deref())
+                            .unwrap_or("application/octet-stream");
+                        if !crate::memvid::search::is_text_indexable_mime(mime) {
+                            continue;
+                        }
+                        if frame.payload_length > max_payload {
+                            continue;
+                        }
+                        let text = self.frame_search_text(&frame)?;
+                        if !text.trim().is_empty() {
+                            prepared_docs.push((frame, text));
+                        }
+                    }
+                    if let Some(engine) = self.tantivy.as_mut() {
+                        for (frame, text) in &prepared_docs {
+                            engine.add_frame(frame, text)?;
+                        }
+                        engine.commit()?;
+                    }
                 } else {
-                    return Err(MemvidError::InvalidToc {
-                        reason: "tantivy engine missing during doctor rebuild".into(),
-                    });
+                    // Full rebuild path: no engine or no new frames (e.g., doctor repair).
+                    // Clear embedded storage to avoid carrying stale segments between rebuilds.
+                    if let Ok(mut storage) = self.lex_storage.write() {
+                        storage.clear();
+                        storage.set_generation(0);
+                    }
+                    self.init_tantivy()?;
+                    if let Some(mut engine) = self.tantivy.take() {
+                        self.rebuild_tantivy_engine(&mut engine)?;
+                        self.tantivy = Some(engine);
+                    } else {
+                        return Err(MemvidError::InvalidToc {
+                            reason: "tantivy engine missing during rebuild".into(),
+                        });
+                    }
                 }
 
                 // Set lex_enabled to ensure it persists
@@ -2856,7 +3053,7 @@ impl Memvid {
             self.tantivy_dirty = false;
         }
 
-        self.rebuild_indexes(&[])?;
+        self.rebuild_indexes(&[], &[])?;
         self.file.sync_all()?;
         Ok(())
     }
@@ -3072,7 +3269,11 @@ impl Memvid {
         let payload_bytes = encode_to_vec(WalEntry::Frame(tombstone), wal_config())?;
         let seq = self.append_wal_entry(&payload_bytes)?;
         self.dirty = true;
-        if self.wal.should_checkpoint() {
+        let suppress_checkpoint = self
+            .batch_opts
+            .as_ref()
+            .is_some_and(|o| o.disable_auto_checkpoint);
+        if !suppress_checkpoint && self.wal.should_checkpoint() {
             self.commit()?;
         }
         info!("frame_delete frame_id={frame_id} seq={seq}");
@@ -3180,7 +3381,11 @@ impl Memvid {
         let mut prepared_payload: Option<(Vec<u8>, CanonicalEncoding, Option<u64>)> = None;
         let payload_tail = self.payload_region_end();
         let projected = if let Some(bytes) = payload {
-            let (prepared, encoding, length) = prepare_canonical_payload(bytes)?;
+            let (prepared, encoding, length) = if let Some(ref opts) = self.batch_opts {
+                prepare_canonical_payload_with_level(bytes, opts.compression_level)?
+            } else {
+                prepare_canonical_payload(bytes)?
+            };
             let len = prepared.len();
             prepared_payload = Some((prepared, encoding, length));
             payload_tail.saturating_add(len as u64)
@@ -3254,7 +3459,11 @@ impl Memvid {
             } else if let Some((prepared, encoding, length)) = prepared_payload.take() {
                 (prepared, encoding, length, None)
             } else if let Some(bytes) = payload {
-                let (prepared, encoding, length) = prepare_canonical_payload(bytes)?;
+                let (prepared, encoding, length) = if let Some(ref opts) = self.batch_opts {
+                    prepare_canonical_payload_with_level(bytes, opts.compression_level)?
+                } else {
+                    prepare_canonical_payload(bytes)?
+                };
                 (prepared, encoding, length, None)
             } else if let Some(frame) = reuse_frame.as_ref() {
                 (
@@ -3698,7 +3907,11 @@ impl Memvid {
         }
 
         self.dirty = true;
-        if self.wal.should_checkpoint() {
+        let suppress_checkpoint = self
+            .batch_opts
+            .as_ref()
+            .is_some_and(|o| o.disable_auto_checkpoint);
+        if !suppress_checkpoint && self.wal.should_checkpoint() {
             self.commit()?;
         }
 
@@ -3826,8 +4039,23 @@ pub(crate) struct WalEntryData {
 pub(crate) fn prepare_canonical_payload(
     payload: &[u8],
 ) -> Result<(Vec<u8>, CanonicalEncoding, Option<u64>)> {
+    prepare_canonical_payload_with_level(payload, 3)
+}
+
+pub(crate) fn prepare_canonical_payload_with_level(
+    payload: &[u8],
+    level: i32,
+) -> Result<(Vec<u8>, CanonicalEncoding, Option<u64>)> {
+    if level == 0 {
+        // No compression — store as plain text
+        return Ok((
+            payload.to_vec(),
+            CanonicalEncoding::Plain,
+            Some(payload.len() as u64),
+        ));
+    }
     if std::str::from_utf8(payload).is_ok() {
-        let compressed = zstd::encode_all(std::io::Cursor::new(payload), 3)?;
+        let compressed = zstd::encode_all(std::io::Cursor::new(payload), level)?;
         Ok((
             compressed,
             CanonicalEncoding::Zstd,

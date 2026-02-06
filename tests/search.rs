@@ -76,6 +76,8 @@ fn search_basic_query() {
             as_of_frame: None,
             as_of_ts: None,
             no_sketch: false,
+            acl_context: None,
+            acl_enforcement_mode: memvid_core::types::AclEnforcementMode::Audit,
         })
         .unwrap();
 
@@ -111,6 +113,8 @@ fn search_multiple_results() {
             as_of_frame: None,
             as_of_ts: None,
             no_sketch: false,
+            acl_context: None,
+            acl_enforcement_mode: memvid_core::types::AclEnforcementMode::Audit,
         })
         .unwrap();
 
@@ -163,6 +167,8 @@ fn search_respects_top_k() {
             as_of_frame: None,
             as_of_ts: None,
             no_sketch: false,
+            acl_context: None,
+            acl_enforcement_mode: memvid_core::types::AclEnforcementMode::Audit,
         })
         .unwrap();
 
@@ -194,6 +200,8 @@ fn search_with_scope() {
             as_of_frame: None,
             as_of_ts: None,
             no_sketch: false,
+            acl_context: None,
+            acl_enforcement_mode: memvid_core::types::AclEnforcementMode::Audit,
         })
         .unwrap();
 
@@ -229,6 +237,8 @@ fn search_returns_snippets() {
             as_of_frame: None,
             as_of_ts: None,
             no_sketch: false,
+            acl_context: None,
+            acl_enforcement_mode: memvid_core::types::AclEnforcementMode::Audit,
         })
         .unwrap();
 
@@ -262,6 +272,8 @@ fn search_no_results() {
             as_of_frame: None,
             as_of_ts: None,
             no_sketch: false,
+            acl_context: None,
+            acl_enforcement_mode: memvid_core::types::AclEnforcementMode::Audit,
         })
         .unwrap();
 
@@ -295,6 +307,8 @@ fn search_empty_memory() {
             as_of_frame: None,
             as_of_ts: None,
             no_sketch: false,
+            acl_context: None,
+            acl_enforcement_mode: memvid_core::types::AclEnforcementMode::Audit,
         })
         .unwrap();
 

@@ -1,5 +1,6 @@
 //! Public types exposed by the `memvid-core` crate.
 
+pub mod acl;
 pub mod adaptive;
 pub mod ask;
 pub mod audit;
@@ -104,6 +105,10 @@ pub use structure::{
     StructuredHeading, StructuredList, StructuredRow, StructuredTable, TableChunkingStrategy,
 };
 // Adaptive retrieval types for dynamic result set sizing
+pub use acl::{
+    ACL_POLICY_VERSION_KEY, ACL_READ_GROUPS_KEY, ACL_READ_PRINCIPALS_KEY, ACL_READ_ROLES_KEY,
+    ACL_RESOURCE_ID_KEY, ACL_TENANT_ID_KEY, ACL_VISIBILITY_KEY, AclContext, AclEnforcementMode,
+};
 pub use adaptive::{
     AdaptiveConfig, AdaptiveResult, AdaptiveStats, CutoffStrategy, EmbeddingQualityStats,
     compute_embedding_quality, find_adaptive_cutoff, normalize_scores,

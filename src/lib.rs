@@ -191,14 +191,9 @@ pub use signature::{
     parse_ed25519_public_key_base64, verify_model_manifest, verify_ticket_signature,
 };
 pub use text::{NormalizedText, normalize_text, truncate_at_grapheme_boundary};
-#[cfg(feature = "temporal_track")]
 pub use types::{
-    AnchorSource, SearchHitTemporal, SearchHitTemporalAnchor, SearchHitTemporalMention,
-    TEMPORAL_TRACK_FLAG_HAS_ANCHORS, TEMPORAL_TRACK_FLAG_HAS_MENTIONS, TemporalAnchor,
-    TemporalCapabilities, TemporalFilter, TemporalMention, TemporalMentionFlags,
-    TemporalMentionKind, TemporalTrack, TemporalTrackManifest,
-};
-pub use types::{
+    ACL_POLICY_VERSION_KEY, ACL_READ_GROUPS_KEY, ACL_READ_PRINCIPALS_KEY, ACL_READ_ROLES_KEY,
+    ACL_RESOURCE_ID_KEY, ACL_TENANT_ID_KEY, ACL_VISIBILITY_KEY, AclContext, AclEnforcementMode,
     AskCitation, AskMode, AskRequest, AskResponse, AskRetriever, AskStats, AudioSegmentMetadata,
     AuditOptions, AuditReport, CanonicalEncoding, DOCTOR_PLAN_VERSION, DocAudioMetadata,
     DocExifMetadata, DocGpsMetadata, DocMetadata, DoctorActionDetail, DoctorActionKind,
@@ -208,13 +203,20 @@ pub use types::{
     EmbeddingIdentity, EmbeddingIdentityCount, EmbeddingIdentitySummary, Frame, FrameId, FrameRole,
     FrameStatus, Header, IndexManifests, LexIndexManifest, LexSegmentDescriptor,
     MEMVID_EMBEDDING_DIMENSION_KEY, MEMVID_EMBEDDING_MODEL_KEY, MEMVID_EMBEDDING_NORMALIZED_KEY,
-    MEMVID_EMBEDDING_PROVIDER_KEY, MediaManifest, MemvidHandle, Open, PutOptions,
+    MEMVID_EMBEDDING_PROVIDER_KEY, MediaManifest, MemvidHandle, Open, PutManyOpts, PutOptions,
     PutOptionsBuilder, Sealed, SearchEngineKind, SearchHit, SearchHitMetadata, SearchParams,
     SearchRequest, SearchResponse, SegmentCatalog, SegmentCommon, SegmentCompression, SegmentMeta,
     SegmentSpan, SourceSpan, Stats, TextChunkManifest, TextChunkRange, Ticket, TicketRef, Tier,
     TimeIndexManifest, TimeSegmentDescriptor, TimelineEntry, TimelineQuery, TimelineQueryBuilder,
     Toc, VecEmbedder, VecIndexManifest, VecSegmentDescriptor, VectorCompression, VerificationCheck,
     VerificationReport, VerificationStatus,
+};
+#[cfg(feature = "temporal_track")]
+pub use types::{
+    AnchorSource, SearchHitTemporal, SearchHitTemporalAnchor, SearchHitTemporalMention,
+    TEMPORAL_TRACK_FLAG_HAS_ANCHORS, TEMPORAL_TRACK_FLAG_HAS_MENTIONS, TemporalAnchor,
+    TemporalCapabilities, TemporalFilter, TemporalMention, TemporalMentionFlags,
+    TemporalMentionKind, TemporalTrack, TemporalTrackManifest,
 };
 // Memory card types for structured memory extraction and storage
 pub use types::{
@@ -693,6 +695,8 @@ mod tests {
                 as_of_frame: None,
                 as_of_ts: None,
                 no_sketch: false,
+                acl_context: None,
+                acl_enforcement_mode: crate::types::AclEnforcementMode::Audit,
             };
             let response = mem.search(request).expect("search");
             assert_eq!(response.hits.len(), 1);
@@ -712,6 +716,8 @@ mod tests {
                 as_of_frame: None,
                 as_of_ts: None,
                 no_sketch: false,
+                acl_context: None,
+                acl_enforcement_mode: crate::types::AclEnforcementMode::Audit,
             };
             let response = reopened.search(request).expect("search reopened");
             assert_eq!(response.hits.len(), 1);
@@ -783,6 +789,8 @@ mod tests {
                     as_of_frame: None,
                     as_of_ts: None,
                     no_sketch: false,
+                    acl_context: None,
+                    acl_enforcement_mode: crate::types::AclEnforcementMode::Audit,
                 })
                 .expect("search");
 
@@ -844,6 +852,8 @@ mod tests {
                     as_of_frame: None,
                     as_of_ts: None,
                     no_sketch: false,
+                    acl_context: None,
+                    acl_enforcement_mode: crate::types::AclEnforcementMode::Audit,
                 })
                 .expect("search");
 
@@ -928,6 +938,8 @@ mod tests {
                     as_of_frame: None,
                     as_of_ts: None,
                     no_sketch: false,
+                    acl_context: None,
+                    acl_enforcement_mode: crate::types::AclEnforcementMode::Audit,
                 })
                 .expect("uri search");
             assert_eq!(uri_response.engine, SearchEngineKind::Tantivy);
@@ -951,6 +963,8 @@ mod tests {
                     as_of_frame: None,
                     as_of_ts: None,
                     no_sketch: false,
+                    acl_context: None,
+                    acl_enforcement_mode: crate::types::AclEnforcementMode::Audit,
                 })
                 .expect("scope search");
             assert_eq!(scope_response.engine, SearchEngineKind::Tantivy);
@@ -1004,6 +1018,8 @@ mod tests {
                     as_of_frame: None,
                     as_of_ts: None,
                     no_sketch: false,
+                    acl_context: None,
+                    acl_enforcement_mode: crate::types::AclEnforcementMode::Audit,
                 })
                 .expect("page one");
             assert_eq!(first_page.engine, SearchEngineKind::Tantivy);
@@ -1027,6 +1043,8 @@ mod tests {
                     as_of_frame: None,
                     as_of_ts: None,
                     no_sketch: false,
+                    acl_context: None,
+                    acl_enforcement_mode: crate::types::AclEnforcementMode::Audit,
                 })
                 .expect("page two");
             assert_eq!(second_page.engine, SearchEngineKind::Tantivy);
@@ -1068,6 +1086,8 @@ mod tests {
                     as_of_frame: None,
                     as_of_ts: None,
                     no_sketch: false,
+                    acl_context: None,
+                    acl_enforcement_mode: crate::types::AclEnforcementMode::Audit,
                 })
                 .expect("search with tantivy");
 
@@ -1150,7 +1170,7 @@ mod tests {
                 mem.put_bytes(b"repair").expect("put");
                 mem.commit().expect("commit");
                 // Explicitly rebuild indexes to create time_index (new implementation requires this)
-                mem.rebuild_indexes(&[]).expect("rebuild");
+                mem.rebuild_indexes(&[], &[]).expect("rebuild");
                 mem.commit().expect("commit after rebuild");
                 println!(
                     "test: post-commit header footer_offset={}",

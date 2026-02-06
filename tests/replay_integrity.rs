@@ -44,6 +44,8 @@ fn replay_save_does_not_corrupt_lex_index() {
                 as_of_frame: None,
                 as_of_ts: None,
                 no_sketch: false,
+                acl_context: None,
+                acl_enforcement_mode: memvid_core::types::AclEnforcementMode::Audit,
             })
             .unwrap();
         mem.end_session().unwrap();
@@ -69,6 +71,8 @@ fn replay_save_does_not_corrupt_lex_index() {
             as_of_frame: None,
             as_of_ts: None,
             no_sketch: false,
+            acl_context: None,
+            acl_enforcement_mode: memvid_core::types::AclEnforcementMode::Audit,
         })
         .unwrap();
 

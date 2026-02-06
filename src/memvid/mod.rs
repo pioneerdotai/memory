@@ -1,5 +1,6 @@
 //! Core `Memvid` type orchestrating `.mv2` lifecycle and mutations.
 
+mod acl;
 pub mod ask;
 pub mod audit;
 #[cfg(feature = "parallel_segments")]

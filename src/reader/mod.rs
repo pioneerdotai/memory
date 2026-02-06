@@ -29,6 +29,7 @@ pub enum DocumentFormat {
     PlainText,
     Markdown,
     Html,
+    Jsonl,
     Unknown,
 }
 
@@ -44,6 +45,7 @@ impl DocumentFormat {
             Self::PlainText => "text",
             Self::Markdown => "markdown",
             Self::Html => "html",
+            Self::Jsonl => "jsonl",
             Self::Unknown => "unknown",
         }
     }

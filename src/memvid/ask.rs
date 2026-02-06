@@ -105,6 +105,8 @@ impl Memvid {
             // Disable sketch pre-filter for ask queries - accuracy is more important than speed
             // SimHash can filter out semantically relevant documents that use different wording
             no_sketch: true,
+            acl_context: request.acl_context.clone(),
+            acl_enforcement_mode: request.acl_enforcement_mode,
         };
 
         // Pre-compute the query embedding once so we can reuse it for vector recall and semantic re-rank
@@ -365,6 +367,15 @@ impl Memvid {
         // Apply correction boost AFTER all other reranking - corrections should have final priority
         // This ensures user corrections override all other ranking signals
         promote_corrections(self, &mut retrieval.hits)?;
+
+        self.apply_acl_to_search_hits(
+            &mut retrieval.hits,
+            request.acl_context.as_ref(),
+            request.acl_enforcement_mode,
+        )?;
+        if request.acl_enforcement_mode == crate::types::AclEnforcementMode::Enforce {
+            retrieval.total_hits = retrieval.hits.len();
+        }
 
         retrieval.context = build_context(&retrieval.hits);
 
@@ -1332,12 +1343,14 @@ fn vector_hits(
     // Use adaptive retrieval if configured
     if let Some(ref adaptive_config) = request.adaptive {
         if adaptive_config.enabled {
-            let result = memvid.search_adaptive(
+            let result = memvid.search_adaptive_acl(
                 &request.question,
                 query_embedding,
                 adaptive_config.clone(),
                 request.snippet_chars,
                 request.scope.as_deref(),
+                request.acl_context.as_ref(),
+                request.acl_enforcement_mode,
             )?;
             tracing::debug!(
                 "adaptive retrieval: {} -> {} results ({})",
@@ -1349,12 +1362,14 @@ fn vector_hits(
         }
     }
 
-    let vec_response = memvid.vec_search_with_embedding(
+    let vec_response = memvid.vec_search_with_embedding_acl(
         &request.question,
         query_embedding,
         limit,
         request.snippet_chars,
         request.scope.as_deref(),
+        request.acl_context.as_ref(),
+        request.acl_enforcement_mode,
     )?;
 
     Ok(vec_response.hits)
@@ -1446,7 +1461,8 @@ fn promote_corrections(memvid: &mut Memvid, hits: &mut Vec<SearchHit>) -> Result
     // Sort corrections by timestamp DESC (newest first), then by boost DESC
     corrections.sort_by(|a, b| {
         b.1.cmp(&a.1) // timestamp descending (newest first)
-            .then_with(|| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal)) // boost descending
+            .then_with(|| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal))
+        // boost descending
     });
 
     tracing::debug!(

@@ -344,6 +344,19 @@ pub struct PutManyOpts {
     /// Run rules-based memory extraction after ingestion (default: true).
     /// Extracts facts, preferences, events, relationships from ingested content.
     pub enable_enrichment: bool,
+
+    /// Pre-allocate the embedded WAL to this many bytes before the batch starts.
+    ///
+    /// When `disable_auto_checkpoint` is true, WAL entries accumulate for the
+    /// entire batch. If the WAL is too small it must grow repeatedly, shifting
+    /// all payload data each time — an O(file_size) operation per growth.
+    ///
+    /// Setting this to `num_entries * avg_entry_bytes` (e.g. 10 KB per entry
+    /// with 1536-dim embeddings, 2 KB without) eliminates mid-batch WAL growth
+    /// and can provide a **3-5× speedup** for large batches.
+    ///
+    /// 0 (default): no pre-sizing — WAL grows on demand.
+    pub wal_pre_size_bytes: u64,
 }
 
 impl Default for PutManyOpts {
@@ -357,6 +370,7 @@ impl Default for PutManyOpts {
             extract_dates: false,          // Fast by default
             no_raw: true,                  // Text-only mode by default for space efficiency
             enable_enrichment: true,       // Enrichment enabled by default
+            wal_pre_size_bytes: 0,         // No pre-sizing by default
         }
     }
 }

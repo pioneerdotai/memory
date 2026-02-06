@@ -73,6 +73,8 @@ fn bench_query_latency(c: &mut Criterion) {
                         as_of_frame: None,
                         as_of_ts: None,
                         no_sketch: false,
+                        acl_context: None,
+                        acl_enforcement_mode: memvid_core::types::AclEnforcementMode::Audit,
                     })
                     .unwrap();
                 total += start.elapsed();
@@ -106,6 +108,8 @@ fn bench_precision(c: &mut Criterion) {
                         as_of_frame: None,
                         as_of_ts: None,
                         no_sketch: false,
+                        acl_context: None,
+                        acl_enforcement_mode: memvid_core::types::AclEnforcementMode::Audit,
                     })
                     .unwrap();
 
@@ -149,6 +153,8 @@ fn bench_result_count(c: &mut Criterion) {
                         as_of_frame: None,
                         as_of_ts: None,
                         no_sketch: false,
+                        acl_context: None,
+                        acl_enforcement_mode: memvid_core::types::AclEnforcementMode::Audit,
                     })
                     .unwrap();
                 let _count = results.hits.len();

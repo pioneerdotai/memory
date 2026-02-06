@@ -50,6 +50,8 @@ fn test_implicit_and_precision() -> memvid_core::Result<()> {
         as_of_frame: None,
         as_of_ts: None,
         no_sketch: false,
+        acl_context: None,
+        acl_enforcement_mode: memvid_core::types::AclEnforcementMode::Audit,
     })?;
 
     assert_eq!(
@@ -103,6 +105,8 @@ fn test_explicit_operators_still_work() -> memvid_core::Result<()> {
         as_of_frame: None,
         as_of_ts: None,
         no_sketch: false,
+        acl_context: None,
+        acl_enforcement_mode: memvid_core::types::AclEnforcementMode::Audit,
     })?;
 
     assert_eq!(results.hits.len(), 1, "Explicit AND should work");
@@ -120,6 +124,8 @@ fn test_explicit_operators_still_work() -> memvid_core::Result<()> {
         as_of_frame: None,
         as_of_ts: None,
         no_sketch: false,
+        acl_context: None,
+        acl_enforcement_mode: memvid_core::types::AclEnforcementMode::Audit,
     })?;
 
     assert!(results.hits.len() >= 2, "Explicit OR should work");

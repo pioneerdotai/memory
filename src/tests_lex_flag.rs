@@ -68,6 +68,8 @@ mod tests {
                         as_of_frame: None,
                         as_of_ts: None,
                         no_sketch: false,
+                        acl_context: None,
+                        acl_enforcement_mode: crate::types::AclEnforcementMode::Audit,
                     })
                     .expect("search must succeed");
 

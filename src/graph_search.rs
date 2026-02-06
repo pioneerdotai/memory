@@ -327,6 +327,8 @@ pub fn hybrid_search(memvid: &mut Memvid, plan: &QueryPlan) -> Result<Vec<Hybrid
                 as_of_frame: None,
                 as_of_ts: None,
                 no_sketch: false,
+                acl_context: None,
+                acl_enforcement_mode: crate::types::AclEnforcementMode::Audit,
             };
             let response = memvid.search(request)?;
             Ok(response
@@ -391,6 +393,8 @@ pub fn hybrid_search(memvid: &mut Memvid, plan: &QueryPlan) -> Result<Vec<Hybrid
                     as_of_frame: None,
                     as_of_ts: None,
                     no_sketch: false,
+                    acl_context: None,
+                    acl_enforcement_mode: crate::types::AclEnforcementMode::Audit,
                 };
                 let response = memvid.search(request)?;
                 return Ok(response

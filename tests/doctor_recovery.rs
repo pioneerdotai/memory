@@ -70,6 +70,8 @@ fn doctor_rebuilds_tantivy_index() {
                 as_of_frame: None,
                 as_of_ts: None,
                 no_sketch: false,
+                acl_context: None,
+                acl_enforcement_mode: memvid_core::types::AclEnforcementMode::Audit,
             })
             .unwrap();
 
@@ -121,6 +123,8 @@ fn doctor_rebuilds_tantivy_index() {
                 as_of_frame: None,
                 as_of_ts: None,
                 no_sketch: false,
+                acl_context: None,
+                acl_enforcement_mode: memvid_core::types::AclEnforcementMode::Audit,
             })
             .unwrap();
 
@@ -272,6 +276,8 @@ fn open_file_with_tantivy_segments_enables_lex() {
             as_of_frame: None,
             as_of_ts: None,
             no_sketch: false,
+            acl_context: None,
+            acl_enforcement_mode: memvid_core::types::AclEnforcementMode::Audit,
         });
 
         assert!(
@@ -363,6 +369,8 @@ fn doctor_rebuild_produces_searchable_index() {
                 as_of_frame: None,
                 as_of_ts: None,
                 no_sketch: false,
+                acl_context: None,
+                acl_enforcement_mode: memvid_core::types::AclEnforcementMode::Audit,
             })
             .unwrap();
 
@@ -390,6 +398,8 @@ fn doctor_rebuild_produces_searchable_index() {
                 as_of_frame: None,
                 as_of_ts: None,
                 no_sketch: false,
+                acl_context: None,
+                acl_enforcement_mode: memvid_core::types::AclEnforcementMode::Audit,
             })
             .unwrap();
 

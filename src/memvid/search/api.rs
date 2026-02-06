@@ -9,9 +9,9 @@ use tempfile::TempDir;
 
 use crate::memvid::lifecycle::Memvid;
 use crate::types::{
-    AdaptiveConfig, AdaptiveResult, AdaptiveStats, EmbeddingQualityStats, Frame, FrameId,
-    FrameStatus, SearchHit, TimelineEntry, TimelineQuery, VecSegmentDescriptor,
-    compute_embedding_quality, find_adaptive_cutoff,
+    AclContext, AclEnforcementMode, AdaptiveConfig, AdaptiveResult, AdaptiveStats,
+    EmbeddingQualityStats, Frame, FrameId, FrameStatus, SearchHit, TimelineEntry, TimelineQuery,
+    VecSegmentDescriptor, compute_embedding_quality, find_adaptive_cutoff,
 };
 use crate::{LexSearchHit, MemvidError, Result, VecSearchHit};
 
@@ -267,6 +267,28 @@ impl Memvid {
         snippet_chars: usize,
         scope: Option<&str>,
     ) -> Result<crate::types::SearchResponse> {
+        self.vec_search_with_embedding_acl(
+            query,
+            query_embedding,
+            top_k,
+            snippet_chars,
+            scope,
+            None,
+            AclEnforcementMode::Audit,
+        )
+    }
+
+    /// Perform pure vector search using a pre-computed query embedding with ACL filtering.
+    pub fn vec_search_with_embedding_acl(
+        &mut self,
+        query: &str,
+        query_embedding: &[f32],
+        top_k: usize,
+        snippet_chars: usize,
+        scope: Option<&str>,
+        acl_context: Option<&AclContext>,
+        acl_enforcement_mode: AclEnforcementMode,
+    ) -> Result<crate::types::SearchResponse> {
         use super::helpers::{build_context, timestamp_to_rfc3339};
         use crate::types::{
             SearchEngineKind, SearchHit, SearchHitMetadata, SearchParams, SearchResponse,
@@ -419,6 +441,7 @@ impl Memvid {
         #[cfg(feature = "temporal_track")]
         super::helpers::attach_temporal_metadata(self, &mut hits)?;
 
+        self.apply_acl_to_search_hits(&mut hits, acl_context, acl_enforcement_mode)?;
         let context = build_context(&hits);
 
         Ok(SearchResponse {
@@ -465,16 +488,40 @@ impl Memvid {
         snippet_chars: usize,
         scope: Option<&str>,
     ) -> Result<AdaptiveResult<SearchHit>> {
+        self.search_adaptive_acl(
+            query,
+            query_embedding,
+            config,
+            snippet_chars,
+            scope,
+            None,
+            AclEnforcementMode::Audit,
+        )
+    }
+
+    /// Perform adaptive vector search with ACL filtering.
+    pub fn search_adaptive_acl(
+        &mut self,
+        query: &str,
+        query_embedding: &[f32],
+        config: AdaptiveConfig,
+        snippet_chars: usize,
+        scope: Option<&str>,
+        acl_context: Option<&AclContext>,
+        acl_enforcement_mode: AclEnforcementMode,
+    ) -> Result<AdaptiveResult<SearchHit>> {
         use std::time::Instant;
 
         if !config.enabled {
             // Fall back to standard search with max_results as top_k
-            let response = self.vec_search_with_embedding(
+            let response = self.vec_search_with_embedding_acl(
                 query,
                 query_embedding,
                 config.max_results,
                 snippet_chars,
                 scope,
+                acl_context,
+                acl_enforcement_mode,
             )?;
             return Ok(AdaptiveResult {
                 results: response.hits,
@@ -493,12 +540,14 @@ impl Memvid {
         let start_time = Instant::now();
 
         // Over-retrieve: get max_results to have enough candidates
-        let response = self.vec_search_with_embedding(
+        let response = self.vec_search_with_embedding_acl(
             query,
             query_embedding,
             config.max_results,
             snippet_chars,
             scope,
+            acl_context,
+            acl_enforcement_mode,
         )?;
 
         if response.hits.is_empty() {

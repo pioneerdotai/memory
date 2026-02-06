@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use super::acl::{AclContext, AclEnforcementMode};
 use super::adaptive::AdaptiveConfig;
 use super::common::FrameId;
 #[cfg(feature = "temporal_track")]
@@ -74,6 +75,12 @@ pub struct AskRequest {
     /// Adaptive retrieval configuration. When set, dynamically determines how many
     /// results to retrieve based on relevancy score distribution.
     pub adaptive: Option<AdaptiveConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Optional caller identity context used for ACL filtering.
+    pub acl_context: Option<AclContext>,
+    #[serde(default)]
+    /// ACL evaluation mode (`audit` or `enforce`).
+    pub acl_enforcement_mode: AclEnforcementMode,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

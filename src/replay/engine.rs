@@ -236,6 +236,8 @@ impl<'a> ReplayEngine<'a> {
                             as_of_frame: None,
                             as_of_ts: None,
                             no_sketch: false,
+                            acl_context: None,
+                            acl_enforcement_mode: crate::types::AclEnforcementMode::Audit,
                         };
                         match self.mem.search(search_request) {
                             Ok(response) => {

@@ -71,6 +71,8 @@ fn main() -> memvid_core::Result<()> {
                 as_of_frame: None,
                 as_of_ts: None,
                 no_sketch: false,
+                acl_context: None,
+                acl_enforcement_mode: memvid_core::types::AclEnforcementMode::Audit,
             })?;
         }
 
@@ -94,6 +96,8 @@ fn main() -> memvid_core::Result<()> {
                 as_of_frame: None,
                 as_of_ts: None,
                 no_sketch: false,
+                acl_context: None,
+                acl_enforcement_mode: memvid_core::types::AclEnforcementMode::Audit,
             })?;
 
             let terms: Vec<&str> = query.split_whitespace().collect();

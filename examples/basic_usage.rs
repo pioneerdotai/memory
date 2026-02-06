@@ -97,6 +97,8 @@ fn main() -> Result<()> {
         as_of_frame: None,
         as_of_ts: None,
         no_sketch: false,
+        acl_context: None,
+        acl_enforcement_mode: memvid_core::types::AclEnforcementMode::Audit,
     };
     let response = mem.search(request)?;
     println!("   Query: 'memvid'");
@@ -126,6 +128,8 @@ fn main() -> Result<()> {
         as_of_frame: None,
         as_of_ts: None,
         no_sketch: false,
+        acl_context: None,
+        acl_enforcement_mode: memvid_core::types::AclEnforcementMode::Audit,
     };
     let response = mem.search(request)?;
     println!("   Query: 'documentation' (scope: mv2://docs/)");
