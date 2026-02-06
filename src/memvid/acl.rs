@@ -9,24 +9,24 @@ use crate::{MemvidError, Result};
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct AclFilterStats {
-    pub allowed_count: usize,
-    pub denied_count: usize,
-    pub cross_tenant_denied_count: usize,
-    pub missing_metadata_count: usize,
+    pub allowed: usize,
+    pub denied: usize,
+    pub cross_tenant_denied: usize,
+    pub missing_metadata: usize,
 }
 
 impl AclFilterStats {
     fn record(&mut self, decision: AclDecision) {
         if decision.allowed {
-            self.allowed_count += 1;
+            self.allowed += 1;
             return;
         }
-        self.denied_count += 1;
+        self.denied += 1;
         if decision.cross_tenant_denied {
-            self.cross_tenant_denied_count += 1;
+            self.cross_tenant_denied += 1;
         }
         if decision.missing_metadata_denied {
-            self.missing_metadata_count += 1;
+            self.missing_metadata += 1;
         }
     }
 }
@@ -107,7 +107,7 @@ impl Memvid {
 
         let mut stats = AclFilterStats::default();
         if normalized_context.is_none() {
-            stats.allowed_count = hits.len();
+            stats.allowed = hits.len();
             return Ok(stats);
         }
 
@@ -186,7 +186,7 @@ fn evaluate_acl_metadata(
 
     let parsed = match parse_acl_metadata(metadata) {
         Ok(parsed) => parsed,
-        Err(_) => return AclDecision::deny_missing_metadata(),
+        Err(()) => return AclDecision::deny_missing_metadata(),
     };
 
     if parsed.tenant_id != context.tenant_id {

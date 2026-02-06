@@ -2147,7 +2147,8 @@ impl Memvid {
                     let max_payload = crate::memvid::search::max_index_payload();
                     let mut prepared_docs: Vec<(Frame, String)> = Vec::new();
                     for &frame_id in inserted_frame_ids {
-                        let frame = match self.toc.frames.get(frame_id as usize) {
+                        let Ok(idx) = usize::try_from(frame_id) else { continue };
+                        let frame = match self.toc.frames.get(idx) {
                             Some(f) => f.clone(),
                             None => continue,
                         };
