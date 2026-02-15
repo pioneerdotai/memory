@@ -6,6 +6,9 @@ mod pdf;
 mod pptx;
 mod xls;
 mod xlsx;
+pub(crate) mod xlsx_chunker;
+pub(crate) mod xlsx_ooxml;
+pub(crate) mod xlsx_table_detect;
 
 use serde_json::Value;
 
@@ -14,7 +17,9 @@ pub use passthrough::PassthroughReader;
 pub use pdf::PdfReader;
 pub use pptx::PptxReader;
 pub use xls::XlsReader;
-pub use xlsx::XlsxReader;
+pub use xlsx::{XlsxReader, XlsxStructuredResult, XlsxStructuredDiagnostics};
+pub use xlsx_chunker::XlsxChunkingOptions;
+pub use xlsx_table_detect::DetectedTable;
 
 use crate::{ExtractedDocument, Result};
 

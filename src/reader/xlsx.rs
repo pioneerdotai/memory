@@ -5,11 +5,135 @@ use calamine::{DataType, Reader as CalamineReader, Xlsx};
 use crate::{
     DocumentFormat, DocumentReader, PassthroughReader, ReaderDiagnostics, ReaderHint, ReaderOutput,
     Result,
+    types::structure::ChunkingResult,
 };
+use super::xlsx_chunker::{XlsxChunkingOptions, chunk_workbook, generate_flat_text};
+use super::xlsx_ooxml::{OoxmlMetadata, parse_ooxml_metadata};
+use super::xlsx_table_detect::{CellValue, DetectedTable, SheetGrid, detect_tables};
+
+/// Result of the structured XLSX extraction pipeline.
+pub struct XlsxStructuredResult {
+    /// Backward-compatible flat text.
+    pub text: String,
+    /// Detected tables with metadata.
+    pub tables: Vec<DetectedTable>,
+    /// Semantic chunks with header-value pairing.
+    pub chunks: ChunkingResult,
+    /// OOXML metadata (number formats, merged regions, etc.).
+    pub metadata: OoxmlMetadata,
+    /// Extraction diagnostics.
+    pub diagnostics: XlsxStructuredDiagnostics,
+}
+
+/// Diagnostics from structured extraction.
+pub struct XlsxStructuredDiagnostics {
+    pub warnings: Vec<String>,
+}
 
 pub struct XlsxReader;
 
 impl XlsxReader {
+    /// Build `SheetGrid`s from raw XLSX bytes using calamine.
+    fn build_grids(bytes: &[u8]) -> Result<Vec<SheetGrid>> {
+        let cursor = Cursor::new(bytes);
+        let mut workbook =
+            Xlsx::new(cursor).map_err(|err| crate::MemvidError::ExtractionFailed {
+                reason: format!("failed to read xlsx workbook: {err}").into(),
+            })?;
+
+        let sheet_names: Vec<String> = workbook.sheet_names().to_vec();
+        let mut grids = Vec::new();
+
+        for sheet_name in &sheet_names {
+            let Some(Ok(range)) = workbook.worksheet_range(sheet_name) else {
+                continue;
+            };
+
+            let mut grid = SheetGrid::new(sheet_name.clone());
+            let num_rows = range.height() as u32;
+            let num_cols = range.width() as u32;
+
+            for row in range.rows() {
+                let cells: Vec<CellValue> = row
+                    .iter()
+                    .map(|cell| match cell {
+                        DataType::String(s) => CellValue::Text(s.clone()),
+                        DataType::Float(v) => CellValue::Number(*v),
+                        DataType::Int(v) => CellValue::Integer(*v),
+                        DataType::Bool(b) => CellValue::Boolean(*b),
+                        DataType::DateTime(v) => CellValue::Number(*v),
+                        DataType::DateTimeIso(s) => CellValue::DateTime(s.clone()),
+                        DataType::Duration(v) => CellValue::Number(*v),
+                        DataType::DurationIso(s) => CellValue::Text(s.clone()),
+                        DataType::Error(e) => CellValue::Error(format!("#{e:?}")),
+                        DataType::Empty => CellValue::Empty,
+                    })
+                    .collect();
+                grid.rows.push(cells);
+            }
+
+            grid.num_rows = num_rows;
+            grid.num_cols = num_cols;
+            grids.push(grid);
+        }
+
+        Ok(grids)
+    }
+
+    /// Extract structured data from XLSX bytes with default options.
+    pub fn extract_structured(bytes: &[u8]) -> Result<XlsxStructuredResult> {
+        Self::extract_structured_with_options(bytes, XlsxChunkingOptions::default())
+    }
+
+    /// Extract structured data from XLSX bytes with custom chunking options.
+    pub fn extract_structured_with_options(
+        bytes: &[u8],
+        options: XlsxChunkingOptions,
+    ) -> Result<XlsxStructuredResult> {
+        let grids = Self::build_grids(bytes)?;
+        let metadata = parse_ooxml_metadata(bytes).unwrap_or_default();
+
+        let mut all_tables = Vec::new();
+        let mut warnings = Vec::new();
+
+        for grid in &grids {
+            let sheet_merged = metadata
+                .merged_regions
+                .get(&grid.sheet_name)
+                .cloned()
+                .unwrap_or_default();
+            let sheet_ooxml_tables: Vec<_> = metadata
+                .table_defs
+                .iter()
+                .filter(|t| t.sheet_name == grid.sheet_name)
+                .cloned()
+                .collect();
+
+            let tables = detect_tables(grid, &sheet_ooxml_tables, &sheet_merged);
+            if tables.is_empty() {
+                warnings.push(format!(
+                    "No tables detected in sheet '{}'",
+                    grid.sheet_name
+                ));
+            }
+            all_tables.extend(tables);
+        }
+
+        let chunks = chunk_workbook(&grids, &all_tables, &metadata, &options);
+        let text = generate_flat_text(&grids, &all_tables, &metadata);
+
+        // Merge chunker warnings
+        warnings.extend(chunks.warnings.iter().cloned());
+
+        Ok(XlsxStructuredResult {
+            text,
+            tables: all_tables,
+            chunks,
+            metadata,
+            diagnostics: XlsxStructuredDiagnostics { warnings },
+        })
+    }
+
     fn extract_text(bytes: &[u8]) -> Result<String> {
         let cursor = Cursor::new(bytes);
         let mut workbook =

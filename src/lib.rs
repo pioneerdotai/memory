@@ -184,8 +184,8 @@ pub use models::{
     ModelVerifyOptions, verify_model_dir, verify_models,
 };
 pub use reader::{
-    DocumentFormat, DocumentReader, PassthroughReader, PdfReader, ReaderDiagnostics, ReaderHint,
-    ReaderOutput, ReaderRegistry,
+    DetectedTable, DocumentFormat, DocumentReader, PassthroughReader, PdfReader,
+    ReaderDiagnostics, ReaderHint, ReaderOutput, ReaderRegistry, XlsxChunkingOptions, XlsxReader,
 };
 pub use signature::{
     parse_ed25519_public_key_base64, verify_model_manifest, verify_ticket_signature,
