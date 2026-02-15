@@ -13,8 +13,21 @@ use tempfile::TempDir;
 
 const ARDEN_PATH: &str = "/Users/olow/Desktop/memvid-org/arden.xlsx";
 
-fn load_arden() -> Vec<u8> {
-    std::fs::read(ARDEN_PATH).expect("arden.xlsx must exist at the expected path")
+/// Load the test fixture. Returns `None` when the file is not present (CI).
+fn try_load_arden() -> Option<Vec<u8>> {
+    std::fs::read(ARDEN_PATH).ok()
+}
+
+macro_rules! require_arden {
+    () => {
+        match try_load_arden() {
+            Some(bytes) => bytes,
+            None => {
+                eprintln!("SKIP: arden.xlsx not found at {ARDEN_PATH}");
+                return;
+            }
+        }
+    };
 }
 
 // ---------------------------------------------------------------------------
@@ -23,7 +36,7 @@ fn load_arden() -> Vec<u8> {
 
 #[test]
 fn structured_extraction_completes_under_5s() {
-    let bytes = load_arden();
+    let bytes = require_arden!();
     let start = Instant::now();
     let result = XlsxReader::extract_structured(&bytes).expect("extraction must succeed");
     let elapsed = start.elapsed();
@@ -45,7 +58,7 @@ fn structured_extraction_completes_under_5s() {
 
 #[test]
 fn detects_multiple_tables_across_sheets() {
-    let bytes = load_arden();
+    let bytes = require_arden!();
     let result = XlsxReader::extract_structured(&bytes).unwrap();
 
     // 19 sheets — should detect at least several tables
@@ -72,7 +85,7 @@ fn detects_multiple_tables_across_sheets() {
 
 #[test]
 fn chunks_have_header_context() {
-    let bytes = load_arden();
+    let bytes = require_arden!();
     let result = XlsxReader::extract_structured(&bytes).unwrap();
 
     assert!(
@@ -104,7 +117,7 @@ fn chunks_have_header_context() {
 
 #[test]
 fn chunks_respect_row_boundaries() {
-    let bytes = load_arden();
+    let bytes = require_arden!();
     let result = XlsxReader::extract_structured(&bytes).unwrap();
 
     for chunk in &result.chunks.chunks {
@@ -128,7 +141,7 @@ fn chunks_respect_row_boundaries() {
 
 #[test]
 fn chunk_sizes_near_target() {
-    let bytes = load_arden();
+    let bytes = require_arden!();
     let opts = XlsxChunkingOptions {
         max_chars: 1200,
         max_chunks: 500,
@@ -163,7 +176,7 @@ fn chunk_sizes_near_target() {
 
 #[test]
 fn merged_regions_detected() {
-    let bytes = load_arden();
+    let bytes = require_arden!();
     let result = XlsxReader::extract_structured(&bytes).unwrap();
 
     let total_merged: usize = result
@@ -183,7 +196,7 @@ fn merged_regions_detected() {
 
 #[test]
 fn number_formats_parsed() {
-    let bytes = load_arden();
+    let bytes = require_arden!();
     let result = XlsxReader::extract_structured(&bytes).unwrap();
 
     println!("Number format entries: {}", result.metadata.num_fmts.len());
@@ -202,7 +215,7 @@ fn number_formats_parsed() {
 
 #[test]
 fn flat_text_contains_key_data() {
-    let bytes = load_arden();
+    let bytes = require_arden!();
     let result = XlsxReader::extract_structured(&bytes).unwrap();
 
     let text = &result.text;
@@ -234,11 +247,11 @@ fn flat_text_contains_key_data() {
 // ---------------------------------------------------------------------------
 
 /// Ingest the XLSX into a Memvid file and return the path + temp dir (to keep alive).
-fn ingest_arden() -> (std::path::PathBuf, TempDir) {
+/// Returns `None` when arden.xlsx is not available (CI).
+fn ingest_arden() -> Option<(std::path::PathBuf, TempDir)> {
+    let bytes = try_load_arden()?;
     let dir = TempDir::new().unwrap();
     let mv2_path = dir.path().join("arden.mv2");
-
-    let bytes = load_arden();
     let result = XlsxReader::extract_structured(&bytes).unwrap();
 
     let mut mem = Memvid::create(&mv2_path).unwrap();
@@ -260,7 +273,7 @@ fn ingest_arden() -> (std::path::PathBuf, TempDir) {
     }
 
     mem.commit().unwrap();
-    (mv2_path, dir)
+    Some((mv2_path, dir))
 }
 
 fn search_arden(mem: &mut Memvid, query: &str, top_k: usize) -> Vec<memvid_core::SearchHit> {
@@ -286,7 +299,10 @@ fn search_arden(mem: &mut Memvid, query: &str, top_k: usize) -> Vec<memvid_core:
 #[test]
 #[cfg(feature = "lex")]
 fn ingest_and_search_units() {
-    let (path, _dir) = ingest_arden();
+    let Some((path, _dir)) = ingest_arden() else {
+        eprintln!("SKIP");
+        return;
+    };
     let mut mem = Memvid::open_read_only(&path).unwrap();
 
     // Search for unit count — the file has 248 multifamily units
@@ -312,7 +328,10 @@ fn ingest_and_search_units() {
 #[test]
 #[cfg(feature = "lex")]
 fn ingest_and_search_financial_terms() {
-    let (path, _dir) = ingest_arden();
+    let Some((path, _dir)) = ingest_arden() else {
+        eprintln!("SKIP");
+        return;
+    };
     let mut mem = Memvid::open_read_only(&path).unwrap();
 
     // The file contains construction costs, debt service, NOI, etc.
@@ -343,7 +362,10 @@ fn ingest_and_search_financial_terms() {
 #[test]
 #[cfg(feature = "lex")]
 fn search_hits_contain_header_context() {
-    let (path, _dir) = ingest_arden();
+    let Some((path, _dir)) = ingest_arden() else {
+        eprintln!("SKIP");
+        return;
+    };
     let mut mem = Memvid::open_read_only(&path).unwrap();
 
     let hits = search_arden(&mut mem, "construction", 5);
@@ -371,7 +393,7 @@ fn search_hits_contain_header_context() {
 #[test]
 #[cfg(feature = "lex")]
 fn full_pipeline_timing() {
-    let bytes = load_arden();
+    let bytes = require_arden!();
 
     // Step 1: Structured extraction
     let t0 = Instant::now();
@@ -441,7 +463,7 @@ fn full_pipeline_timing() {
 
 #[test]
 fn tables_have_headers() {
-    let bytes = load_arden();
+    let bytes = require_arden!();
     let result = XlsxReader::extract_structured(&bytes).unwrap();
 
     let tables_with_headers: Vec<&DetectedTable> = result
@@ -478,7 +500,7 @@ fn tables_have_headers() {
 
 #[test]
 fn table_column_types_inferred() {
-    let bytes = load_arden();
+    let bytes = require_arden!();
     let result = XlsxReader::extract_structured(&bytes).unwrap();
 
     let tables_with_types: Vec<&DetectedTable> = result
