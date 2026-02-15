@@ -175,8 +175,13 @@ pub fn detect_tables(
     // Phase 1: Use OOXML table definitions for this sheet
     for tdef in ooxml_tables {
         if tdef.sheet_name == grid.sheet_name {
-            let column_types =
-                infer_column_types(grid, tdef.first_row + 1, tdef.last_row, tdef.first_col, tdef.last_col);
+            let column_types = infer_column_types(
+                grid,
+                tdef.first_row + 1,
+                tdef.last_row,
+                tdef.first_col,
+                tdef.last_col,
+            );
             tables.push(DetectedTable {
                 name: tdef.name.clone(),
                 sheet_name: grid.sheet_name.clone(),
@@ -209,7 +214,10 @@ pub fn detect_tables(
         let column_types = infer_column_types(grid, first_data_row, end_row, start_col, end_col);
 
         // Boost confidence if column types are consistent
-        let type_boost = if column_types.iter().filter(|t| **t != ColumnType::Mixed && **t != ColumnType::Empty).count()
+        let type_boost = if column_types
+            .iter()
+            .filter(|t| **t != ColumnType::Mixed && **t != ColumnType::Empty)
+            .count()
             > column_types.len() / 2
         {
             0.15

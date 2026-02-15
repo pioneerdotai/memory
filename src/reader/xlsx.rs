@@ -2,14 +2,13 @@ use std::io::Cursor;
 
 use calamine::{DataType, Reader as CalamineReader, Xlsx};
 
-use crate::{
-    DocumentFormat, DocumentReader, PassthroughReader, ReaderDiagnostics, ReaderHint, ReaderOutput,
-    Result,
-    types::structure::ChunkingResult,
-};
 use super::xlsx_chunker::{XlsxChunkingOptions, chunk_workbook, generate_flat_text};
 use super::xlsx_ooxml::{OoxmlMetadata, parse_ooxml_metadata};
 use super::xlsx_table_detect::{CellValue, DetectedTable, SheetGrid, detect_tables};
+use crate::{
+    DocumentFormat, DocumentReader, PassthroughReader, ReaderDiagnostics, ReaderHint, ReaderOutput,
+    Result, types::structure::ChunkingResult,
+};
 
 /// Result of the structured XLSX extraction pipeline.
 pub struct XlsxStructuredResult {
@@ -111,10 +110,7 @@ impl XlsxReader {
 
             let tables = detect_tables(grid, &sheet_ooxml_tables, &sheet_merged);
             if tables.is_empty() {
-                warnings.push(format!(
-                    "No tables detected in sheet '{}'",
-                    grid.sheet_name
-                ));
+                warnings.push(format!("No tables detected in sheet '{}'", grid.sheet_name));
             }
             all_tables.extend(tables);
         }

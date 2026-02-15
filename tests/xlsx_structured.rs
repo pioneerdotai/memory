@@ -32,7 +32,10 @@ fn structured_extraction_completes_under_5s() {
     println!("Flat text length: {} chars", result.text.len());
     println!("Tables detected: {}", result.tables.len());
     println!("Chunks produced: {}", result.chunks.chunks.len());
-    println!("Diagnostics warnings: {}", result.diagnostics.warnings.len());
+    println!(
+        "Diagnostics warnings: {}",
+        result.diagnostics.warnings.len()
+    );
 
     assert!(
         elapsed.as_secs() < 5,
@@ -53,8 +56,11 @@ fn detects_multiple_tables_across_sheets() {
     );
 
     // Collect unique sheet names
-    let sheet_names: std::collections::HashSet<&str> =
-        result.tables.iter().map(|t| t.sheet_name.as_str()).collect();
+    let sheet_names: std::collections::HashSet<&str> = result
+        .tables
+        .iter()
+        .map(|t| t.sheet_name.as_str())
+        .collect();
     println!("Sheets with tables: {sheet_names:?}");
 
     assert!(
@@ -160,7 +166,12 @@ fn merged_regions_detected() {
     let bytes = load_arden();
     let result = XlsxReader::extract_structured(&bytes).unwrap();
 
-    let total_merged: usize = result.metadata.merged_regions.values().map(|v| v.len()).sum();
+    let total_merged: usize = result
+        .metadata
+        .merged_regions
+        .values()
+        .map(|v| v.len())
+        .sum();
     println!("Total merged regions: {total_merged}");
 
     // A complex real-estate pro forma with 19 sheets should have many merged cells
@@ -175,14 +186,8 @@ fn number_formats_parsed() {
     let bytes = load_arden();
     let result = XlsxReader::extract_structured(&bytes).unwrap();
 
-    println!(
-        "Number format entries: {}",
-        result.metadata.num_fmts.len()
-    );
-    println!(
-        "Cell XF entries: {}",
-        result.metadata.cell_xfs.len()
-    );
+    println!("Number format entries: {}", result.metadata.num_fmts.len());
+    println!("Cell XF entries: {}", result.metadata.cell_xfs.len());
 
     // Financial workbook should have custom number formats
     assert!(
@@ -212,8 +217,8 @@ fn flat_text_contains_key_data() {
 
     // The file is a real estate deal for "TRG Apartments" in SLC, UT
     let key_terms = [
-        "sheet:",         // Should have sheet labels
-        "248",            // 248 units
+        "sheet:", // Should have sheet labels
+        "248",    // 248 units
     ];
 
     for term in &key_terms {
@@ -258,11 +263,7 @@ fn ingest_arden() -> (std::path::PathBuf, TempDir) {
     (mv2_path, dir)
 }
 
-fn search_arden(
-    mem: &mut Memvid,
-    query: &str,
-    top_k: usize,
-) -> Vec<memvid_core::SearchHit> {
+fn search_arden(mem: &mut Memvid, query: &str, top_k: usize) -> Vec<memvid_core::SearchHit> {
     mem.search(SearchRequest {
         query: query.to_string(),
         top_k,
@@ -291,10 +292,7 @@ fn ingest_and_search_units() {
     // Search for unit count — the file has 248 multifamily units
     let hits = search_arden(&mut mem, "248 units", 5);
 
-    println!(
-        "Query '248 units' — {} hits",
-        hits.len()
-    );
+    println!("Query '248 units' — {} hits", hits.len());
     for (i, h) in hits.iter().enumerate() {
         println!(
             "  [{i}] score={:.3} uri={} text={:.120}",
@@ -318,13 +316,7 @@ fn ingest_and_search_financial_terms() {
     let mut mem = Memvid::open_read_only(&path).unwrap();
 
     // The file contains construction costs, debt service, NOI, etc.
-    let queries = [
-        "construction",
-        "debt",
-        "occupancy",
-        "revenue",
-        "lease",
-    ];
+    let queries = ["construction", "debt", "occupancy", "revenue", "lease"];
 
     let mut found_count = 0;
     for query in &queries {
@@ -362,9 +354,9 @@ fn search_hits_contain_header_context() {
     }
 
     // Check that hit text contains structured context (sheet/table prefix or header:value pairs)
-    let has_context = hits.iter().any(|h| {
-        h.text.contains("[Sheet:") || h.text.contains(':')
-    });
+    let has_context = hits
+        .iter()
+        .any(|h| h.text.contains("[Sheet:") || h.text.contains(':'));
 
     assert!(
         has_context,
@@ -421,12 +413,18 @@ fn full_pipeline_timing() {
 
     println!("=== Full Pipeline Timing ===");
     println!("  XLSX extraction:  {extraction_time:?}");
-    println!("  Memvid ingest:    {ingest_time:?}  ({} chunks)", result.chunks.chunks.len());
+    println!(
+        "  Memvid ingest:    {ingest_time:?}  ({} chunks)",
+        result.chunks.chunks.len()
+    );
     println!("  Search query:     {search_time:?}  ({} hits)", hits.len());
     println!("  TOTAL:            {total:?}");
     println!("  Tables detected:  {}", result.tables.len());
     println!("  Flat text chars:  {}", result.text.len());
-    println!("  MV2 file size:    {} KB", std::fs::metadata(&mv2_path).unwrap().len() / 1024);
+    println!(
+        "  MV2 file size:    {} KB",
+        std::fs::metadata(&mv2_path).unwrap().len() / 1024
+    );
 
     // In release mode, target is under 40s. Debug mode gets 3x slack for
     // unoptimized Tantivy indexing on 500 individual put_bytes calls.

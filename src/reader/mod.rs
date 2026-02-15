@@ -17,7 +17,7 @@ pub use passthrough::PassthroughReader;
 pub use pdf::PdfReader;
 pub use pptx::PptxReader;
 pub use xls::XlsReader;
-pub use xlsx::{XlsxReader, XlsxStructuredResult, XlsxStructuredDiagnostics};
+pub use xlsx::{XlsxReader, XlsxStructuredDiagnostics, XlsxStructuredResult};
 pub use xlsx_chunker::XlsxChunkingOptions;
 pub use xlsx_table_detect::DetectedTable;
 

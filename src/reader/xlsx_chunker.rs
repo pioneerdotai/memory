@@ -9,8 +9,10 @@
 
 use crate::types::structure::{ChunkingResult, StructuredChunk};
 
+use super::xlsx_ooxml::{
+    NumFmtKind, OoxmlMetadata, excel_serial_to_iso, format_currency, format_percentage,
+};
 use super::xlsx_table_detect::{CellValue, DetectedTable, SheetGrid};
-use super::xlsx_ooxml::{NumFmtKind, OoxmlMetadata, excel_serial_to_iso, format_currency, format_percentage};
 
 /// Default target chunk size in characters.
 const DEFAULT_MAX_CHUNK_CHARS: usize = 1200;
@@ -93,10 +95,7 @@ fn format_row_with_headers(
         }
 
         let col_offset = (col - first_col) as usize;
-        let header = headers
-            .get(col_offset)
-            .filter(|h| !h.is_empty())
-            .cloned();
+        let header = headers.get(col_offset).filter(|h| !h.is_empty()).cloned();
 
         if let Some(h) = header {
             parts.push(format!("{h}: {formatted}"));
@@ -115,7 +114,11 @@ fn build_context_prefix(sheet_name: &str, table_name: &str) -> String {
 
 /// Build a header line: `Header1 | Header2 | Header3`
 fn build_header_line(headers: &[String]) -> String {
-    let nonempty: Vec<&str> = headers.iter().map(String::as_str).filter(|h| !h.is_empty()).collect();
+    let nonempty: Vec<&str> = headers
+        .iter()
+        .map(String::as_str)
+        .filter(|h| !h.is_empty())
+        .collect();
     if nonempty.is_empty() {
         String::new()
     } else {
@@ -369,11 +372,7 @@ mod tests {
             "Sheet1",
         );
         let metadata = OoxmlMetadata::default();
-        let headers = vec![
-            "Name".to_string(),
-            "Age".to_string(),
-            "City".to_string(),
-        ];
+        let headers = vec!["Name".to_string(), "Age".to_string(), "City".to_string()];
 
         let result = format_row_with_headers(&grid, 0, &headers, 0, 2, &metadata);
         assert_eq!(result, "Name: Alice | Age: 30 | City: Austin");
@@ -390,11 +389,7 @@ mod tests {
             "Sheet1",
         );
         let metadata = OoxmlMetadata::default();
-        let headers = vec![
-            "Name".to_string(),
-            "Age".to_string(),
-            "City".to_string(),
-        ];
+        let headers = vec!["Name".to_string(), "Age".to_string(), "City".to_string()];
 
         let result = format_row_with_headers(&grid, 0, &headers, 0, 2, &metadata);
         assert_eq!(result, "Name: Alice | City: Austin");

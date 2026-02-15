@@ -13,8 +13,8 @@
 use std::collections::HashMap;
 use std::io::{Cursor, Read};
 
-use quick_xml::events::Event;
 use quick_xml::Reader as XmlReader;
+use quick_xml::events::Event;
 use serde::{Deserialize, Serialize};
 use zip::ZipArchive;
 
@@ -252,9 +252,7 @@ pub fn parse_ooxml_metadata(xlsx_bytes: &[u8]) -> Result<OoxmlMetadata> {
         if let Ok(sheet_xml) = read_zip_entry(&mut archive, zip_path) {
             let regions = parse_merge_cells_xml(&sheet_xml);
             if !regions.is_empty() {
-                metadata
-                    .merged_regions
-                    .insert(sheet_name.clone(), regions);
+                metadata.merged_regions.insert(sheet_name.clone(), regions);
             }
         }
     }
@@ -318,9 +316,7 @@ fn parse_workbook_sheet_names(xml: &str) -> Vec<String> {
 
     loop {
         match reader.read_event_into(&mut buf) {
-            Ok(Event::Start(ref e) | Event::Empty(ref e))
-                if e.name().as_ref() == b"sheets" =>
-            {
+            Ok(Event::Start(ref e) | Event::Empty(ref e)) if e.name().as_ref() == b"sheets" => {
                 in_sheets = true;
             }
             Ok(Event::Start(ref e) | Event::Empty(ref e))
@@ -601,10 +597,7 @@ mod tests {
     fn test_format_currency() {
         assert_eq!(format_currency(10.5, "$#,##0.00"), "$10.50");
         assert_eq!(format_currency(-10.5, "$#,##0.00"), "-$10.50");
-        assert_eq!(
-            format_currency(10.5, "\u{20ac}#,##0.00"),
-            "\u{20ac}10.50"
-        );
+        assert_eq!(format_currency(10.5, "\u{20ac}#,##0.00"), "\u{20ac}10.50");
     }
 
     #[test]
