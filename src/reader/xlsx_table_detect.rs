@@ -496,6 +496,7 @@ fn infer_column_types(
 
 /// Propagate merged cell values into a grid.
 /// The top-left cell's value is copied to all cells in the merged region.
+#[allow(dead_code)]
 pub fn propagate_merged_cells(grid: &mut SheetGrid, merged_regions: &[MergedRegion]) {
     for region in merged_regions {
         // Get the top-left cell value

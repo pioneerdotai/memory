@@ -40,7 +40,7 @@ impl XlsxReader {
                 reason: format!("failed to read xlsx workbook: {err}").into(),
             })?;
 
-        let sheet_names: Vec<String> = workbook.sheet_names().to_vec();
+        let sheet_names: Vec<String> = workbook.sheet_names().clone();
         let mut grids = Vec::new();
 
         for sheet_name in &sheet_names {
@@ -49,7 +49,9 @@ impl XlsxReader {
             };
 
             let mut grid = SheetGrid::new(sheet_name.clone());
+            #[allow(clippy::cast_possible_truncation)]
             let num_rows = range.height() as u32;
+            #[allow(clippy::cast_possible_truncation)]
             let num_cols = range.width() as u32;
 
             for row in range.rows() {
