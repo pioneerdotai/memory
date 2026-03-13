@@ -14,7 +14,7 @@ use crate::types::{
     FrameId, SearchEngineKind, SearchHit, SearchHitMetadata, SearchParams, SearchRequest,
     SearchResponse,
 };
-use crate::{MemvidError, Result};
+use crate::Result;
 use log::warn;
 use std::collections::HashSet;
 use std::time::Instant;
@@ -119,15 +119,21 @@ pub(super) fn try_tantivy_search(
     let snippet_window = request.snippet_chars.max(80);
     let max_snippets_per_doc = request.top_k.max(1);
     let mut evaluated = Vec::new();
+    let mut stale_skips = 0u32;
     for hit in search_hits {
-        let frame_meta = memvid
+        let frame_meta = match memvid
             .toc
             .frames
             .get(usize::try_from(hit.frame_id).unwrap_or(usize::MAX))
             .cloned()
-            .ok_or(MemvidError::InvalidTimeIndex {
-                reason: "frame id out of range".into(),
-            })?;
+        {
+            Some(f) => f,
+            None => {
+                tracing::warn!(frame_id = hit.frame_id, "skipping search hit with stale frame_id");
+                stale_skips = stale_skips.saturating_add(1);
+                continue;
+            }
+        };
         if let Some(uri_expected) = uri_filter {
             if !uri_matches(frame_meta.uri.as_deref(), uri_expected) {
                 continue;
@@ -274,14 +280,18 @@ pub(super) fn try_tantivy_search(
         if hits.len() == effective_top_k && produced >= offset {
             break;
         }
-        let frame_meta = memvid
+        let frame_meta = match memvid
             .toc
             .frames
             .get(usize::try_from(hit.frame_id).unwrap_or(usize::MAX))
             .cloned()
-            .ok_or(MemvidError::InvalidTimeIndex {
-                reason: "frame id out of range".into(),
-            })?;
+        {
+            Some(f) => f,
+            None => {
+                tracing::warn!(frame_id = hit.frame_id, "skipping stale frame_id in snippet assembly");
+                continue;
+            }
+        };
         let uri = frame_meta
             .uri
             .clone()
@@ -373,6 +383,7 @@ pub(super) fn try_tantivy_search(
         context,
         next_cursor,
         engine: SearchEngineKind::Tantivy,
+        stale_index_skips: stale_skips,
     }))
 }
 
