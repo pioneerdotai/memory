@@ -22,9 +22,7 @@ impl Memvid {
             #[cfg(feature = "lex")]
             {
                 // If index exists on disk but not in memory, load it
-                if self.lex_index.is_none()
-                    && crate::memvid::lifecycle::has_lex_index(&self.toc)
-                {
+                if self.lex_index.is_none() && crate::memvid::lifecycle::has_lex_index(&self.toc) {
                     self.load_lex_index_from_manifest()?;
                 }
                 // Ensure Tantivy engine is running even if lex was already enabled

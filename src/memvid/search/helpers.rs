@@ -351,7 +351,10 @@ pub(crate) fn attach_temporal_metadata(memvid: &mut Memvid, hits: &mut [SearchHi
                                 canonical_cache.insert(frame_id, content);
                             }
                             None => {
-                                tracing::warn!(frame_id, "skipping temporal text for stale frame_id");
+                                tracing::warn!(
+                                    frame_id,
+                                    "skipping temporal text for stale frame_id"
+                                );
                             }
                         }
                     }

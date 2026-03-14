@@ -6,6 +6,7 @@ use super::helpers::attach_temporal_metadata;
 use super::helpers::{
     build_context, collect_token_occurrences, parse_cursor, timestamp_to_rfc3339,
 };
+use crate::Result;
 use crate::lex::compute_snippet_slices;
 use crate::memvid::frame::ChunkInfo;
 use crate::memvid::lifecycle::Memvid;
@@ -14,7 +15,6 @@ use crate::types::{
     FrameId, SearchEngineKind, SearchHit, SearchHitMetadata, SearchParams, SearchRequest,
     SearchResponse,
 };
-use crate::Result;
 use log::warn;
 use std::collections::HashSet;
 use std::time::Instant;
@@ -129,7 +129,10 @@ pub(super) fn try_tantivy_search(
         {
             Some(f) => f,
             None => {
-                tracing::warn!(frame_id = hit.frame_id, "skipping search hit with stale frame_id");
+                tracing::warn!(
+                    frame_id = hit.frame_id,
+                    "skipping search hit with stale frame_id"
+                );
                 stale_skips = stale_skips.saturating_add(1);
                 continue;
             }
@@ -288,7 +291,10 @@ pub(super) fn try_tantivy_search(
         {
             Some(f) => f,
             None => {
-                tracing::warn!(frame_id = hit.frame_id, "skipping stale frame_id in snippet assembly");
+                tracing::warn!(
+                    frame_id = hit.frame_id,
+                    "skipping stale frame_id in snippet assembly"
+                );
                 continue;
             }
         };

@@ -52,7 +52,10 @@ pub(super) fn search_with_lex_fallback(
         {
             Some(f) => f,
             None => {
-                tracing::warn!(frame_id = matched.frame_id, "skipping search hit with stale frame_id");
+                tracing::warn!(
+                    frame_id = matched.frame_id,
+                    "skipping search hit with stale frame_id"
+                );
                 stale_skips = stale_skips.saturating_add(1);
                 continue;
             }
@@ -100,7 +103,10 @@ pub(super) fn search_with_lex_fallback(
         {
             Some(f) => f,
             None => {
-                tracing::warn!(frame_id = matched.frame_id, "skipping stale frame_id in snippet assembly");
+                tracing::warn!(
+                    frame_id = matched.frame_id,
+                    "skipping stale frame_id in snippet assembly"
+                );
                 continue;
             }
         };

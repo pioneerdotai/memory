@@ -120,9 +120,7 @@ mod tests {
                 let mut mem = wrapper.lock().unwrap();
                 let opts = PutOptions::builder()
                     .uri("mv2://test/login".to_string())
-                    .search_text(
-                        "user clicked login button on the authentication page".to_string(),
-                    )
+                    .search_text("user clicked login button on the authentication page".to_string())
                     .build();
                 mem.put_bytes_with_options(b"login event data", opts)
                     .unwrap();
@@ -185,9 +183,7 @@ mod tests {
 
             let opts = PutOptions::builder()
                 .uri("mv2://test/login".to_string())
-                .search_text(
-                    "user clicked login button on the authentication page".to_string(),
-                )
+                .search_text("user clicked login button on the authentication page".to_string())
                 .build();
             mem.put_bytes_with_options(b"login event data", opts)
                 .unwrap();

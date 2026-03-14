@@ -1,5 +1,6 @@
 //! Timeline assembly helpers for `Memvid`.
 
+use crate::Result;
 use crate::io::time_index::{TimeIndexEntry, read_track as time_index_read};
 use crate::memvid::lifecycle::Memvid;
 #[cfg(feature = "temporal_track")]
@@ -10,7 +11,6 @@ use crate::types::{
     SearchHitTemporal, SearchHitTemporalAnchor, SearchHitTemporalMention, TemporalFilter,
     TemporalTrack,
 };
-use crate::Result;
 #[cfg(feature = "temporal_track")]
 use std::collections::HashSet;
 use std::num::NonZeroU64;
@@ -102,7 +102,10 @@ pub(crate) fn build_timeline(
         {
             Some(f) => f.clone(),
             None => {
-                tracing::warn!(frame_id = entry.frame_id, "skipping time index entry with out-of-range frame id");
+                tracing::warn!(
+                    frame_id = entry.frame_id,
+                    "skipping time index entry with out-of-range frame id"
+                );
                 continue;
             }
         };
