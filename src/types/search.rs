@@ -195,6 +195,7 @@ pub struct SearchResponse {
     pub stale_index_skips: u32,
 }
 
-fn is_zero(v: &u32) -> bool {
+#[allow(clippy::trivially_copy_pass_by_ref)]
+const fn is_zero(v: &u32) -> bool {
     *v == 0
 }

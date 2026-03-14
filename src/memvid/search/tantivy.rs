@@ -121,21 +121,18 @@ pub(super) fn try_tantivy_search(
     let mut evaluated = Vec::new();
     let mut stale_skips = 0u32;
     for hit in search_hits {
-        let frame_meta = match memvid
+        let Some(frame_meta) = memvid
             .toc
             .frames
             .get(usize::try_from(hit.frame_id).unwrap_or(usize::MAX))
             .cloned()
-        {
-            Some(f) => f,
-            None => {
-                tracing::warn!(
-                    frame_id = hit.frame_id,
-                    "skipping search hit with stale frame_id"
-                );
-                stale_skips = stale_skips.saturating_add(1);
-                continue;
-            }
+        else {
+            tracing::warn!(
+                frame_id = hit.frame_id,
+                "skipping search hit with stale frame_id"
+            );
+            stale_skips = stale_skips.saturating_add(1);
+            continue;
         };
         if let Some(uri_expected) = uri_filter {
             if !uri_matches(frame_meta.uri.as_deref(), uri_expected) {
@@ -283,20 +280,17 @@ pub(super) fn try_tantivy_search(
         if hits.len() == effective_top_k && produced >= offset {
             break;
         }
-        let frame_meta = match memvid
+        let Some(frame_meta) = memvid
             .toc
             .frames
             .get(usize::try_from(hit.frame_id).unwrap_or(usize::MAX))
             .cloned()
-        {
-            Some(f) => f,
-            None => {
-                tracing::warn!(
-                    frame_id = hit.frame_id,
-                    "skipping stale frame_id in snippet assembly"
-                );
-                continue;
-            }
+        else {
+            tracing::warn!(
+                frame_id = hit.frame_id,
+                "skipping stale frame_id in snippet assembly"
+            );
+            continue;
         };
         let uri = frame_meta
             .uri

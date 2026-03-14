@@ -46,19 +46,16 @@ pub(super) fn search_with_lex_fallback(
                 continue;
             }
         }
-        let frame_meta = match usize::try_from(matched.frame_id)
+        let Some(frame_meta) = usize::try_from(matched.frame_id)
             .ok()
             .and_then(|idx| memvid.toc.frames.get(idx))
-        {
-            Some(f) => f,
-            None => {
-                tracing::warn!(
-                    frame_id = matched.frame_id,
-                    "skipping search hit with stale frame_id"
-                );
-                stale_skips = stale_skips.saturating_add(1);
-                continue;
-            }
+        else {
+            tracing::warn!(
+                frame_id = matched.frame_id,
+                "skipping search hit with stale frame_id"
+            );
+            stale_skips = stale_skips.saturating_add(1);
+            continue;
         };
         let content_lower = matched.content.to_ascii_lowercase();
         let ctx = EvaluationContext {
@@ -95,20 +92,17 @@ pub(super) fn search_with_lex_fallback(
     let mut hits = Vec::new();
     let mut produced = 0usize;
     for (matched, slices) in evaluated {
-        let frame_meta = match memvid
+        let Some(frame_meta) = memvid
             .toc
             .frames
             .get(usize::try_from(matched.frame_id).unwrap_or(usize::MAX))
             .cloned()
-        {
-            Some(f) => f,
-            None => {
-                tracing::warn!(
-                    frame_id = matched.frame_id,
-                    "skipping stale frame_id in snippet assembly"
-                );
-                continue;
-            }
+        else {
+            tracing::warn!(
+                frame_id = matched.frame_id,
+                "skipping stale frame_id in snippet assembly"
+            );
+            continue;
         };
         let canonical = memvid.frame_content(&frame_meta)?;
         let canonical_limit = frame_meta.canonical_length.map_or_else(
