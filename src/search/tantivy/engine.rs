@@ -12,8 +12,16 @@ use tantivy::{Index, IndexReader, Term, doc};
 use tempfile::TempDir;
 
 /// Tantivy-backed search index used when the `lex` feature is enabled.
+///
+/// Field order is load-bearing for `Drop`: Rust drops struct fields in
+/// declaration order, so `work_dir` (the temporary directory backing the
+/// index) **must remain the last field**. The `index`, `reader`, and
+/// `index_writer` all keep file handles and lock files open inside that
+/// directory; if the `TempDir` were dropped first, its directory removal
+/// would fail on platforms that refuse to delete files with open handles
+/// (notably Windows), silently leaking one working directory per discarded
+/// engine. See https://github.com/memvid/memvid/issues/215.
 pub struct TantivyEngine {
-    pub(super) work_dir: TempDir,
     pub(super) index: Index,
     pub(super) _schema: Schema,
     pub(super) content: Field,
@@ -26,6 +34,20 @@ pub struct TantivyEngine {
     pub(super) index_writer: Option<IndexWriter>,
     pub(super) reader: IndexReader,
     pub(super) tokenizer: Option<String>,
+    // MUST be the last field — see the type-level comment above.
+    pub(super) work_dir: TempDir,
+}
+
+impl Drop for TantivyEngine {
+    fn drop(&mut self) {
+        // Release the exclusive writer (and its `.tantivy-writer.lock`) before
+        // the `work_dir` TempDir is removed during normal field drop. Without
+        // this the writer lock can still be held when the directory removal
+        // runs, leaking the working directory on Windows. See issue #215.
+        if let Some(writer) = self.index_writer.take() {
+            drop(writer);
+        }
+    }
 }
 
 /// Search hit returned from Tantivy queries.
