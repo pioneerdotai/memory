@@ -462,9 +462,15 @@ fn commit_per_put_survives_wal_growth() {
     let dir = TempDir::new().unwrap();
     let path = dir.path().join("wal_growth.mv2");
 
-    let mut mem = Memvid::create(&path).unwrap();
-    let initial_wal_size = read_wal_size(&path);
-    let mut max_wal_size = initial_wal_size;
+    // Capture the initial WAL size from a freshly created, then closed, store.
+    // The header is read with no writer open so it never races the store's
+    // file lock — on Windows a held byte-range lock makes a second handle's
+    // read fail with "another process has locked a portion of the file".
+    let initial_wal_size = {
+        let mem = Memvid::create(&path).unwrap();
+        drop(mem);
+        read_wal_size(&path)
+    };
 
     // Use text-indexable payloads of varying length so each commit drives the
     // full Tantivy rebuild path (`rebuild_indexes` → `flush_tantivy`) that
@@ -476,43 +482,59 @@ fn commit_per_put_survives_wal_growth() {
         "tango", "uniform", "victor", "whiskey", "x-ray", "yankee", "zulu",
     ];
 
-    for i in 0..60u32 {
-        // Build a ~1-3 KiB text body so commits exercise variable-size WAL
-        // entries similar to the upstream repro.
-        let body_len = 256usize + ((i as usize * 137) % 1024);
-        let mut body = String::with_capacity(body_len * 8);
-        let mut idx = i as usize;
-        while body.len() < body_len {
-            body.push_str(words[idx % words.len()]);
-            body.push(' ');
-            idx = idx.wrapping_add(1);
+    let doc_count = 24u32;
+    let frames_written;
+    {
+        let mut mem = Memvid::open(&path).unwrap();
+        for i in 0..doc_count {
+            // Ramp the body size from ~4 KiB up past the initial 64 KiB WAL
+            // region so the run deterministically crosses several
+            // `grow_wal_region` cycles (rather than relying on incidental
+            // wrap/checkpoint timing). Each commit then runs `rebuild_indexes`,
+            // which seeks to `payload_region_end()` — the path #230 corrupted.
+            let body_len = 4096usize + (i as usize) * 6144;
+            let mut body = String::with_capacity(body_len + 16);
+            let mut idx = i as usize;
+            while body.len() < body_len {
+                body.push_str(words[idx % words.len()]);
+                body.push(' ');
+                idx = idx.wrapping_add(1);
+            }
+            let opts = PutOptions {
+                uri: Some(format!("mv2://wal-growth/doc-{i}")),
+                title: Some(format!("doc-{i}")),
+                search_text: Some(body.clone()),
+                ..Default::default()
+            };
+            mem.put_bytes_with_options(body.as_bytes(), opts)
+                .unwrap_or_else(|e| panic!("put #{i} failed: {e}"));
+            mem.commit()
+                .unwrap_or_else(|e| panic!("commit #{i} failed: {e}"));
         }
-        let opts = PutOptions {
-            uri: Some(format!("mv2://wal-growth/doc-{i}")),
-            title: Some(format!("doc-{i}")),
-            search_text: Some(body.clone()),
-            ..Default::default()
-        };
-        mem.put_bytes_with_options(body.as_bytes(), opts)
-            .unwrap_or_else(|e| panic!("put #{i} failed: {e}"));
-        mem.commit()
-            .unwrap_or_else(|e| panic!("commit #{i} failed: {e}"));
-        max_wal_size = max_wal_size.max(read_wal_size(&path));
+        // Large `search_text` bodies are chunked, so each doc yields one or
+        // more frames; capture the true total before closing.
+        frames_written = mem.stats().unwrap().frame_count;
+        // mem dropped here, releasing the file lock before we read the header.
     }
 
+    // The WAL region only ever grows, so reading the size once the writer is
+    // closed reflects the maximum it reached during the run.
+    let final_wal_size = read_wal_size(&path);
     assert!(
-        max_wal_size > initial_wal_size,
-        "test must exercise WAL growth (initial={initial_wal_size}, max={max_wal_size})"
+        final_wal_size > initial_wal_size,
+        "test must exercise WAL growth (initial={initial_wal_size}, final={final_wal_size})"
     );
-
-    drop(mem);
 
     // Reopening forces a full WAL scan; checksum verification will fire here
     // if any record payload was clobbered by a stale-offset index write.
+    assert!(
+        frames_written >= u64::from(doc_count),
+        "expected at least one frame per doc (got {frames_written} for {doc_count} docs)"
+    );
     let reopened = Memvid::open_read_only(&path).unwrap();
     assert_eq!(
         reopened.stats().unwrap().frame_count,
-        60,
-        "all puts should be durable after WAL growth"
+        frames_written,
+        "all frames should be durable after WAL growth"
     );
 }
