@@ -1422,19 +1422,4 @@ mod tests {
             assert!(stats.capacity_bytes > 50 * 1024 * 1024);
         });
     }
-
-    #[test]
-    fn legacy_free_tier_capacity_is_unlimited() {
-        run_serial_test(|| {
-            let dir = tempdir().expect("tmp");
-            let path = dir.path().join("legacy-free-tier.mv2");
-
-            let mut mem = Memvid::create(&path).expect("create");
-            mem.toc.ticket_ref.issuer = "free-tier".to_owned();
-            mem.toc.ticket_ref.capacity_bytes = Tier::Free.capacity_bytes();
-
-            assert_eq!(mem.get_capacity(), Tier::Unlimited.capacity_bytes());
-            assert_eq!(mem.stats().expect("stats").tier, Tier::Unlimited);
-        });
-    }
 }

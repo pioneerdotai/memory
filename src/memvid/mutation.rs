@@ -2878,7 +2878,6 @@ impl Memvid {
 
     pub(crate) fn tier(&self) -> Tier {
         if self.toc.ticket_ref.issuer == "unlimited-tier"
-            || self.toc.ticket_ref.issuer == "free-tier"
             || self.toc.ticket_ref.capacity_bytes == Tier::Unlimited.capacity_bytes()
         {
             Tier::Unlimited
@@ -2892,9 +2891,7 @@ impl Memvid {
     }
 
     pub(crate) fn capacity_limit(&self) -> u64 {
-        if self.toc.ticket_ref.issuer == "unlimited-tier"
-            || self.toc.ticket_ref.issuer == "free-tier"
-        {
+        if self.toc.ticket_ref.issuer == "unlimited-tier" {
             Tier::Unlimited.capacity_bytes()
         } else if self.toc.ticket_ref.capacity_bytes != 0 {
             self.toc.ticket_ref.capacity_bytes
