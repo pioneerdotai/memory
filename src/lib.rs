@@ -172,8 +172,8 @@ pub use io::wal::{EmbeddedWal, WalRecord, WalStats};
 pub use lex::{LexIndex, LexIndexArtifact, LexIndexBuilder, LexSearchHit};
 pub use lock::FileLock;
 pub use memvid::{
-    BlobReader, EnrichmentHandle, EnrichmentStats, LockSettings, Memvid, OpenReadOptions,
-    SketchCandidate, SketchSearchOptions, SketchSearchStats,
+    BlobReader, CreateOptions, EnrichmentHandle, EnrichmentStats, LockSettings, Memvid,
+    OpenReadOptions, SketchCandidate, SketchSearchOptions, SketchSearchStats,
     mutation::{CommitMode, CommitOptions},
     start_enrichment_worker, start_enrichment_worker_with_embeddings,
 };
@@ -1408,18 +1408,47 @@ mod tests {
     }
 
     #[test]
-    fn default_capacity_is_unlimited() {
+    fn default_capacity_is_free_tier() {
         run_serial_test(|| {
             let dir = tempdir().expect("tmp");
-            let path = dir.path().join("unlimited-default.mv2");
+            let path = dir.path().join("free-default.mv2");
 
             let mem = Memvid::create(&path).expect("create");
+            assert_eq!(mem.get_capacity(), Tier::Free.capacity_bytes());
+
+            let stats = mem.stats().expect("stats");
+            assert_eq!(stats.tier, Tier::Free);
+            assert_eq!(stats.capacity_bytes, Tier::Free.capacity_bytes());
+        });
+    }
+
+    #[test]
+    fn create_with_tier_can_create_unlimited_memory() {
+        run_serial_test(|| {
+            let dir = tempdir().expect("tmp");
+            let path = dir.path().join("unlimited-explicit.mv2");
+
+            let mem = Memvid::create_with_tier(&path, Tier::Unlimited).expect("create");
             assert_eq!(mem.get_capacity(), Tier::Unlimited.capacity_bytes());
 
             let stats = mem.stats().expect("stats");
             assert_eq!(stats.tier, Tier::Unlimited);
             assert_eq!(stats.capacity_bytes, Tier::Unlimited.capacity_bytes());
             assert!(stats.capacity_bytes > 50 * 1024 * 1024);
+        });
+    }
+
+    #[test]
+    fn create_with_options_can_create_unlimited_memory() {
+        run_serial_test(|| {
+            let dir = tempdir().expect("tmp");
+            let path = dir.path().join("unlimited-options.mv2");
+
+            let mem =
+                Memvid::create_with_options(&path, CreateOptions::unlimited()).expect("create");
+
+            assert_eq!(mem.get_capacity(), Tier::Unlimited.capacity_bytes());
+            assert_eq!(mem.stats().expect("stats").tier, Tier::Unlimited);
         });
     }
 }

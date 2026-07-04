@@ -65,7 +65,7 @@ impl<'de> Deserialize<'de> for CanonicalEncoding {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Tier {
-    /// Legacy free tier with small capacity.
+    /// Free tier with small capacity.
     Free,
     /// Developer tier with higher caps.
     Dev,

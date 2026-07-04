@@ -2877,11 +2877,17 @@ impl Memvid {
     }
 
     pub(crate) fn tier(&self) -> Tier {
-        if self.toc.ticket_ref.issuer == "unlimited-tier"
-            || self.toc.ticket_ref.capacity_bytes == Tier::Unlimited.capacity_bytes()
-        {
-            Tier::Unlimited
-        } else if self.header.wal_size >= WAL_SIZE_LARGE {
+        match self.toc.ticket_ref.issuer.as_str() {
+            "free-tier" => return Tier::Free,
+            "dev-tier" => return Tier::Dev,
+            "enterprise-tier" => return Tier::Enterprise,
+            "unlimited-tier" => return Tier::Unlimited,
+            _ => {}
+        }
+        if self.toc.ticket_ref.capacity_bytes == Tier::Unlimited.capacity_bytes() {
+            return Tier::Unlimited;
+        }
+        if self.header.wal_size >= WAL_SIZE_LARGE {
             Tier::Enterprise
         } else if self.header.wal_size >= WAL_SIZE_MEDIUM {
             Tier::Dev

@@ -110,6 +110,32 @@ pub struct OpenReadOptions {
     pub allow_repair: bool,
 }
 
+/// Controls creation of a new `.mv2` memory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CreateOptions {
+    pub tier: Tier,
+}
+
+impl Default for CreateOptions {
+    fn default() -> Self {
+        Self { tier: Tier::Free }
+    }
+}
+
+impl CreateOptions {
+    #[must_use]
+    pub const fn new(tier: Tier) -> Self {
+        Self { tier }
+    }
+
+    #[must_use]
+    pub const fn unlimited() -> Self {
+        Self {
+            tier: Tier::Unlimited,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct LockSettings {
     pub timeout_ms: u64,
@@ -135,6 +161,18 @@ impl Memvid {
     /// Create a new, empty `.mv2` file with an embedded WAL and empty TOC.
     /// The file is locked exclusively for the lifetime of the handle.
     pub fn create<P: AsRef<Path>>(path: P) -> Result<Self> {
+        Self::create_with_options(path, CreateOptions::default())
+    }
+
+    /// Create a new, empty `.mv2` file using the requested capacity tier.
+    /// The file is locked exclusively for the lifetime of the handle.
+    pub fn create_with_tier<P: AsRef<Path>>(path: P, tier: Tier) -> Result<Self> {
+        Self::create_with_options(path, CreateOptions::new(tier))
+    }
+
+    /// Create a new, empty `.mv2` file using explicit creation options.
+    /// The file is locked exclusively for the lifetime of the handle.
+    pub fn create_with_options<P: AsRef<Path>>(path: P, options: CreateOptions) -> Result<Self> {
         let path_ref = path.as_ref();
         ensure_single_file(path_ref)?;
 
@@ -157,7 +195,7 @@ impl Memvid {
             toc_checksum: [0u8; 32],
         };
 
-        let mut toc = empty_toc();
+        let mut toc = empty_toc_with_options(options);
         // If lex feature is enabled, set the catalog flag immediately
         #[cfg(feature = "lex")]
         {
@@ -867,17 +905,10 @@ impl Memvid {
 
     /// Unbind this file from its dashboard memory.
     ///
-    /// This clears the binding and reverts to the default unlimited tier capacity.
+    /// This clears the binding and reverts to the default free tier capacity.
     pub fn unbind_memory(&mut self) -> Result<()> {
         self.toc.memory_binding = None;
-        // Revert to the default unbound tier.
-        self.toc.ticket_ref = crate::types::TicketRef {
-            issuer: "unlimited-tier".into(),
-            seq_no: 1,
-            expires_in_secs: 0,
-            capacity_bytes: crate::types::Tier::Unlimited.capacity_bytes(),
-            verified: false,
-        };
+        self.toc.ticket_ref = ticket_ref_for_tier(crate::types::Tier::Free);
         self.dirty = true;
         Ok(())
     }
@@ -1169,7 +1200,7 @@ pub(crate) fn prepare_toc_bytes(toc: &mut Toc) -> Result<Vec<u8>> {
     toc.encode()
 }
 
-pub(crate) fn empty_toc() -> Toc {
+fn empty_toc_with_options(options: CreateOptions) -> Toc {
     Toc {
         toc_version: 0,
         segments: Vec::new(),
@@ -1181,18 +1212,31 @@ pub(crate) fn empty_toc() -> Toc {
         logic_mesh: None,
         sketch_track: None,
         segment_catalog: SegmentCatalog::default(),
-        ticket_ref: TicketRef {
-            issuer: "unlimited-tier".into(),
-            seq_no: 1,
-            expires_in_secs: 0,
-            capacity_bytes: Tier::Unlimited.capacity_bytes(),
-            verified: false,
-        },
+        ticket_ref: ticket_ref_for_tier(options.tier),
         memory_binding: None,
         replay_manifest: None,
         enrichment_queue: crate::types::EnrichmentQueueManifest::default(),
         merkle_root: [0u8; 32],
         toc_checksum: [0u8; 32],
+    }
+}
+
+fn ticket_ref_for_tier(tier: Tier) -> TicketRef {
+    TicketRef {
+        issuer: tier_issuer(tier).into(),
+        seq_no: 1,
+        expires_in_secs: 0,
+        capacity_bytes: tier.capacity_bytes(),
+        verified: false,
+    }
+}
+
+fn tier_issuer(tier: Tier) -> &'static str {
+    match tier {
+        Tier::Free => "free-tier",
+        Tier::Dev => "dev-tier",
+        Tier::Enterprise => "enterprise-tier",
+        Tier::Unlimited => "unlimited-tier",
     }
 }
 

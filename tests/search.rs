@@ -53,6 +53,30 @@ fn create_searchable_memory(path: &std::path::Path) {
     mem.commit().unwrap();
 }
 
+#[cfg(feature = "lex")]
+fn search_uris(mem: &mut Memvid, query: &str, scope: Option<&str>, top_k: usize) -> Vec<String> {
+    mem.search(SearchRequest {
+        query: query.to_string(),
+        top_k,
+        snippet_chars: 200,
+        uri: None,
+        scope: scope.map(str::to_string),
+        cursor: None,
+        #[cfg(feature = "temporal_track")]
+        temporal: None,
+        as_of_frame: None,
+        as_of_ts: None,
+        no_sketch: true,
+        acl_context: None,
+        acl_enforcement_mode: memvid_core::types::AclEnforcementMode::Audit,
+    })
+    .unwrap()
+    .hits
+    .into_iter()
+    .map(|hit| hit.uri)
+    .collect()
+}
+
 /// Test basic lexical search.
 #[test]
 #[cfg(feature = "lex")]
@@ -212,6 +236,69 @@ fn search_with_scope() {
             "Results should be from physics scope"
         );
     }
+}
+
+/// Test that URI scopes filter candidates before top_k ranking is applied.
+#[test]
+#[cfg(feature = "lex")]
+fn search_scope_filters_before_top_k() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("scope_prefilter.mv2");
+
+    {
+        let mut mem = Memvid::create(&path).unwrap();
+        mem.enable_lex().unwrap();
+        let docs = [
+            (
+                "mv2://workspace/ws1/thread/t1/chunk/1",
+                "sharedneedle local note for thread one",
+            ),
+            (
+                "mv2://workspace/ws1/thread/t2/chunk/1",
+                "sharedneedle sharedneedle sharedneedle sharedneedle dominant note for thread two",
+            ),
+        ];
+        for (uri, text) in docs {
+            let opts = PutOptions {
+                uri: Some(uri.to_string()),
+                search_text: Some(text.to_string()),
+                ..Default::default()
+            };
+            mem.put_bytes_with_options(text.as_bytes(), opts).unwrap();
+        }
+        mem.commit().unwrap();
+    }
+
+    let mut mem = Memvid::open_read_only(&path).unwrap();
+    let no_scope_top = search_uris(&mut mem, "sharedneedle", None, 1);
+    assert_eq!(
+        no_scope_top,
+        vec!["mv2://workspace/ws1/thread/t2/chunk/1".to_string()],
+        "fixture should make thread two the global top hit"
+    );
+
+    let thread_one = search_uris(
+        &mut mem,
+        "sharedneedle",
+        Some("mv2://workspace/ws1/thread/t1/"),
+        1,
+    );
+    assert_eq!(
+        thread_one,
+        vec!["mv2://workspace/ws1/thread/t1/chunk/1".to_string()],
+        "scope must be applied before top_k, not after global ranking"
+    );
+
+    let thread_two = search_uris(
+        &mut mem,
+        "sharedneedle",
+        Some("mv2://workspace/ws1/thread/t2/"),
+        1,
+    );
+    assert_eq!(
+        thread_two,
+        vec!["mv2://workspace/ws1/thread/t2/chunk/1".to_string()]
+    );
 }
 
 /// Test search returns snippets.

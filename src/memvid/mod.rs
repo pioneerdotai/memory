@@ -34,5 +34,5 @@ pub use enrichment::{
     start_enrichment_worker_with_embeddings,
 };
 pub use frame::BlobReader;
-pub use lifecycle::{LockSettings, Memvid, OpenReadOptions};
+pub use lifecycle::{CreateOptions, LockSettings, Memvid, OpenReadOptions};
 pub use sketch::{SketchCandidate, SketchSearchOptions, SketchSearchStats};
