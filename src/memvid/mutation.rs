@@ -1247,17 +1247,44 @@ impl Memvid {
         Ok(())
     }
 
+    fn frame_payload_append_offset(&self) -> u64 {
+        let offset = self.payload_region_end();
+
+        // Replay segments are not derived from frame payloads and are not
+        // rewritten by a normal frame commit. Keep frame appends behind them
+        // when the replay feature is active.
+        #[cfg(feature = "replay")]
+        {
+            let mut offset = offset;
+            if let Some(manifest) = self.toc.replay_manifest.as_ref() {
+                if let Some(end) = manifest.segment_offset.checked_add(manifest.segment_size) {
+                    offset = offset.max(end);
+                }
+            }
+            offset
+        }
+
+        #[cfg(not(feature = "replay"))]
+        {
+            offset
+        }
+    }
+
     fn apply_records(&mut self, records: Vec<WalRecord>) -> Result<IngestionDelta> {
         let mut delta = IngestionDelta::default();
         if records.is_empty() {
             return Ok(delta);
         }
 
-        // Use data_end instead of payload_region_end to avoid overwriting
-        // vec/lex/time segments that were written after the payload region.
-        // payload_region_end() only considers frame payloads, but data_end tracks
-        // all data including index segments.
-        let mut data_cursor = self.data_end;
+        // Frame payloads should be appended at the compact payload boundary.
+        //
+        // `data_end` may point past derived embedded indexes from a previous
+        // commit after reopening a file. Writing new payloads there leaves the
+        // old index/TOC layer stranded in the file and creates storage
+        // amplification for the common `open -> append -> commit -> close`
+        // lifecycle. Derived indexes are rebuilt later in this commit, so they
+        // are safe to overwrite.
+        let mut data_cursor = self.frame_payload_append_offset();
         let mut sequence_to_frame: HashMap<u64, FrameId> = HashMap::new();
 
         if !records.is_empty() {
@@ -1525,7 +1552,7 @@ impl Memvid {
                     }
                 }
             }
-            self.data_end = self.data_end.max(data_cursor);
+            self.data_end = data_cursor;
         }
 
         // Second pass: resolve any orphan DocumentChunk frames that are missing parent_id.

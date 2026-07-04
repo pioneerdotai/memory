@@ -234,6 +234,74 @@ fn multiple_commits_preserve_data() {
     );
 }
 
+/// Regression for reopen-per-append storage amplification.
+///
+/// A common service lifecycle is `open -> append -> commit -> close` for each
+/// small write. That must overwrite the previous derived index/TOC layer on
+/// each commit instead of appending a new full layer after the old one.
+#[test]
+#[cfg(feature = "lex")]
+fn reopen_per_append_keeps_single_compact_index_layer() {
+    const DOCS: u32 = 150;
+    const MAX_REASONABLE_SIZE: u64 = 8 * 1024 * 1024;
+
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("reopen_amplification.mv2");
+
+    {
+        let mut mem = Memvid::create(&path).unwrap();
+        mem.enable_lex().unwrap();
+        mem.commit().unwrap();
+    }
+
+    for i in 0..DOCS {
+        let mut mem = Memvid::open(&path).unwrap();
+        let text =
+            format!("pioneer memory reopen amplification regression document {i} alpha beta gamma");
+        let opts = PutOptions {
+            uri: Some(format!("mv2://reopen-amplification/{i}")),
+            title: Some(format!("doc-{i}")),
+            search_text: Some(text.clone()),
+            ..Default::default()
+        };
+        mem.put_bytes_with_options(text.as_bytes(), opts)
+            .unwrap_or_else(|err| panic!("put {i} failed: {err}"));
+        mem.commit()
+            .unwrap_or_else(|err| panic!("commit {i} failed: {err}"));
+    }
+
+    let mut mem = Memvid::open_read_only(&path).unwrap();
+    let stats = mem.stats().unwrap();
+    assert_eq!(stats.frame_count, u64::from(DOCS));
+    assert!(stats.has_lex_index, "lex index should be persisted");
+
+    let result = mem.search(memvid_core::SearchRequest {
+        query: "reopen amplification regression".into(),
+        top_k: 5,
+        snippet_chars: 160,
+        uri: None,
+        scope: None,
+        cursor: None,
+        #[cfg(feature = "temporal_track")]
+        temporal: None,
+        as_of_frame: None,
+        as_of_ts: None,
+        no_sketch: false,
+        acl_context: None,
+        acl_enforcement_mode: memvid_core::AclEnforcementMode::Audit,
+    });
+    assert!(
+        result.unwrap().total_hits > 0,
+        "lex search should still work"
+    );
+
+    let size = fs::metadata(&path).unwrap().len();
+    assert!(
+        size <= MAX_REASONABLE_SIZE,
+        "reopen-per-append produced an oversized file: {size} bytes for {DOCS} small docs"
+    );
+}
+
 /// Test commit without changes is a no-op.
 #[test]
 fn commit_without_changes() {
