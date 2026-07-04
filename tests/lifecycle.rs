@@ -5,6 +5,40 @@ use memvid_core::{Memvid, PutOptions, VerificationStatus};
 use std::fs;
 use tempfile::TempDir;
 
+#[cfg(feature = "lex")]
+fn search_uris(mem: &mut Memvid, query: &str, top_k: usize) -> Vec<String> {
+    mem.search(memvid_core::SearchRequest {
+        query: query.to_string(),
+        top_k,
+        snippet_chars: 160,
+        uri: None,
+        scope: None,
+        cursor: None,
+        #[cfg(feature = "temporal_track")]
+        temporal: None,
+        as_of_frame: None,
+        as_of_ts: None,
+        no_sketch: true,
+        acl_context: None,
+        acl_enforcement_mode: memvid_core::AclEnforcementMode::Audit,
+    })
+    .unwrap()
+    .hits
+    .into_iter()
+    .map(|hit| hit.uri)
+    .collect()
+}
+
+#[cfg(feature = "lex")]
+fn put_search_doc(mem: &mut Memvid, uri: &str, text: &str) {
+    let opts = PutOptions {
+        uri: Some(uri.to_string()),
+        search_text: Some(text.to_string()),
+        ..Default::default()
+    };
+    mem.put_bytes_with_options(text.as_bytes(), opts).unwrap();
+}
+
 /// Test basic create and open lifecycle.
 #[test]
 fn create_and_open() {
@@ -553,6 +587,114 @@ fn reopen_append_preserves_existing_search_ranking() {
         after, before,
         "reopen append should not change ranking for an existing query"
     );
+}
+
+#[test]
+#[cfg(feature = "lex")]
+fn reopen_append_matches_single_session_search_quality_suite() {
+    let dir = TempDir::new().unwrap();
+    let batch_path = dir.path().join("search_quality_batch.mv2");
+    let reopen_path = dir.path().join("search_quality_reopen.mv2");
+
+    let initial_docs = [
+        (
+            "mv2://quality/rust-ownership",
+            "rust ownership borrowing lifetimes compiler memory safety",
+        ),
+        (
+            "mv2://quality/rust-async",
+            "rust async await futures runtime task scheduling",
+        ),
+        (
+            "mv2://quality/python-dataframe",
+            "python pandas dataframe groupby analysis notebook",
+        ),
+        (
+            "mv2://quality/ml-transformers",
+            "machine learning transformers attention neural networks embeddings",
+        ),
+        (
+            "mv2://quality/database-index",
+            "database indexing btree query planner transaction log",
+        ),
+        (
+            "mv2://quality/vector-search",
+            "vector search embeddings nearest neighbor index recall",
+        ),
+        (
+            "mv2://quality/climate-policy",
+            "climate sustainability renewable energy carbon policy",
+        ),
+        (
+            "mv2://quality/temporal-memory",
+            "temporal memory timeline events timestamp retrieval",
+        ),
+    ];
+    let appended_docs = [
+        (
+            "mv2://quality/rust-reopen",
+            "rust borrow checker ownership lifetime practical example",
+        ),
+        (
+            "mv2://quality/vector-reopen",
+            "vector embeddings semantic search nearest neighbor retrieval",
+        ),
+        (
+            "mv2://quality/database-reopen",
+            "database query planner indexing btree storage engine",
+        ),
+        (
+            "mv2://quality/unrelated-reopen",
+            "orchestra violin concert hall acoustic performance",
+        ),
+    ];
+    let queries = [
+        "rust ownership",
+        "python dataframe",
+        "machine learning embeddings",
+        "database indexing",
+        "vector search",
+        "renewable carbon",
+        "temporal memory",
+    ];
+
+    {
+        let mut mem = Memvid::create(&batch_path).unwrap();
+        mem.enable_lex().unwrap();
+        for (uri, text) in initial_docs.iter().chain(appended_docs.iter()) {
+            put_search_doc(&mut mem, uri, text);
+        }
+        mem.commit().unwrap();
+    }
+
+    {
+        let mut mem = Memvid::create(&reopen_path).unwrap();
+        mem.enable_lex().unwrap();
+        for (uri, text) in initial_docs {
+            put_search_doc(&mut mem, uri, text);
+        }
+        mem.commit().unwrap();
+    }
+    for (uri, text) in appended_docs {
+        let mut mem = Memvid::open(&reopen_path).unwrap();
+        put_search_doc(&mut mem, uri, text);
+        mem.commit().unwrap();
+    }
+
+    let mut batch = Memvid::open_read_only(&batch_path).unwrap();
+    let mut reopen = Memvid::open_read_only(&reopen_path).unwrap();
+    for query in queries {
+        let batch_uris = search_uris(&mut batch, query, 5);
+        let reopen_uris = search_uris(&mut reopen, query, 5);
+        assert!(
+            !batch_uris.is_empty(),
+            "quality fixture query should produce hits: {query}"
+        );
+        assert_eq!(
+            reopen_uris, batch_uris,
+            "reopen append should match single-session ranking for query: {query}"
+        );
+    }
 }
 
 #[test]
