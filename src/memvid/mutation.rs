@@ -2877,7 +2877,12 @@ impl Memvid {
     }
 
     pub(crate) fn tier(&self) -> Tier {
-        if self.header.wal_size >= WAL_SIZE_LARGE {
+        if self.toc.ticket_ref.issuer == "unlimited-tier"
+            || self.toc.ticket_ref.issuer == "free-tier"
+            || self.toc.ticket_ref.capacity_bytes == Tier::Unlimited.capacity_bytes()
+        {
+            Tier::Unlimited
+        } else if self.header.wal_size >= WAL_SIZE_LARGE {
             Tier::Enterprise
         } else if self.header.wal_size >= WAL_SIZE_MEDIUM {
             Tier::Dev
@@ -2887,7 +2892,11 @@ impl Memvid {
     }
 
     pub(crate) fn capacity_limit(&self) -> u64 {
-        if self.toc.ticket_ref.capacity_bytes != 0 {
+        if self.toc.ticket_ref.issuer == "unlimited-tier"
+            || self.toc.ticket_ref.issuer == "free-tier"
+        {
+            Tier::Unlimited.capacity_bytes()
+        } else if self.toc.ticket_ref.capacity_bytes != 0 {
             self.toc.ticket_ref.capacity_bytes
         } else {
             self.tier().capacity_bytes()
@@ -2896,8 +2905,7 @@ impl Memvid {
 
     /// Get current storage capacity in bytes.
     ///
-    /// Returns the capacity from the applied ticket, or the default
-    /// tier capacity (1 GB for free tier).
+    /// Returns the capacity from the applied ticket, or the default unlimited tier capacity.
     #[must_use]
     pub fn get_capacity(&self) -> u64 {
         self.capacity_limit()

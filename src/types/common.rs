@@ -65,12 +65,14 @@ impl<'de> Deserialize<'de> for CanonicalEncoding {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Tier {
-    /// Free tier with small capacity.
+    /// Legacy free tier with small capacity.
     Free,
     /// Developer tier with higher caps.
     Dev,
     /// Enterprise tier with the largest caps.
     Enterprise,
+    /// Unlimited tier with no nominal capacity ceiling.
+    Unlimited,
 }
 
 impl Tier {
@@ -81,6 +83,7 @@ impl Tier {
             Tier::Free => 50 * 1024 * 1024,              // 50 MB
             Tier::Dev => 2 * 1024 * 1024 * 1024,         // 2 GB
             Tier::Enterprise => 10 * 1024 * 1024 * 1024, // 10 GB
+            Tier::Unlimited => u64::MAX,
         }
     }
 }

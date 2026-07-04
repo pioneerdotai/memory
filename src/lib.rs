@@ -1406,4 +1406,35 @@ mod tests {
             assert!(matches!(err, MemvidError::CapacityExceeded { .. }));
         });
     }
+
+    #[test]
+    fn default_capacity_is_unlimited() {
+        run_serial_test(|| {
+            let dir = tempdir().expect("tmp");
+            let path = dir.path().join("unlimited-default.mv2");
+
+            let mem = Memvid::create(&path).expect("create");
+            assert_eq!(mem.get_capacity(), Tier::Unlimited.capacity_bytes());
+
+            let stats = mem.stats().expect("stats");
+            assert_eq!(stats.tier, Tier::Unlimited);
+            assert_eq!(stats.capacity_bytes, Tier::Unlimited.capacity_bytes());
+            assert!(stats.capacity_bytes > 50 * 1024 * 1024);
+        });
+    }
+
+    #[test]
+    fn legacy_free_tier_capacity_is_unlimited() {
+        run_serial_test(|| {
+            let dir = tempdir().expect("tmp");
+            let path = dir.path().join("legacy-free-tier.mv2");
+
+            let mut mem = Memvid::create(&path).expect("create");
+            mem.toc.ticket_ref.issuer = "free-tier".to_owned();
+            mem.toc.ticket_ref.capacity_bytes = Tier::Free.capacity_bytes();
+
+            assert_eq!(mem.get_capacity(), Tier::Unlimited.capacity_bytes());
+            assert_eq!(mem.stats().expect("stats").tier, Tier::Unlimited);
+        });
+    }
 }

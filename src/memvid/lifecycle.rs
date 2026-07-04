@@ -867,15 +867,15 @@ impl Memvid {
 
     /// Unbind this file from its dashboard memory.
     ///
-    /// This clears the binding and reverts to free tier capacity (1 GB).
+    /// This clears the binding and reverts to the default unlimited tier capacity.
     pub fn unbind_memory(&mut self) -> Result<()> {
         self.toc.memory_binding = None;
-        // Revert to free tier
+        // Revert to the default unbound tier.
         self.toc.ticket_ref = crate::types::TicketRef {
-            issuer: "free-tier".into(),
+            issuer: "unlimited-tier".into(),
             seq_no: 1,
             expires_in_secs: 0,
-            capacity_bytes: crate::types::Tier::Free.capacity_bytes(),
+            capacity_bytes: crate::types::Tier::Unlimited.capacity_bytes(),
             verified: false,
         };
         self.dirty = true;
@@ -1182,10 +1182,10 @@ pub(crate) fn empty_toc() -> Toc {
         sketch_track: None,
         segment_catalog: SegmentCatalog::default(),
         ticket_ref: TicketRef {
-            issuer: "free-tier".into(),
+            issuer: "unlimited-tier".into(),
             seq_no: 1,
             expires_in_secs: 0,
-            capacity_bytes: Tier::Free.capacity_bytes(),
+            capacity_bytes: Tier::Unlimited.capacity_bytes(),
             verified: false,
         },
         memory_binding: None,
