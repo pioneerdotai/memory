@@ -456,6 +456,106 @@ fn reopen_delete_then_append_keeps_tombstone_and_search_consistent() {
 }
 
 #[test]
+#[cfg(feature = "lex")]
+fn reopen_append_preserves_existing_search_ranking() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("ranking_reopen.mv2");
+
+    {
+        let mut mem = Memvid::create(&path).unwrap();
+        mem.enable_lex().unwrap();
+        let docs = [
+            ("mv2://rank/exact", "alpha beta gamma gamma precise match"),
+            ("mv2://rank/secondary", "alpha beta supporting context"),
+            ("mv2://rank/alpha", "alpha only unrelated"),
+            ("mv2://rank/beta", "beta only unrelated"),
+        ];
+        for (uri, text) in docs {
+            let opts = PutOptions {
+                uri: Some(uri.to_string()),
+                search_text: Some(text.to_string()),
+                ..Default::default()
+            };
+            mem.put_bytes_with_options(text.as_bytes(), opts).unwrap();
+        }
+        mem.commit().unwrap();
+    }
+
+    let before = {
+        let mut mem = Memvid::open_read_only(&path).unwrap();
+        let response = mem
+            .search(memvid_core::SearchRequest {
+                query: "alpha beta".into(),
+                top_k: 10,
+                snippet_chars: 160,
+                uri: None,
+                scope: None,
+                cursor: None,
+                #[cfg(feature = "temporal_track")]
+                temporal: None,
+                as_of_frame: None,
+                as_of_ts: None,
+                no_sketch: true,
+                acl_context: None,
+                acl_enforcement_mode: memvid_core::AclEnforcementMode::Audit,
+            })
+            .unwrap();
+        response
+            .hits
+            .into_iter()
+            .map(|hit| hit.uri)
+            .collect::<Vec<_>>()
+    };
+    assert!(
+        before.len() >= 2,
+        "test corpus should produce multiple ranked hits"
+    );
+
+    {
+        let mut mem = Memvid::open(&path).unwrap();
+        let text = "omega epsilon zeta unrelated append";
+        let opts = PutOptions {
+            uri: Some("mv2://rank/unrelated-append".to_string()),
+            search_text: Some(text.to_string()),
+            ..Default::default()
+        };
+        mem.put_bytes_with_options(text.as_bytes(), opts).unwrap();
+        mem.commit().unwrap();
+    }
+
+    let after = {
+        let mut mem = Memvid::open_read_only(&path).unwrap();
+        let response = mem
+            .search(memvid_core::SearchRequest {
+                query: "alpha beta".into(),
+                top_k: 10,
+                snippet_chars: 160,
+                uri: None,
+                scope: None,
+                cursor: None,
+                #[cfg(feature = "temporal_track")]
+                temporal: None,
+                as_of_frame: None,
+                as_of_ts: None,
+                no_sketch: true,
+                acl_context: None,
+                acl_enforcement_mode: memvid_core::AclEnforcementMode::Audit,
+            })
+            .unwrap();
+        response
+            .hits
+            .into_iter()
+            .map(|hit| hit.uri)
+            .collect::<Vec<_>>()
+    };
+
+    assert_eq!(
+        after, before,
+        "reopen append should not change ranking for an existing query"
+    );
+}
+
+#[test]
 fn reopen_append_keeps_vec_index_searchable() {
     let dir = TempDir::new().unwrap();
     let path = dir.path().join("vec_reopen.mv2");
