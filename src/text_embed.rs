@@ -25,7 +25,6 @@
 
 use crate::types::embedding::EmbeddingProvider;
 use crate::{MemvidError, Result};
-use ndarray::Array;
 use ort::session::{Session, builder::GraphOptimizationLevel};
 use ort::value::Tensor;
 use std::collections::hash_map::DefaultHasher;
@@ -50,7 +49,7 @@ use tokenizers::{
 mod stderr_suppress {
     use std::fs::File;
     use std::io;
-    use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
+    use std::os::unix::io::{AsRawFd, RawFd};
 
     pub struct StderrSuppressor {
         original_stderr: RawFd,
@@ -660,25 +659,6 @@ impl LocalTextEmbedder {
             .collect();
         let max_length = input_ids.len();
 
-        // Create input arrays
-        let input_ids_array = Array::from_shape_vec((1, max_length), input_ids).map_err(|e| {
-            MemvidError::EmbeddingFailed {
-                reason: format!("Failed to create input_ids array: {}", e).into(),
-            }
-        })?;
-        let attention_mask_array =
-            Array::from_shape_vec((1, max_length), attention_mask).map_err(|e| {
-                MemvidError::EmbeddingFailed {
-                    reason: format!("Failed to create attention_mask array: {}", e).into(),
-                }
-            })?;
-        let token_type_ids_array =
-            Array::from_shape_vec((1, max_length), token_type_ids).map_err(|e| {
-                MemvidError::EmbeddingFailed {
-                    reason: format!("Failed to create token_type_ids array: {}", e).into(),
-                }
-            })?;
-
         // Update last used timestamp
         if let Ok(mut last) = self.last_used.lock() {
             *last = Instant::now();
@@ -697,24 +677,30 @@ impl LocalTextEmbedder {
             })?;
 
         // Get input and output names from session
-        let input_names: Vec<String> = session.inputs.iter().map(|i| i.name.clone()).collect();
+        let input_names: Vec<String> = session
+            .inputs()
+            .iter()
+            .map(|i| i.name().to_owned())
+            .collect();
         let output_name = session
-            .outputs
+            .outputs()
             .first()
-            .map(|o| o.name.clone())
+            .map(|o| o.name().to_owned())
             .unwrap_or_else(|| "last_hidden_state".to_string());
 
         // Create tensors
         let input_ids_tensor =
-            Tensor::from_array(input_ids_array).map_err(|e| MemvidError::EmbeddingFailed {
-                reason: format!("Failed to create input_ids tensor: {}", e).into(),
+            Tensor::from_array(([1usize, max_length], input_ids)).map_err(|e| {
+                MemvidError::EmbeddingFailed {
+                    reason: format!("Failed to create input_ids tensor: {}", e).into(),
+                }
             })?;
-        let attention_mask_tensor =
-            Tensor::from_array(attention_mask_array).map_err(|e| MemvidError::EmbeddingFailed {
+        let attention_mask_tensor = Tensor::from_array(([1usize, max_length], attention_mask))
+            .map_err(|e| MemvidError::EmbeddingFailed {
                 reason: format!("Failed to create attention_mask tensor: {}", e).into(),
             })?;
-        let token_type_ids_tensor =
-            Tensor::from_array(token_type_ids_array).map_err(|e| MemvidError::EmbeddingFailed {
+        let token_type_ids_tensor = Tensor::from_array(([1usize, max_length], token_type_ids))
+            .map_err(|e| MemvidError::EmbeddingFailed {
                 reason: format!("Failed to create token_type_ids tensor: {}", e).into(),
             })?;
 

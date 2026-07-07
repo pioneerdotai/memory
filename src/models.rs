@@ -375,7 +375,7 @@ enum OnnxSmokeError {
 fn run_onnx_smoke_test(path: &Path) -> std::result::Result<u128, OnnxSmokeError> {
     use ort::session::Session;
 
-    let builder = Session::builder().map_err(|err| OnnxSmokeError::Engine(err.to_string()))?;
+    let mut builder = Session::builder().map_err(|err| OnnxSmokeError::Engine(err.to_string()))?;
     let start = Instant::now();
     let session = builder
         .commit_from_file(path)
