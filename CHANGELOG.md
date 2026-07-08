@@ -26,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Atomic commits ensure consistency
 - File locking prevents concurrent write conflicts
 
+## [3.1.2] - 2026-07-08
+
+### Changed
+- Disabled the `tokenizers` `esaxx_fast` default path for vector builds so Windows MSVC consumers avoid mixed CRT link failures; projects that need the C++ suffix-array trainer can opt in with `tokenizers_esaxx_fast`.
+
 ## [2.0.0] - 2026-01-05
 
 ### Added
@@ -46,5 +51,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-[Unreleased]: https://github.com/memvid/memvid/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/memvid/memvid/compare/v3.1.2...HEAD
+[3.1.2]: https://github.com/memvid/memvid/compare/v3.1.1...v3.1.2
 [2.0.0]: https://github.com/memvid/memvid/releases/tag/v2.0.0
