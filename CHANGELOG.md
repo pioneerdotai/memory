@@ -26,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Atomic commits ensure consistency
 - File locking prevents concurrent write conflicts
 
+## [3.1.3] - 2026-09-20
+
+### Fixed
+- Disabled Tantivy's redundant automatic reader reload because all commit paths already reload synchronously, preventing macOS `.tantivy-meta.lock` races after commits.
+
 ## [3.1.2] - 2026-07-08
 
 ### Changed
@@ -51,6 +56,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-[Unreleased]: https://github.com/memvid/memvid/compare/v3.1.2...HEAD
+[Unreleased]: https://github.com/memvid/memvid/compare/v3.1.3...HEAD
+[3.1.3]: https://github.com/memvid/memvid/compare/v3.1.2...v3.1.3
 [3.1.2]: https://github.com/memvid/memvid/compare/v3.1.1...v3.1.2
 [2.0.0]: https://github.com/memvid/memvid/releases/tag/v2.0.0

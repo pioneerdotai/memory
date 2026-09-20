@@ -5,6 +5,7 @@ use crate::search::parser::ParsedQuery;
 use crate::types::{Frame, FrameId};
 use crate::{MemvidError, Result};
 use blake3::{Hasher, hash};
+use tantivy::ReloadPolicy;
 use tantivy::collector::TopDocs;
 use tantivy::indexer::IndexWriter;
 use tantivy::schema::{Field, OwnedValue, Schema, TantivyDocument};
@@ -138,9 +139,18 @@ impl TantivyEngine {
             .map_err(|err| MemvidError::Tantivy {
                 reason: err.to_string(),
             })?;
-        let reader = index.reader().map_err(|err| MemvidError::Tantivy {
-            reason: err.to_string(),
-        })?;
+        // Commits below reload the reader synchronously before returning. Keeping
+        // Tantivy's default commit watcher enabled would trigger a second,
+        // concurrent reload against the same temporary directory. On macOS that
+        // can race on `.tantivy-meta.lock` and fail with `EINVAL`, even though the
+        // synchronous reload has already made the commit searchable.
+        let reader = index
+            .reader_builder()
+            .reload_policy(ReloadPolicy::Manual)
+            .try_into()
+            .map_err(|err: tantivy::TantivyError| MemvidError::Tantivy {
+                reason: err.to_string(),
+            })?;
 
         Ok(Self {
             work_dir: dir,
@@ -425,5 +435,37 @@ impl TantivyEngine {
 
     pub fn num_docs(&self) -> u64 {
         self.reader.searcher().num_docs()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn add_test_document(engine: &mut TantivyEngine, frame_id: u64, content: &str) {
+        let mut document = TantivyDocument::default();
+        document.add_u64(engine.frame_id, frame_id);
+        document.add_text(engine.content, content);
+        engine
+            .writer_mut()
+            .expect("writer is available")
+            .add_document(document)
+            .expect("test document is accepted");
+    }
+
+    #[test]
+    fn manual_reader_reload_keeps_commit_paths_searchable() {
+        let mut engine = TantivyEngine::create().expect("engine is created");
+
+        add_test_document(&mut engine, 1, "first document");
+        engine.soft_commit().expect("soft commit succeeds");
+        assert_eq!(engine.num_docs(), 1);
+
+        add_test_document(&mut engine, 2, "second document");
+        engine.commit().expect("full commit succeeds");
+        assert_eq!(engine.num_docs(), 2);
+
+        engine.reset().expect("reset succeeds");
+        assert_eq!(engine.num_docs(), 0);
     }
 }
