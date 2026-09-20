@@ -479,10 +479,10 @@ impl Memvid {
 
         // Add existing embeddings from current index
         if let Some(ref vec_index) = self.vec_index {
-            for (frame_id, embedding) in vec_index.entries() {
+            for document in vec_index.documents_for_rebuild()? {
                 // Skip if we're replacing this frame's embedding
-                if !embeddings.iter().any(|(id, _)| *id == frame_id) {
-                    builder.add_document(frame_id, embedding.to_vec());
+                if !embeddings.iter().any(|(id, _)| *id == document.frame_id) {
+                    builder.add_document(document.frame_id, document.embedding);
                 }
             }
         }

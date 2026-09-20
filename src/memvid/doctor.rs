@@ -1435,6 +1435,10 @@ impl DoctorExecutor {
             });
         }
 
+        // Strictly preserve segment-backed vectors before any repair rebuild
+        // can replace their descriptors or byte ranges.
+        mem.materialize_vec_segments_for_rebuild()?;
+
         if lex {
             mem.lex_enabled = true;
             mem.toc.indexes.lex = None;
@@ -1458,7 +1462,7 @@ impl DoctorExecutor {
         }
 
         doctor_log!("doctor: rebuild_indexes start");
-        mem.rebuild_indexes(&[], &[])?;
+        mem.rebuild_indexes(&[], &[], false)?;
         doctor_log!("doctor: rebuild_indexes done");
 
         // Preserve footer_offset that was just set by rebuild_indexes

@@ -320,7 +320,7 @@ impl Memvid {
 #[cfg(all(test, feature = "parallel_segments"))]
 mod tests {
     use super::*;
-    use crate::{MemvidError, memvid::lifecycle::Memvid, run_serial_test};
+    use crate::{MemvidError, SketchVariant, memvid::lifecycle::Memvid, run_serial_test};
     use tempfile::tempdir;
 
     #[test]
@@ -474,6 +474,103 @@ mod tests {
                 }
                 other => panic!("expected VecDimensionMismatch, got {other:?}"),
             }
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn compact_commit_rejects_unreadable_vec_segment_before_publication() -> Result<()> {
+        run_serial_test(|| -> Result<()> {
+            let dir = tempdir()?;
+            let path = dir.path().join("parallel_vec_corrupt_descriptor.mv2");
+            let mut mem = Memvid::create(&path)?;
+            mem.enable_vec()?;
+            mem.put_with_embedding(b"preserved vector", vec![1.0, 0.0, 0.0, 0.0])?;
+            let mut opts = BuildOpts::default();
+            opts.segment_tokens = 1;
+            mem.commit_parallel(opts)?;
+            drop(mem);
+
+            let committed = std::fs::read(&path)?;
+            let mut writer = Memvid::open(&path)?;
+            writer.toc.segment_catalog.vec_segments[0].common.checksum[0] ^= 0xff;
+            writer.insert_sketch(0, "must not publish without vectors", SketchVariant::Small);
+            let err = writer
+                .commit()
+                .expect_err("invalid vector segment must abort");
+            assert!(matches!(err, MemvidError::ChecksumMismatch { .. }));
+            assert_eq!(std::fs::read(&path)?, committed);
+
+            // Avoid Drop retrying the deliberately invalid in-memory TOC.
+            writer.dirty = false;
+            drop(writer);
+
+            let mut reopened = Memvid::open_read_only(&path)?;
+            assert_eq!(
+                reopened.search_vec(&[1.0, 0.0, 0.0, 0.0], 1)?[0].frame_id,
+                0
+            );
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn compact_commit_rejects_structurally_invalid_vec_segment_before_publication() -> Result<()> {
+        run_serial_test(|| -> Result<()> {
+            let dir = tempdir()?;
+            let path = dir.path().join("parallel_vec_invalid_geometry.mv2");
+            let mut mem = Memvid::create(&path)?;
+            mem.enable_vec()?;
+            mem.put_bytes(b"committed payload")?;
+            mem.commit()?;
+
+            let malformed = crate::vec_pq::malformed_codebook_artifact();
+            mem.data_end = mem.header.footer_offset;
+            let artifact = VecSegmentArtifact {
+                bytes: malformed.bytes,
+                vector_count: malformed.vector_count,
+                dimension: malformed.dimension,
+                checksum: malformed.checksum,
+                compression: crate::VectorCompression::Pq96,
+                bytes_uncompressed: 384 * 4,
+            };
+            let descriptor = mem.append_vec_segment(&artifact, 1)?;
+            mem.header.footer_offset =
+                descriptor.common.bytes_offset + descriptor.common.bytes_length;
+            mem.toc.segment_catalog.vec_segments = vec![descriptor];
+            mem.toc.indexes.vec = Some(VecIndexManifest {
+                bytes_offset: 0,
+                bytes_length: 0,
+                vector_count: 1,
+                dimension: 384,
+                checksum: [0; 32],
+                compression_mode: crate::VectorCompression::Pq96,
+                model: None,
+            });
+            mem.rewrite_toc_footer()?;
+            mem.header.toc_checksum = mem.toc.toc_checksum;
+            crate::persist_header(&mut mem.file, &mem.header)?;
+            mem.file.sync_all()?;
+            mem.dirty = false;
+            drop(mem);
+
+            let committed = std::fs::read(&path)?;
+            let mut writer = Memvid::open(&path)?;
+            writer.insert_sketch(
+                0,
+                "must not publish malformed vectors",
+                SketchVariant::Small,
+            );
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| writer.commit()));
+            assert!(result.is_ok(), "malformed vector commit panicked");
+            let err = result.unwrap().expect_err("invalid geometry must abort");
+            assert!(matches!(err, MemvidError::InvalidToc { .. }));
+            assert_eq!(std::fs::read(&path)?, committed);
+            writer.dirty = false;
+            drop(writer);
+
+            let mut reopened = Memvid::open_read_only(&path)?;
+            assert_eq!(reopened.frame_canonical_payload(0)?, b"committed payload");
             Ok(())
         })
     }

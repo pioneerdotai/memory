@@ -26,6 +26,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Atomic commits ensure consistency
 - File locking prevents concurrent write conflicts
 
+## [3.1.4] - 2026-09-20
+
+### Fixed
+- Reuse and truncate the derived-index tail inside atomic commits so repeated vector and sketch snapshots no longer accumulate in `.mv2` files, including sketch-only and parallel commits.
+- Preserve segment-backed, pending, HNSW, and PQ vectors during rebuilds, including pending embedding replacements, and reject malformed HNSW/PQ structures before destructive writes.
+- Preserve opaque replay ranges in writers built without the replay feature and keep replay offsets consistent when the WAL grows.
+- Preserve sketch data and clear empty sketch manifests across commit, recovery, vacuum, and atomic index finalization.
+
+### Compatibility
+- The public API and `.mv2` format are unchanged. The next successful modifying commit reclaims obsolete derived snapshots from ordinary bloated files; an unchanged commit remains a no-op. Preserved replay ranges can retain earlier gaps that require separate defragmentation.
+
 ## [3.1.3] - 2026-09-20
 
 ### Fixed
@@ -56,7 +67,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-[Unreleased]: https://github.com/memvid/memvid/compare/v3.1.3...HEAD
+[Unreleased]: https://github.com/pioneerdotai/memory/compare/v3.1.4...HEAD
+[3.1.4]: https://github.com/pioneerdotai/memory/compare/v3.1.3...v3.1.4
 [3.1.3]: https://github.com/memvid/memvid/compare/v3.1.2...v3.1.3
 [3.1.2]: https://github.com/memvid/memvid/compare/v3.1.1...v3.1.2
 [2.0.0]: https://github.com/memvid/memvid/releases/tag/v2.0.0

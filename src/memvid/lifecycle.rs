@@ -462,15 +462,18 @@ impl Memvid {
         if memvid.clip_enabled {
             memvid.load_clip_index_from_manifest()?;
         }
+        // Recovery may compact payloads over the previous derived tail. Load
+        // persistent tracks while their committed ranges are still intact so
+        // recover_wal can republish them with the rebuilt indexes.
+        memvid.load_memories_track()?;
+        memvid.load_logic_mesh()?;
+        memvid.load_sketch_track()?;
         memvid.recover_wal()?;
         #[cfg(feature = "parallel_segments")]
         memvid.load_manifest_segments(manifest_wal_entries);
         memvid.bootstrap_segment_catalog();
         #[cfg(feature = "temporal_track")]
         memvid.ensure_temporal_track_loaded()?;
-        memvid.load_memories_track()?;
-        memvid.load_logic_mesh()?;
-        memvid.load_sketch_track()?;
         if checksum_result.is_err() {
             memvid.toc.verify_checksum()?;
             if memvid.toc.toc_checksum != memvid.header.toc_checksum {
@@ -1354,7 +1357,6 @@ pub(crate) fn compute_data_end(toc: &Toc, header: &Header) -> u64 {
             max_end = max_end.max(end);
         }
     }
-    #[cfg(feature = "replay")]
     if let Some(manifest) = toc.replay_manifest.as_ref() {
         if let Some(end) = manifest.segment_offset.checked_add(manifest.segment_size) {
             max_end = max_end.max(end);
@@ -1507,7 +1509,6 @@ fn validate_segment_integrity(toc: &Toc, header: &Header, file_len: u64) -> Resu
     // Validate replay segment (if present). Replay is stored AT the footer boundary,
     // and footer_offset is moved forward after writing. So we only check against file_len,
     // not against footer_offset (which would be after the replay segment).
-    #[cfg(feature = "replay")]
     if let Some(manifest) = toc.replay_manifest.as_ref() {
         if manifest.segment_size != 0 {
             let end = manifest

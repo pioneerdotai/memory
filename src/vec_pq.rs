@@ -88,6 +88,40 @@ pub struct ProductQuantizer {
 }
 
 impl ProductQuantizer {
+    fn validate_decode_geometry(&self) -> Result<()> {
+        if self.dimension as usize != TOTAL_DIM {
+            return Err(MemvidError::InvalidToc {
+                reason: format!(
+                    "PQ dimension mismatch: expected {TOTAL_DIM}, got {}",
+                    self.dimension
+                )
+                .into(),
+            });
+        }
+        if self.codebooks.len() != NUM_SUBSPACES {
+            return Err(MemvidError::InvalidToc {
+                reason: format!(
+                    "PQ codebook count mismatch: expected {NUM_SUBSPACES}, got {}",
+                    self.codebooks.len()
+                )
+                .into(),
+            });
+        }
+        let expected_centroids = NUM_CENTROIDS * SUBSPACE_DIM;
+        for (index, codebook) in self.codebooks.iter().enumerate() {
+            if codebook.centroids.len() != expected_centroids {
+                return Err(MemvidError::InvalidToc {
+                    reason: format!(
+                        "PQ codebook {index} centroid length mismatch: expected {expected_centroids}, got {}",
+                        codebook.centroids.len()
+                    )
+                    .into(),
+                });
+            }
+        }
+        Ok(())
+    }
+
     /// Create uninitialized quantizer
     pub fn new(dimension: u32) -> Result<Self> {
         if dimension as usize != TOTAL_DIM {
@@ -175,6 +209,7 @@ impl ProductQuantizer {
 
     /// Decode PQ codes back to approximate vector (for debugging/verification)
     pub fn decode(&self, codes: &[u8]) -> Result<Vec<f32>> {
+        self.validate_decode_geometry()?;
         if codes.len() != NUM_SUBSPACES {
             return Err(MemvidError::InvalidQuery {
                 reason: format!(
@@ -385,6 +420,26 @@ impl QuantizedVecIndex {
         self.documents.retain(|doc| doc.frame_id != frame_id);
     }
 
+    pub(crate) fn decoded_documents(&self) -> Result<Vec<crate::vec::VecDocument>> {
+        self.quantizer.validate_decode_geometry()?;
+        self.documents
+            .iter()
+            .map(|document| {
+                Ok(crate::vec::VecDocument {
+                    frame_id: document.frame_id,
+                    // Decode each code exactly once into its selected centroids.
+                    // Rebuilds persist these values without another PQ pass.
+                    embedding: self.quantizer.decode(&document.codes)?,
+                })
+            })
+            .collect()
+    }
+
+    #[cfg(feature = "parallel_segments")]
+    pub(crate) fn len(&self) -> usize {
+        self.documents.len()
+    }
+
     /// Get compression statistics
     #[must_use]
     pub fn compression_stats(&self) -> CompressionStats {
@@ -401,6 +456,28 @@ impl QuantizedVecIndex {
             total_bytes: (compressed_bytes + codebook_bytes) as u64,
             compression_ratio: original_bytes as f64 / (compressed_bytes + codebook_bytes) as f64,
         }
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn malformed_codebook_artifact() -> QuantizedVecIndexArtifact {
+    let vector = vec![0.0; TOTAL_DIM];
+    let mut builder = QuantizedVecIndexBuilder::new();
+    builder
+        .train_quantizer(std::slice::from_ref(&vector), TOTAL_DIM as u32)
+        .unwrap();
+    builder.add_document(0, vector).unwrap();
+    let valid = builder.finish().unwrap();
+    let mut index = QuantizedVecIndex::decode(&valid.bytes).unwrap();
+    index.quantizer.codebooks[0].centroids.clear();
+    let bytes =
+        bincode::serde::encode_to_vec((&index.quantizer, &index.documents), vec_config()).unwrap();
+    QuantizedVecIndexArtifact {
+        checksum: *hash(&bytes).as_bytes(),
+        bytes,
+        vector_count: 1,
+        dimension: TOTAL_DIM as u32,
+        compression_ratio: valid.compression_ratio,
     }
 }
 
@@ -530,6 +607,27 @@ fn l2_distance_squared(a: &[f32], b: &[f32]) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn malformed_pq_codebook_returns_error_without_panicking() {
+        let valid_vector = vec![0.0; TOTAL_DIM];
+        let mut valid_builder = QuantizedVecIndexBuilder::new();
+        valid_builder
+            .train_quantizer(std::slice::from_ref(&valid_vector), TOTAL_DIM as u32)
+            .unwrap();
+        valid_builder.add_document(0, valid_vector).unwrap();
+        let valid_artifact = valid_builder.finish().unwrap();
+        let valid = QuantizedVecIndex::decode(&valid_artifact.bytes).unwrap();
+        assert_eq!(valid.decoded_documents().unwrap().len(), 1);
+
+        let artifact = malformed_codebook_artifact();
+        let malformed = QuantizedVecIndex::decode(&artifact.bytes).unwrap();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            malformed.decoded_documents()
+        }));
+        assert!(result.is_ok(), "malformed PQ enumeration panicked");
+        assert!(result.unwrap().is_err());
+    }
 
     #[test]
     fn test_subspace_codebook() {

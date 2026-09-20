@@ -76,6 +76,30 @@ const MAGIC_SNIFF_BYTES: usize = 16;
 const WAL_ENTRY_HEADER_SIZE: u64 = 48;
 const WAL_SHIFT_BUFFER_SIZE: usize = 8 * 1024 * 1024;
 
+#[cfg(test)]
+thread_local! {
+    static FAIL_BEFORE_ATOMIC_PUBLISH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static FAIL_AFTER_COMPACT_TRUNCATE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+fn fail_before_atomic_publish() -> Result<()> {
+    let should_fail = FAIL_BEFORE_ATOMIC_PUBLISH.with(|flag| flag.replace(false));
+    if should_fail {
+        return Err(std::io::Error::other("injected failure before atomic publish").into());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+fn fail_after_compact_truncate() -> Result<()> {
+    let should_fail = FAIL_AFTER_COMPACT_TRUNCATE.with(|flag| flag.replace(false));
+    if should_fail {
+        return Err(std::io::Error::other("injected failure after compact truncate").into());
+    }
+    Ok(())
+}
+
 #[cfg(feature = "temporal_track")]
 const DEFAULT_TEMPORAL_TZ: &str = "America/Chicago";
 
@@ -440,7 +464,11 @@ impl Memvid {
         match op(self) {
             Ok(()) => {
                 self.file.sync_all()?;
-                match staging.commit() {
+                #[cfg(test)]
+                let publish_result = fail_before_atomic_publish().and_then(|()| staging.commit());
+                #[cfg(not(test))]
+                let publish_result = staging.commit();
+                match publish_result {
                     Ok(()) => {
                         drop(original_file.take());
                         drop(original_wal.take());
@@ -557,6 +585,12 @@ impl Memvid {
         if let Some(track) = self.toc.temporal_track.as_ref() {
             if track.bytes_length != 0 {
                 max_end = max_end.max(track.bytes_offset + track.bytes_length);
+            }
+        }
+
+        if let Some(manifest) = self.toc.replay_manifest.as_ref() {
+            if let Some(end) = manifest.segment_offset.checked_add(manifest.segment_size) {
+                max_end = max_end.max(end);
             }
         }
 
@@ -710,6 +744,11 @@ impl Memvid {
         if let Some(time_index) = self.toc.time_index.as_mut() {
             if time_index.bytes_offset != 0 {
                 time_index.bytes_offset += delta;
+            }
+        }
+        if let Some(manifest) = self.toc.replay_manifest.as_mut() {
+            if manifest.segment_offset != 0 {
+                manifest.segment_offset = manifest.segment_offset.saturating_add(delta);
             }
         }
         #[cfg(feature = "temporal_track")]
@@ -869,6 +908,9 @@ impl Memvid {
         #[cfg(feature = "lex")]
         let tantivy_backup = self.tantivy.take();
 
+        // Preserve segment-backed vectors before compact payload placement can
+        // reuse their byte ranges. finalize_indexes() will persist this cache.
+        self.materialize_vec_segments_for_rebuild()?;
         let result = self.apply_records(records);
 
         // Restore Tantivy engine (unchanged — no dirty frames added)
@@ -926,7 +968,17 @@ impl Memvid {
     /// `commit_skip_indexes()` — call it once after all batches are done.
     pub fn finalize_indexes(&mut self) -> Result<()> {
         self.ensure_writable()?;
-        self.rebuild_indexes(&[], &[])?;
+        self.with_staging_lock(Self::finalize_indexes_inner)
+    }
+
+    fn finalize_indexes_inner(&mut self) -> Result<()> {
+        self.materialize_vec_segments_for_rebuild()?;
+        // Finalization runs on an atomic staging copy, so rebuild the derived
+        // layer at its compact boundary. Any following track must be published
+        // again because a larger rebuilt vector block may overwrite its old
+        // byte range even when the old file length was retained.
+        self.rebuild_indexes(&[], &[], true)?;
+        self.persist_sketch_track()?;
         self.rewrite_toc_footer()?;
         self.header.toc_checksum = self.toc.toc_checksum;
         crate::persist_header(&mut self.file, &self.header)?;
@@ -937,13 +989,20 @@ impl Memvid {
     fn commit_from_records(&mut self, records: Vec<WalRecord>, _mode: CommitMode) -> Result<()> {
         self.generation = self.generation.wrapping_add(1);
 
+        // This must precede apply_records(): compact payload placement is
+        // allowed to reuse the old derived-index ranges.
+        self.materialize_vec_segments_for_rebuild()?;
         let delta = self.apply_records(records)?;
         let mut indexes_rebuilt = false;
 
         // Check if CLIP index has pending embeddings that need to be persisted
         let clip_needs_persist = self.clip_index.as_ref().is_some_and(|idx| !idx.is_empty());
 
-        if !delta.is_empty() || clip_needs_persist {
+        // Every dirty commit is already executed on an atomic staging copy.
+        // Rebuild the complete derived layer there even for sketch-only (or
+        // other metadata-only) changes so replacing a full snapshot never
+        // appends another generation behind the old one.
+        if !delta.is_empty() || clip_needs_persist || self.dirty {
             tracing::debug!(
                 inserted_frames = delta.inserted_frames.len(),
                 inserted_embeddings = delta.inserted_embeddings.len(),
@@ -951,7 +1010,11 @@ impl Memvid {
                 clip_needs_persist = clip_needs_persist,
                 "commit applied delta"
             );
-            self.rebuild_indexes(&delta.inserted_embeddings, &delta.inserted_frames)?;
+            // A normal commit runs against an atomic staging copy. Reclaim the
+            // previous generation's derived-index tail in that copy before
+            // publishing it; the currently committed file remains untouched
+            // until AtomicWriteFile::commit performs the replacement.
+            self.rebuild_indexes(&delta.inserted_embeddings, &delta.inserted_frames, true)?;
             indexes_rebuilt = true;
         }
 
@@ -978,10 +1041,9 @@ impl Memvid {
             self.persist_logic_mesh()?;
         }
 
-        // Persist sketch track if it has entries
-        if !self.sketch_track.is_empty() {
-            self.persist_sketch_track()?;
-        }
+        // Always run this helper: its empty branch clears a stale manifest
+        // after the compact rebuild removed the previous sketch bytes.
+        self.persist_sketch_track()?;
 
         // flush_tantivy() and rebuild_indexes() have already set footer_offset correctly.
         // DO NOT overwrite it with catalog_data_end() as that would include orphaned segments.
@@ -1018,10 +1080,42 @@ impl Memvid {
             return Ok(());
         }
         let records = self.wal.pending_records()?;
+        let pending_vector_manifest = self
+            .toc
+            .indexes
+            .vec
+            .as_ref()
+            .is_some_and(|manifest| manifest.bytes_offset == 0 && manifest.bytes_length > 0);
+        let has_persisted_vectors = self
+            .toc
+            .indexes
+            .vec
+            .as_ref()
+            .is_some_and(|manifest| manifest.bytes_offset > 0 && manifest.bytes_length > 0)
+            || !self.toc.segment_catalog.vec_segments.is_empty();
+        let has_cache_only_vectors = !has_persisted_vectors
+            && self
+                .vec_index
+                .as_ref()
+                .is_some_and(|index| index.vector_count() > 0);
+        let compact_existing_derived_tail = self.header.footer_offset
+            > self.frame_payload_append_offset()
+            || has_cache_only_vectors
+            || pending_vector_manifest;
+        // Strictly load existing segments before compact payload placement can
+        // reuse their ranges. When a derived tail already exists, or an earlier
+        // skip-index commit left the cache as the only source of old vectors,
+        // fall back to the complete staging rebuild below. Incremental segment
+        // publication may invalidate the cache only when durable storage is a
+        // complete source of truth.
+        self.materialize_vec_segments_for_rebuild()?;
         let delta = self.apply_records(records)?;
         self.generation = self.generation.wrapping_add(1);
         let mut indexes_rebuilt = false;
-        if !delta.is_empty() {
+        if compact_existing_derived_tail {
+            self.rebuild_indexes(&delta.inserted_embeddings, &delta.inserted_frames, true)?;
+            indexes_rebuilt = true;
+        } else if !delta.is_empty() {
             tracing::info!(
                 inserted_frames = delta.inserted_frames.len(),
                 inserted_embeddings = delta.inserted_embeddings.len(),
@@ -1036,6 +1130,13 @@ impl Memvid {
                 self.lex_enabled
             );
             if used_parallel {
+                // The newly published vector segments are now the complete
+                // source of truth for this no-prior-tail branch. Invalidate
+                // any pre-publication cache so the next search rebuilds it
+                // from the catalog, including every just-published vector.
+                if !delta.inserted_embeddings.is_empty() {
+                    self.vec_index = None;
+                }
                 // Segments were written at data_end; update footer_offset so
                 // rewrite_toc_footer places the TOC after the new segment data
                 self.header.footer_offset = self.data_end;
@@ -1161,7 +1262,7 @@ impl Memvid {
                 );
             } else {
                 // Fall back to sequential rebuild if no segments were generated
-                self.rebuild_indexes(&delta.inserted_embeddings, &delta.inserted_frames)?;
+                self.rebuild_indexes(&delta.inserted_embeddings, &delta.inserted_frames, true)?;
                 indexes_rebuilt = true;
             }
         }
@@ -1191,10 +1292,9 @@ impl Memvid {
             self.persist_logic_mesh()?;
         }
 
-        // Persist sketch track if it has entries
-        if !self.sketch_track.is_empty() {
-            self.persist_sketch_track()?;
-        }
+        // Always run this helper: the compact fallback may have removed the
+        // old sketch bytes, and the empty branch must clear their manifest.
+        self.persist_sketch_track()?;
 
         // flush_tantivy() has already set footer_offset correctly
         // DO NOT overwrite with catalog_data_end()
@@ -1221,6 +1321,10 @@ impl Memvid {
             }
             return Ok(());
         }
+        // Recovery writes directly to the committed file. Read and validate
+        // every source segment before compact payload placement can overwrite
+        // it; rebuild_indexes must consume only this materialized cache.
+        self.materialize_vec_segments_for_rebuild()?;
         let delta = self.apply_records(records)?;
         if !delta.is_empty() {
             tracing::debug!(
@@ -1229,7 +1333,13 @@ impl Memvid {
                 inserted_time_entries = delta.inserted_time_entries.len(),
                 "recover applied delta"
             );
-            self.rebuild_indexes(&delta.inserted_embeddings, &delta.inserted_frames)?;
+            // WAL recovery operates on the committed file rather than an
+            // atomic staging copy. Preserve the old tail until recovery has
+            // durably published its replacement.
+            self.rebuild_indexes(&delta.inserted_embeddings, &delta.inserted_frames, false)?;
+            self.persist_sketch_track()?;
+            self.rewrite_toc_footer()?;
+            self.header.toc_checksum = self.toc.toc_checksum;
         } else if self.tantivy_index_pending() {
             self.flush_tantivy()?;
         }
@@ -1248,26 +1358,18 @@ impl Memvid {
     }
 
     fn frame_payload_append_offset(&self) -> u64 {
-        let offset = self.payload_region_end();
+        let mut offset = self.payload_region_end();
 
         // Replay segments are not derived from frame payloads and are not
-        // rewritten by a normal frame commit. Keep frame appends behind them
-        // when the replay feature is active.
-        #[cfg(feature = "replay")]
-        {
-            let mut offset = offset;
-            if let Some(manifest) = self.toc.replay_manifest.as_ref() {
-                if let Some(end) = manifest.segment_offset.checked_add(manifest.segment_size) {
-                    offset = offset.max(end);
-                }
+        // rewritten by a normal frame commit. The manifest is part of the
+        // format even when the replay API feature is disabled, so treat its
+        // bytes as an opaque preserved range in every build configuration.
+        if let Some(manifest) = self.toc.replay_manifest.as_ref() {
+            if let Some(end) = manifest.segment_offset.checked_add(manifest.segment_size) {
+                offset = offset.max(end);
             }
-            offset
         }
-
-        #[cfg(not(feature = "replay"))]
-        {
-            offset
-        }
+        offset
     }
 
     fn apply_records(&mut self, records: Vec<WalRecord>) -> Result<IngestionDelta> {
@@ -2107,20 +2209,43 @@ impl Memvid {
         &mut self,
         new_vec_docs: &[(FrameId, Vec<f32>)],
         inserted_frame_ids: &[FrameId],
+        compact_derived_tail: bool,
     ) -> Result<()> {
         if self.toc.frames.is_empty() && !self.lex_enabled && !self.vec_enabled {
             return Ok(());
         }
 
         let payload_end = self.payload_region_end();
-        self.data_end = payload_end;
-        // Don't truncate if footer_offset is higher - there may be replay segments
-        // or other data written after payload_end that must be preserved.
-        let safe_truncate_len = self.header.footer_offset.max(payload_end);
+        // Replay is user-visible history, not a derived index. It may live
+        // beyond the payload region and must remain intact while indexes are
+        // replaced. New derived indexes are placed after it.
+        let mut index_start = payload_end;
+        if let Some(manifest) = self.toc.replay_manifest.as_ref() {
+            if let Some(end) = manifest.segment_offset.checked_add(manifest.segment_size) {
+                index_start = index_start.max(end);
+            }
+        }
+        self.data_end = index_start;
+
+        // Full index snapshots are replaceable derived data. Normal commits
+        // run on an atomic staging copy, so that copy can discard the previous
+        // derived tail and write the new generation at the compact boundary.
+        // Non-staged callers (notably WAL recovery) retain the old committed
+        // tail until their existing recovery protocol has completed.
+        let safe_truncate_len = if compact_derived_tail {
+            self.header.footer_offset = index_start;
+            index_start
+        } else {
+            self.header.footer_offset.max(index_start)
+        };
         if self.file.metadata()?.len() > safe_truncate_len {
             self.file.set_len(safe_truncate_len)?;
         }
-        self.file.seek(SeekFrom::Start(payload_end))?;
+        #[cfg(test)]
+        if compact_derived_tail {
+            fail_after_compact_truncate()?;
+        }
+        self.file.seek(SeekFrom::Start(index_start))?;
 
         // Clear legacy per-segment catalogs; full rebuild emits fresh manifests.
         self.toc.segment_catalog.lex_segments.clear();
@@ -3050,6 +3175,9 @@ impl Memvid {
 impl Memvid {
     pub fn vacuum(&mut self) -> Result<()> {
         self.commit()?;
+        // Vacuum rewrites payloads in place, so preserve segment-backed
+        // vectors before the first compact payload write.
+        self.materialize_vec_segments_for_rebuild()?;
 
         let mut active_payloads: HashMap<FrameId, Vec<u8>> = HashMap::new();
         let frames: Vec<Frame> = self
@@ -3084,6 +3212,7 @@ impl Memvid {
         }
 
         self.data_end = cursor;
+        self.cached_payload_end = cursor;
 
         self.toc.segments.clear();
         self.toc.indexes.lex_segments.clear();
@@ -3111,7 +3240,13 @@ impl Memvid {
             self.tantivy_dirty = false;
         }
 
-        self.rebuild_indexes(&[], &[])?;
+        // Vacuum historically mutates the live file after its preliminary
+        // commit. Do not use staging-only destructive truncation here.
+        self.rebuild_indexes(&[], &[], false)?;
+        self.persist_sketch_track()?;
+        self.rewrite_toc_footer()?;
+        self.header.toc_checksum = self.toc.toc_checksum;
+        crate::persist_header(&mut self.file, &self.header)?;
         self.file.sync_all()?;
         Ok(())
     }
@@ -4213,5 +4348,650 @@ pub(crate) fn merge_unique(target: &mut Vec<String>, additions: Vec<String>) {
         if seen.insert(candidate.clone()) {
             target.push(candidate);
         }
+    }
+}
+
+#[cfg(test)]
+mod commit_publication_tests {
+    use super::*;
+    use crate::SketchVariant;
+    use crate::io::header::HeaderCodec;
+    #[cfg(not(feature = "replay"))]
+    use crate::replay::ReplayManifest;
+
+    fn header(path: &Path) -> crate::types::Header {
+        let mut file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path)
+            .unwrap();
+        HeaderCodec::read(&mut file).unwrap()
+    }
+
+    #[test]
+    fn failure_before_atomic_publish_keeps_committed_file_recoverable() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("publish-failure.mv2");
+        let mut mem = Memvid::create(&path).unwrap();
+        mem.enable_vec().unwrap();
+        mem.put_with_embedding_and_options(
+            b"first committed document",
+            vec![1.0, 0.0, 0.0, 0.0],
+            PutOptions::builder()
+                .uri("mv2://fault/first")
+                .search_text("first committed document")
+                .auto_tag(false)
+                .extract_dates(false)
+                .extract_triplets(false)
+                .build(),
+        )
+        .unwrap();
+        mem.commit().unwrap();
+
+        let committed_header = header(&path);
+        let committed_len = std::fs::metadata(&path).unwrap().len();
+
+        mem.put_with_embedding_and_options(
+            b"second WAL document",
+            vec![0.0, 1.0, 0.0, 0.0],
+            PutOptions::builder()
+                .uri("mv2://fault/second")
+                .search_text("second WAL document")
+                .auto_tag(false)
+                .extract_dates(false)
+                .extract_triplets(false)
+                .build(),
+        )
+        .unwrap();
+        let file_with_pending_wal = std::fs::read(&path).unwrap();
+        FAIL_BEFORE_ATOMIC_PUBLISH.with(|flag| flag.set(true));
+        let err = mem
+            .commit()
+            .expect_err("fault injection must abort publication");
+        assert!(err.to_string().contains("injected failure"));
+
+        // The compacted staging copy was never published: the committed file
+        // still has the exact old header and length. Its WAL remains available
+        // for the normal open-time recovery path.
+        assert_eq!(header(&path).footer_offset, committed_header.footer_offset);
+        assert_eq!(std::fs::metadata(&path).unwrap().len(), committed_len);
+        assert_eq!(std::fs::read(&path).unwrap(), file_with_pending_wal);
+        let recovery_path = dir.path().join("publish-failure-recovery.mv2");
+        std::fs::copy(&path, &recovery_path).unwrap();
+
+        // Prevent Drop from consuming the one-shot fault and successfully
+        // retrying commit on the source instance. Recovery below operates on
+        // an isolated byte-for-byte copy of the post-failure pending-WAL state.
+        mem.dirty = false;
+        drop(mem);
+
+        let mut committed = Memvid::open_read_only(&recovery_path).unwrap();
+        assert_eq!(committed.stats().unwrap().frame_count, 1);
+        assert!(committed.frame_by_uri("mv2://fault/first").is_ok());
+        assert!(committed.frame_by_uri("mv2://fault/second").is_err());
+        assert_eq!(
+            committed.search_vec(&[1.0, 0.0, 0.0, 0.0], 1).unwrap()[0].frame_id,
+            0
+        );
+        drop(committed);
+
+        let mut recovered = Memvid::open(&recovery_path).unwrap();
+        assert!(recovered.frame_by_uri("mv2://fault/first").is_ok());
+        assert!(recovered.frame_by_uri("mv2://fault/second").is_ok());
+        assert_eq!(
+            recovered.search_vec(&[0.0, 1.0, 0.0, 0.0], 1).unwrap()[0].frame_id,
+            1
+        );
+        recovered.commit().unwrap();
+        drop(recovered);
+
+        let mut reopened = Memvid::open_read_only(&recovery_path).unwrap();
+        assert_eq!(reopened.stats().unwrap().frame_count, 2);
+        assert_eq!(
+            reopened.search_vec(&[0.0, 1.0, 0.0, 0.0], 1).unwrap()[0].frame_id,
+            1
+        );
+    }
+
+    #[test]
+    fn failure_after_staging_truncate_keeps_committed_file_recoverable() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("truncate-failure.mv2");
+        let mut mem = Memvid::create(&path).unwrap();
+        mem.enable_vec().unwrap();
+        mem.put_with_embedding(b"first", vec![1.0, 0.0, 0.0, 0.0])
+            .unwrap();
+        mem.commit().unwrap();
+        mem.put_with_embedding(b"second", vec![0.0, 1.0, 0.0, 0.0])
+            .unwrap();
+
+        // WAL appends happen before commit and are legitimately present in
+        // the main file. Snapshot only after that append, then prove that the
+        // destructive staging truncate cannot alter the committed inode.
+        let file_with_pending_wal = std::fs::read(&path).unwrap();
+        FAIL_AFTER_COMPACT_TRUNCATE.with(|flag| flag.set(true));
+        let err = mem
+            .commit()
+            .expect_err("fault injection must abort after staging truncate");
+        assert!(err.to_string().contains("after compact truncate"));
+        assert_eq!(std::fs::read(&path).unwrap(), file_with_pending_wal);
+        let recovery_path = dir.path().join("truncate-failure-recovery.mv2");
+        std::fs::copy(&path, &recovery_path).unwrap();
+        mem.dirty = false;
+        drop(mem);
+
+        let mut committed = Memvid::open_read_only(&recovery_path).unwrap();
+        assert_eq!(committed.stats().unwrap().frame_count, 1);
+        assert!(committed.frame_by_id(0).is_ok());
+        assert!(committed.frame_by_id(1).is_err());
+        assert_eq!(
+            committed.search_vec(&[1.0, 0.0, 0.0, 0.0], 1).unwrap()[0].frame_id,
+            0
+        );
+        drop(committed);
+
+        let mut recovered = Memvid::open(&recovery_path).unwrap();
+        assert_eq!(recovered.stats().unwrap().frame_count, 2);
+        assert_eq!(
+            recovered.search_vec(&[0.0, 1.0, 0.0, 0.0], 1).unwrap()[0].frame_id,
+            1
+        );
+        assert!(recovered.frame_by_id(0).is_ok());
+        assert!(recovered.frame_by_id(1).is_ok());
+        drop(recovered);
+
+        let mut reopened = Memvid::open_read_only(&recovery_path).unwrap();
+        assert_eq!(reopened.stats().unwrap().frame_count, 2);
+        assert_eq!(
+            reopened.search_vec(&[0.0, 1.0, 0.0, 0.0], 1).unwrap()[0].frame_id,
+            1
+        );
+    }
+
+    #[cfg(not(feature = "replay"))]
+    fn install_opaque_replay(mem: &mut Memvid, bytes: &[u8]) -> ReplayManifest {
+        let segment_offset = mem.header.footer_offset;
+        mem.file.seek(SeekFrom::Start(segment_offset)).unwrap();
+        mem.file.write_all(bytes).unwrap();
+        let manifest = ReplayManifest {
+            segment_offset,
+            segment_size: bytes.len() as u64,
+            session_count: 1,
+            total_actions: 1,
+            version: crate::replay::REPLAY_SEGMENT_VERSION,
+        };
+        mem.toc.replay_manifest = Some(manifest.clone());
+        mem.header.footer_offset = segment_offset + manifest.segment_size;
+        mem.rewrite_toc_footer().unwrap();
+        mem.header.toc_checksum = mem.toc.toc_checksum;
+        crate::persist_header(&mut mem.file, &mem.header).unwrap();
+        mem.file.sync_all().unwrap();
+        manifest
+    }
+
+    #[cfg(not(feature = "replay"))]
+    fn assert_opaque_replay(mem: &mut Memvid, expected: &ReplayManifest, bytes: &[u8]) {
+        let actual = mem.toc.replay_manifest.as_ref().expect("replay manifest");
+        assert_eq!(actual.segment_offset, expected.segment_offset);
+        assert_eq!(actual.segment_size, expected.segment_size);
+        let mut stored = vec![0; bytes.len()];
+        mem.file
+            .seek(SeekFrom::Start(actual.segment_offset))
+            .unwrap();
+        mem.file.read_exact(&mut stored).unwrap();
+        assert_eq!(stored, bytes);
+    }
+
+    fn install_quantized_vector_fixture(path: &Path) -> Vec<Vec<f32>> {
+        let vectors: Vec<Vec<f32>> = (0..8)
+            .map(|index| {
+                let mut vector = vec![0.0; 384];
+                vector[index] = 1.0;
+                vector
+            })
+            .collect();
+        let mut mem = Memvid::create(path).unwrap();
+        mem.enable_vec().unwrap();
+        for index in 0..vectors.len() {
+            mem.put_bytes_with_options(
+                format!("quantized payload {index}").as_bytes(),
+                PutOptions::builder()
+                    .uri(format!("mv2://pq/{index}"))
+                    .search_text(format!("quantized payload {index}"))
+                    .auto_tag(false)
+                    .extract_dates(false)
+                    .extract_triplets(false)
+                    .build(),
+            )
+            .unwrap();
+        }
+        mem.commit().unwrap();
+
+        let mut builder = crate::vec_pq::QuantizedVecIndexBuilder::new();
+        builder.train_quantizer(&vectors, 384).unwrap();
+        for (frame_id, vector) in vectors.iter().enumerate() {
+            builder
+                .add_document(frame_id as u64, vector.clone())
+                .unwrap();
+        }
+        let artifact = builder.finish().unwrap();
+        let offset = mem.header.footer_offset;
+        mem.file.seek(SeekFrom::Start(offset)).unwrap();
+        mem.file.write_all(&artifact.bytes).unwrap();
+        mem.toc.indexes.vec = Some(VecIndexManifest {
+            bytes_offset: offset,
+            bytes_length: artifact.bytes.len() as u64,
+            vector_count: artifact.vector_count,
+            dimension: artifact.dimension,
+            checksum: artifact.checksum,
+            compression_mode: crate::VectorCompression::Pq96,
+            model: None,
+        });
+        mem.header.footer_offset = offset + artifact.bytes.len() as u64;
+        mem.rewrite_toc_footer().unwrap();
+        mem.header.toc_checksum = mem.toc.toc_checksum;
+        crate::persist_header(&mut mem.file, &mem.header).unwrap();
+        mem.file.sync_all().unwrap();
+        mem.dirty = false;
+        drop(mem);
+        vectors
+    }
+
+    #[cfg(feature = "parallel_segments")]
+    fn install_large_quantized_layout(path: &Path, segment_backed: bool) -> Vec<Vec<f32>> {
+        let vectors: Vec<Vec<f32>> = (0..8)
+            .map(|index| {
+                let mut vector = vec![0.0; 384];
+                vector[index] = 1.0;
+                vector
+            })
+            .collect();
+        let mut mem = Memvid::create(path).unwrap();
+        mem.enable_vec().unwrap();
+        mem.begin_batch(PutManyOpts {
+            wal_pre_size_bytes: 2 * 1024 * 1024,
+            disable_auto_checkpoint: true,
+            skip_sync: true,
+            enable_enrichment: false,
+            ..Default::default()
+        })
+        .unwrap();
+        for frame_id in 0..512_u64 {
+            mem.put_bytes_with_options(
+                format!("large quantized payload {frame_id}").as_bytes(),
+                PutOptions::builder()
+                    .uri(format!("mv2://pq-large/{frame_id}"))
+                    .search_text(format!("large quantized document {frame_id}"))
+                    .auto_tag(false)
+                    .extract_dates(false)
+                    .extract_triplets(false)
+                    .instant_index(false)
+                    .extraction_budget_ms(0)
+                    .build(),
+            )
+            .unwrap();
+        }
+        mem.end_batch().unwrap();
+        mem.commit().unwrap();
+
+        let mut builder = crate::vec_pq::QuantizedVecIndexBuilder::new();
+        builder.train_quantizer(&vectors, 384).unwrap();
+        for frame_id in 0..512_u64 {
+            builder
+                .add_document(frame_id, vectors[frame_id as usize % vectors.len()].clone())
+                .unwrap();
+        }
+        let artifact = builder.finish().unwrap();
+        let offset = mem.header.footer_offset;
+        let vector_end = if segment_backed {
+            mem.data_end = offset;
+            let segment = crate::memvid::segments::VecSegmentArtifact {
+                bytes: artifact.bytes.clone(),
+                vector_count: artifact.vector_count,
+                dimension: artifact.dimension,
+                checksum: artifact.checksum,
+                compression: crate::VectorCompression::Pq96,
+                bytes_uncompressed: 512 * 384 * 4,
+            };
+            let descriptor = mem.append_vec_segment(&segment, 1).unwrap();
+            let end = descriptor.common.bytes_offset + descriptor.common.bytes_length;
+            mem.toc.segment_catalog.vec_segments = vec![descriptor];
+            mem.toc.indexes.vec = Some(VecIndexManifest {
+                bytes_offset: 0,
+                bytes_length: 0,
+                vector_count: 512,
+                dimension: 384,
+                checksum: [0; 32],
+                compression_mode: crate::VectorCompression::Pq96,
+                model: None,
+            });
+            end
+        } else {
+            mem.file.seek(SeekFrom::Start(offset)).unwrap();
+            mem.file.write_all(&artifact.bytes).unwrap();
+            mem.toc.indexes.vec = Some(VecIndexManifest {
+                bytes_offset: offset,
+                bytes_length: artifact.bytes.len() as u64,
+                vector_count: artifact.vector_count,
+                dimension: artifact.dimension,
+                checksum: artifact.checksum,
+                compression_mode: crate::VectorCompression::Pq96,
+                model: None,
+            });
+            offset + artifact.bytes.len() as u64
+        };
+        mem.header.footer_offset = vector_end;
+        mem.insert_sketch(
+            0,
+            "persistent exact sketch after quantized vectors",
+            SketchVariant::Small,
+        );
+        mem.persist_sketch_track().unwrap();
+        mem.rewrite_toc_footer().unwrap();
+        mem.header.toc_checksum = mem.toc.toc_checksum;
+        crate::persist_header(&mut mem.file, &mem.header).unwrap();
+        mem.file.sync_all().unwrap();
+        mem.dirty = false;
+        drop(mem);
+        vectors
+    }
+
+    #[cfg(feature = "parallel_segments")]
+    fn assert_large_quantized_layout(
+        mem: &mut Memvid,
+        vectors: &[Vec<f32>],
+        expected_sketch: Option<&crate::types::SketchEntry>,
+    ) {
+        assert_eq!(mem.stats().unwrap().frame_count, 512);
+        assert_eq!(mem.stats().unwrap().vector_count, 512);
+        for (frame_id, payload) in [
+            (0, "large quantized payload 0"),
+            (255, "large quantized payload 255"),
+            (511, "large quantized payload 511"),
+        ] {
+            assert_eq!(
+                mem.frame_canonical_payload(frame_id).unwrap(),
+                payload.as_bytes()
+            );
+        }
+        for (class, vector) in vectors.iter().enumerate() {
+            let exact_ids: BTreeSet<_> = mem
+                .search_vec(vector, 512)
+                .unwrap()
+                .into_iter()
+                .filter(|hit| hit.distance == 0.0)
+                .map(|hit| hit.frame_id)
+                .collect();
+            let expected: BTreeSet<_> = (class as u64..512).step_by(vectors.len()).collect();
+            assert_eq!(exact_ids, expected);
+        }
+        assert_eq!(mem.sketches().get(0), expected_sketch);
+    }
+
+    #[cfg(feature = "parallel_segments")]
+    #[test]
+    fn finalize_preserves_sketch_when_quantized_vectors_expand() {
+        let dir = tempfile::tempdir().unwrap();
+        for segment_backed in [false, true] {
+            let base = dir
+                .path()
+                .join(format!("pq-layout-base-{segment_backed}.mv2"));
+            let vectors = install_large_quantized_layout(&base, segment_backed);
+            let before = Memvid::open_read_only(&base).unwrap();
+            let sketch = before.sketches().get(0).unwrap().clone();
+            drop(before);
+
+            let preserve = dir
+                .path()
+                .join(format!("pq-layout-preserve-{segment_backed}.mv2"));
+            std::fs::copy(&base, &preserve).unwrap();
+            let mut mem = Memvid::open(&preserve).unwrap();
+            mem.finalize_indexes().unwrap();
+            assert_large_quantized_layout(&mut mem, &vectors, Some(&sketch));
+            let first_size = std::fs::metadata(&preserve).unwrap().len();
+            mem.finalize_indexes().unwrap();
+            assert_large_quantized_layout(&mut mem, &vectors, Some(&sketch));
+            let second_size = std::fs::metadata(&preserve).unwrap().len();
+            assert_eq!(second_size, first_size);
+            drop(mem);
+            let mut reopened = Memvid::open_read_only(&preserve).unwrap();
+            assert_large_quantized_layout(&mut reopened, &vectors, Some(&sketch));
+
+            let empty = dir
+                .path()
+                .join(format!("pq-layout-empty-{segment_backed}.mv2"));
+            std::fs::copy(&base, &empty).unwrap();
+            let mut mem = Memvid::open(&empty).unwrap();
+            *mem.sketches_mut() = crate::SketchTrack::default();
+            mem.finalize_indexes().unwrap();
+            let mut finalized = Memvid::open_read_only(&empty).unwrap();
+            assert_large_quantized_layout(&mut finalized, &vectors, None);
+            assert!(finalized.toc.sketch_track.is_none());
+            drop(finalized);
+            // Isolate finalize itself from Drop's normal dirty retry.
+            mem.dirty = false;
+            drop(mem);
+            let mut reopened = Memvid::open_read_only(&empty).unwrap();
+            assert_large_quantized_layout(&mut reopened, &vectors, None);
+            assert!(reopened.toc.sketch_track.is_none());
+        }
+    }
+
+    #[test]
+    fn quantized_vectors_survive_sketch_only_compact_rebuild() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pq-sketch-rebuild.mv2");
+        let vectors = install_quantized_vector_fixture(&path);
+        let mut mem = Memvid::open(&path).unwrap();
+        let before = mem.search_vec(&vectors[4], 1).unwrap();
+        assert_eq!(before[0].frame_id, 4);
+        assert_eq!(before[0].distance, 0.0);
+        mem.insert_sketch(4, "quantized sketch update", SketchVariant::Small);
+        mem.commit().unwrap();
+        let after = mem.search_vec(&vectors[4], 1).unwrap();
+        assert_eq!(after[0].frame_id, 4);
+        assert_eq!(after[0].distance, 0.0);
+        drop(mem);
+
+        let mut reopened = Memvid::open_read_only(&path).unwrap();
+        let hit = reopened.search_vec(&vectors[4], 1).unwrap()[0].clone();
+        assert_eq!(hit.frame_id, 4);
+        assert_eq!(hit.distance, 0.0);
+        assert_eq!(reopened.stats().unwrap().vector_count, 8);
+    }
+
+    #[test]
+    fn pending_replacement_overrides_quantized_base_without_requantizing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pq-pending-replacement.mv2");
+        let vectors = install_quantized_vector_fixture(&path);
+        let mut replacement = vec![0.0; 384];
+        replacement[20] = 1.0;
+
+        let mut mem = Memvid::open(&path).unwrap();
+        mem.add_embeddings(vec![(4, replacement.clone())]).unwrap();
+        mem.commit().unwrap();
+        let replaced = mem.search_vec(&replacement, 1).unwrap()[0].clone();
+        assert_eq!(replaced.frame_id, 4);
+        assert_eq!(replaced.distance, 0.0);
+        let untouched = mem.search_vec(&vectors[5], 1).unwrap()[0].clone();
+        assert_eq!(untouched.frame_id, 5);
+        assert_eq!(untouched.distance, 0.0);
+        drop(mem);
+
+        let mut reopened = Memvid::open_read_only(&path).unwrap();
+        let replaced = reopened.search_vec(&replacement, 1).unwrap()[0].clone();
+        assert_eq!(replaced.frame_id, 4);
+        assert_eq!(replaced.distance, 0.0);
+        let untouched = reopened.search_vec(&vectors[5], 1).unwrap()[0].clone();
+        assert_eq!(untouched.frame_id, 5);
+        assert_eq!(untouched.distance, 0.0);
+    }
+
+    #[test]
+    fn malformed_monolithic_vectors_fail_before_staging_truncate() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pq-invalid-monolithic.mv2");
+        let mut mem = Memvid::create(&path).unwrap();
+        mem.enable_vec().unwrap();
+        mem.put_bytes(b"committed malformed-vector payload")
+            .unwrap();
+        mem.commit().unwrap();
+
+        let malformed = crate::vec_pq::malformed_codebook_artifact();
+        let offset = mem.header.footer_offset;
+        mem.file.seek(SeekFrom::Start(offset)).unwrap();
+        mem.file.write_all(&malformed.bytes).unwrap();
+        mem.toc.indexes.vec = Some(VecIndexManifest {
+            bytes_offset: offset,
+            bytes_length: malformed.bytes.len() as u64,
+            vector_count: malformed.vector_count,
+            dimension: malformed.dimension,
+            checksum: malformed.checksum,
+            compression_mode: crate::VectorCompression::Pq96,
+            model: None,
+        });
+        mem.header.footer_offset = offset + malformed.bytes.len() as u64;
+        mem.rewrite_toc_footer().unwrap();
+        mem.header.toc_checksum = mem.toc.toc_checksum;
+        crate::persist_header(&mut mem.file, &mem.header).unwrap();
+        mem.file.sync_all().unwrap();
+        mem.dirty = false;
+        drop(mem);
+
+        let committed = std::fs::read(&path).unwrap();
+        let mut writer = Memvid::open(&path).unwrap();
+        writer.insert_sketch(0, "must not reach staging truncate", SketchVariant::Small);
+        FAIL_AFTER_COMPACT_TRUNCATE.with(|flag| flag.set(true));
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| writer.commit()));
+        FAIL_AFTER_COMPACT_TRUNCATE.with(|flag| flag.set(false));
+        assert!(result.is_ok(), "malformed monolithic commit panicked");
+        let err = result.unwrap().expect_err("invalid geometry must abort");
+        assert!(matches!(err, MemvidError::InvalidToc { .. }));
+        assert!(!err.to_string().contains("after compact truncate"));
+        assert_eq!(std::fs::read(&path).unwrap(), committed);
+        writer.dirty = false;
+        drop(writer);
+
+        let mut reopened = Memvid::open_read_only(&path).unwrap();
+        assert_eq!(
+            reopened.frame_canonical_payload(0).unwrap(),
+            b"committed malformed-vector payload"
+        );
+    }
+
+    #[test]
+    #[cfg(not(feature = "replay"))]
+    fn build_without_replay_feature_preserves_opaque_replay_on_add_and_delete() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("opaque-replay.mv2");
+        let replay_bytes = b"MV2RPLY!opaque replay bytes retained without API feature";
+        let mut mem = Memvid::create(&path).unwrap();
+        mem.enable_vec().unwrap();
+        mem.put_with_embedding_and_options(
+            b"first replay-adjacent document",
+            vec![1.0, 0.0, 0.0, 0.0],
+            PutOptions::builder()
+                .uri("mv2://opaque/first")
+                .search_text("first replay-adjacent document")
+                .build(),
+        )
+        .unwrap();
+        mem.commit().unwrap();
+        let manifest = install_opaque_replay(&mut mem, replay_bytes);
+        drop(mem);
+
+        let mut mem = Memvid::open(&path).unwrap();
+        assert_opaque_replay(&mut mem, &manifest, replay_bytes);
+        mem.put_with_embedding_and_options(
+            b"second replay-adjacent document",
+            vec![0.0, 1.0, 0.0, 0.0],
+            PutOptions::builder()
+                .uri("mv2://opaque/second")
+                .search_text("second replay-adjacent document")
+                .build(),
+        )
+        .unwrap();
+        mem.commit().unwrap();
+        assert_opaque_replay(&mut mem, &manifest, replay_bytes);
+        mem.delete_frame(0).unwrap();
+        mem.commit().unwrap();
+        assert_opaque_replay(&mut mem, &manifest, replay_bytes);
+        drop(mem);
+
+        let mut reopened = Memvid::open(&path).unwrap();
+        assert_opaque_replay(&mut reopened, &manifest, replay_bytes);
+        assert_eq!(
+            reopened.frame_by_id(0).unwrap().status,
+            FrameStatus::Deleted
+        );
+        assert!(reopened.frame_by_uri("mv2://opaque/second").is_ok());
+        assert_eq!(
+            reopened.search_vec(&[0.0, 1.0, 0.0, 0.0], 1).unwrap()[0].frame_id,
+            1
+        );
+    }
+
+    #[cfg(feature = "lex")]
+    #[test]
+    fn next_atomic_commit_reclaims_layout_emitted_by_legacy_noncompact_writer() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("legacy-layout.mv2");
+        let mut mem = Memvid::create(&path).unwrap();
+        mem.enable_vec().unwrap();
+        for i in 0..8 {
+            let text = format!("legacy writer document {i}");
+            mem.put_with_embedding_and_options(
+                text.as_bytes(),
+                vec![i as f32 + 1.0; 256],
+                PutOptions::builder()
+                    .uri(format!("mv2://legacy/{i}"))
+                    .search_text(text.clone())
+                    .build(),
+            )
+            .unwrap();
+        }
+        mem.commit().unwrap();
+        let compact_size = std::fs::metadata(&path).unwrap().len();
+
+        // Reproduce the old writer's placement policy: preserve the previous
+        // footer boundary, write another complete vector snapshot after it,
+        // then append another complete sketch snapshot and footer.
+        for _ in 0..6 {
+            mem.rebuild_indexes(&[], &[], false).unwrap();
+            mem.persist_sketch_track().unwrap();
+            mem.rewrite_toc_footer().unwrap();
+            mem.header.toc_checksum = mem.toc.toc_checksum;
+            crate::persist_header(&mut mem.file, &mem.header).unwrap();
+            mem.file.sync_all().unwrap();
+        }
+        let legacy_size = std::fs::metadata(&path).unwrap().len();
+        assert!(legacy_size > compact_size + 40_000);
+        drop(mem);
+
+        let mut upgraded = Memvid::open(&path).unwrap();
+        upgraded
+            .put_with_embedding_and_options(
+                b"legacy writer upgrade document",
+                vec![0.5; 256],
+                PutOptions::builder()
+                    .uri("mv2://legacy/upgrade")
+                    .search_text("legacy writer upgrade document")
+                    .build(),
+            )
+            .unwrap();
+        upgraded.commit().unwrap();
+        let upgraded_size = std::fs::metadata(&path).unwrap().len();
+        assert!(upgraded_size < legacy_size - 30_000);
+        println!(
+            "legacy layout sizes: compact={compact_size}, legacy={legacy_size}, upgraded={upgraded_size}"
+        );
+        drop(upgraded);
+
+        let mut reopened = Memvid::open(&path).unwrap();
+        assert_eq!(reopened.stats().unwrap().frame_count, 9);
+        assert!(reopened.frame_by_uri("mv2://legacy/upgrade").is_ok());
+        assert!(!reopened.search_vec(&[0.5; 256], 1).unwrap().is_empty());
+        assert!(reopened.sketches().get(8).is_some());
     }
 }

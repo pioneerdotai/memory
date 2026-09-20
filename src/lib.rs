@@ -1170,7 +1170,9 @@ mod tests {
                 mem.put_bytes(b"repair").expect("put");
                 mem.commit().expect("commit");
                 // Explicitly rebuild indexes to create time_index (new implementation requires this)
-                mem.rebuild_indexes(&[], &[]).expect("rebuild");
+                mem.materialize_vec_segments_for_rebuild()
+                    .expect("materialize vectors");
+                mem.rebuild_indexes(&[], &[], false).expect("rebuild");
                 mem.commit().expect("commit after rebuild");
                 println!(
                     "test: post-commit header footer_offset={}",

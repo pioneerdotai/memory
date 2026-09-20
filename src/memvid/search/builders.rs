@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Seek, SeekFrom};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
@@ -48,16 +48,22 @@ impl Memvid {
         if !self.vec_enabled {
             return Ok(None);
         }
-        let mut builder = VecIndexBuilder::new();
+        let mut entries = BTreeMap::<FrameId, Vec<f32>>::new();
         if let Some(index) = self.vec_index.as_ref() {
-            for (frame_id, embedding) in index.entries() {
-                if self.frame_is_active(frame_id) {
-                    builder.add_document(frame_id, embedding.to_vec());
+            for document in index.documents_for_rebuild()? {
+                if self.frame_is_active(document.frame_id) {
+                    entries.insert(document.frame_id, document.embedding);
                 }
             }
         }
         for (frame_id, embedding) in new_docs {
-            builder.add_document(*frame_id, embedding.clone());
+            if self.frame_is_active(*frame_id) {
+                entries.insert(*frame_id, embedding.clone());
+            }
+        }
+        let mut builder = VecIndexBuilder::new();
+        for (frame_id, embedding) in entries {
+            builder.add_document(frame_id, embedding);
         }
         let artifact = builder.finish()?;
         let index = VecIndex::decode(&artifact.bytes)?;
@@ -85,6 +91,68 @@ impl Memvid {
             self.build_vec_index_from_segments()?;
         }
 
+        Ok(())
+    }
+
+    /// Materialize every vector source before a rebuild can replace its bytes.
+    ///
+    /// Search loading is deliberately best-effort for compatibility, but a
+    /// destructive rebuild must be strict: skipping an unreadable segment
+    /// would turn a recoverable commit failure into silent vector loss.
+    pub(crate) fn materialize_vec_segments_for_rebuild(&mut self) -> Result<()> {
+        let mut entries = BTreeMap::<FrameId, Vec<f32>>::new();
+        // Validate and snapshot the cache before any caller can truncate the
+        // monolithic block that produced it. It may also contain newer pending
+        // replacements, so these documents are applied after persistent data.
+        let cached_documents = self
+            .vec_index
+            .as_ref()
+            .map(VecIndex::documents_for_rebuild)
+            .transpose()?;
+
+        let segments = self.toc.segment_catalog.vec_segments.clone();
+        for segment in &segments {
+            let bytes =
+                self.read_range(segment.common.bytes_offset, segment.common.bytes_length)?;
+            if blake3::hash(&bytes).as_bytes() != &segment.common.checksum {
+                return Err(MemvidError::ChecksumMismatch {
+                    context: "vector segment before index rebuild",
+                });
+            }
+            let index =
+                VecIndex::decode_with_compression(&bytes, segment.vector_compression.clone())?;
+            for document in index.documents_for_rebuild()? {
+                if self.frame_is_active(document.frame_id) {
+                    entries.insert(document.frame_id, document.embedding);
+                }
+            }
+        }
+
+        // The in-memory cache can contain pending add_embeddings() replacements
+        // that are newer than every persistent segment. Apply it last.
+        if let Some(documents) = cached_documents {
+            for document in documents {
+                if self.frame_is_active(document.frame_id) {
+                    entries.insert(document.frame_id, document.embedding);
+                }
+            }
+        }
+
+        // Keep the intermediate representation enumerable even at the HNSW
+        // threshold. build_vec_artifact() performs the final encoding later.
+        self.vec_index = if entries.is_empty() {
+            None
+        } else {
+            Some(VecIndex::Uncompressed {
+                documents: entries
+                    .into_iter()
+                    .map(|(frame_id, embedding)| crate::vec::VecDocument {
+                        frame_id,
+                        embedding,
+                    })
+                    .collect(),
+            })
+        };
         Ok(())
     }
 
@@ -249,13 +317,22 @@ impl Memvid {
             );
 
             match VecIndex::decode_with_compression(&bytes, compression_hint) {
-                Ok(segment_index) => {
-                    for (frame_id, embedding) in segment_index.entries() {
-                        if self.frame_is_active(frame_id) {
-                            builder.add_document(frame_id, embedding.to_vec());
+                Ok(segment_index) => match segment_index.documents_for_rebuild() {
+                    Ok(documents) => {
+                        for document in documents {
+                            if self.frame_is_active(document.frame_id) {
+                                builder.add_document(document.frame_id, document.embedding);
+                            }
                         }
                     }
-                }
+                    Err(err) => {
+                        tracing::warn!(
+                            error = %err,
+                            segment_id = segment_desc.common.segment_id,
+                            "failed to enumerate vec segment, skipping"
+                        );
+                    }
+                },
                 Err(err) => {
                     tracing::warn!(
                         error = %err,

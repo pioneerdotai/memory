@@ -279,6 +279,27 @@ impl VecIndex {
         }
     }
 
+    /// Return an owned, enumerable representation suitable for a destructive
+    /// rebuild. Unlike `entries()`, this covers every supported encoding.
+    pub(crate) fn documents_for_rebuild(&self) -> Result<Vec<VecDocument>> {
+        match self {
+            VecIndex::Uncompressed { documents } => Ok(documents.clone()),
+            VecIndex::Compressed(quantized) => quantized.decoded_documents(),
+            #[cfg(any(feature = "vec", feature = "hnsw_bench"))]
+            VecIndex::Hnsw(index) => index.documents(),
+        }
+    }
+
+    #[cfg(feature = "parallel_segments")]
+    pub(crate) fn vector_count(&self) -> usize {
+        match self {
+            VecIndex::Uncompressed { documents } => documents.len(),
+            VecIndex::Compressed(quantized) => quantized.len(),
+            #[cfg(any(feature = "vec", feature = "hnsw_bench"))]
+            VecIndex::Hnsw(index) => index.ids.len(),
+        }
+    }
+
     #[must_use]
     pub fn embedding_for(&self, frame_id: FrameId) -> Option<&[f32]> {
         match self {
@@ -432,11 +453,78 @@ impl HnswVecIndex {
             })
         })
     }
+
+    fn documents(&self) -> Result<Vec<VecDocument>> {
+        if self.graph.len() != self.ids.len() || self.graph.layer_len(0) != self.ids.len() {
+            return Err(MemvidError::InvalidToc {
+                reason: "HNSW vector IDs do not match graph features".into(),
+            });
+        }
+        self.ids
+            .iter()
+            .enumerate()
+            .map(|(index, frame_id)| {
+                let embedding = self.graph.feature(index).clone();
+                if embedding.len() != self.dimension as usize {
+                    return Err(MemvidError::InvalidToc {
+                        reason: "HNSW vector dimension does not match its manifest".into(),
+                    });
+                }
+                Ok(VecDocument {
+                    frame_id: *frame_id,
+                    embedding,
+                })
+            })
+            .collect()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[cfg(any(feature = "vec", feature = "hnsw_bench"))]
+    fn malformed_hnsw_feature_geometry_returns_error_without_panicking() {
+        let documents: Vec<VecDocument> = (0..HNSW_THRESHOLD)
+            .map(|frame_id| VecDocument {
+                frame_id: frame_id as FrameId,
+                embedding: vec![frame_id as f32, 1.0, 2.0, 3.0],
+            })
+            .collect();
+        let valid = HnswVecIndex::build(&documents).unwrap();
+        assert_eq!(valid.documents().unwrap().len(), HNSW_THRESHOLD);
+
+        let mut serialized = serde_json::to_string(&valid).unwrap();
+        let key = serialized.find("\"features\":").unwrap();
+        let start = key + "\"features\":".len();
+        let mut depth = 0_usize;
+        let mut end = start;
+        for (index, byte) in serialized.as_bytes()[start..].iter().enumerate() {
+            if *byte == b'[' {
+                depth += 1;
+            } else if *byte == b']' {
+                depth -= 1;
+                if depth == 0 {
+                    end = start + index + 1;
+                    break;
+                }
+            }
+        }
+        serialized.replace_range(start..end, "[]");
+        let malformed: HnswVecIndex = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(malformed.ids.len(), HNSW_THRESHOLD);
+        assert_eq!(malformed.graph.len(), HNSW_THRESHOLD);
+        assert_eq!(malformed.graph.layer_len(0), 0);
+
+        let bytes = bincode::serde::encode_to_vec(&malformed, vec_config()).unwrap();
+        let decoded = VecIndex::decode(&bytes).unwrap();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            decoded.documents_for_rebuild()
+        }));
+        assert!(result.is_ok(), "malformed HNSW enumeration panicked");
+        assert!(result.unwrap().is_err());
+    }
 
     #[test]
     fn builder_roundtrip() {

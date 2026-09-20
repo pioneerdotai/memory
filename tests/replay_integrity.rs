@@ -5,7 +5,7 @@
 //! at an incorrect offset and moving the TOC footer backwards.
 
 #[cfg(all(feature = "lex", feature = "replay"))]
-use memvid_core::{Memvid, PutOptions, SearchRequest};
+use memvid_core::{Memvid, PutOptions, SearchRequest, SketchVariant};
 #[cfg(all(feature = "lex", feature = "replay"))]
 use tempfile::TempDir;
 
@@ -54,6 +54,27 @@ fn replay_save_does_not_corrupt_lex_index() {
         mem.commit().unwrap();
         mem.save_replay_sessions().unwrap();
         mem.commit().unwrap();
+
+        // Exercise the compact staging branch after replay exists. Adding a
+        // payload must place it after the opaque replay range; a subsequent
+        // delete has no payload and must still preserve that range.
+        let opts = PutOptions {
+            uri: Some("mv2://doc/1".to_string()),
+            title: Some("Follow-up".to_string()),
+            search_text: Some("Climate adaptation follow-up remains searchable.".to_string()),
+            ..Default::default()
+        };
+        mem.put_bytes_with_options(b"climate adaptation", opts)
+            .unwrap();
+        mem.commit().unwrap();
+        mem.delete_frame(0).unwrap();
+        mem.commit().unwrap();
+        mem.insert_sketch(
+            1,
+            "Climate adaptation latest replay-preserving sketch",
+            SketchVariant::Small,
+        );
+        mem.commit().unwrap();
     }
 
     // Reopen and ensure Tantivy loads and lexical search still works.
@@ -80,6 +101,8 @@ fn replay_save_does_not_corrupt_lex_index() {
         !results.hits.is_empty(),
         "expected lexical search to work after saving replay sessions"
     );
+    assert_eq!(results.hits[0].uri, "mv2://doc/1");
+    assert!(reopened.sketches().get(1).is_some());
 
     // Also ensure replay sessions can be loaded (read-only is fine).
     reopened.load_replay_sessions().unwrap();
