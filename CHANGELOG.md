@@ -26,6 +26,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Atomic commits ensure consistency
 - File locking prevents concurrent write conflicts
 
+## [3.1.5] - 2026-09-21
+
+### Fixed
+- Keep writer locks attached to the published capsule across atomic replacement, reopen stale waiting writers on the current inode, and prevent further writes after failed publication or loss of snapshot continuity.
+- Preserve lock ownership during shared/exclusive transitions and protect manifest WAL and replay session cleanup from stale handles.
+- Bound TOC recovery hashing and decoding across footer, hint, and fallback searches, eliminating quadratic suffix hashing while preserving checksum verification and current/legacy TOC support.
+- Recover segmented TOCs, inaccurate header hints, missing or damaged footers, and supported large TOCs without exhausting the decode allowance on false hash candidates.
+
+### Compatibility
+- The public API and `.mv2` format are unchanged. Blind TOC scanning remains limited to the last 64 MiB; crafted false candidates can exhaust the bounded recovery budget and return an error without modifying the file.
+
 ## [3.1.4] - 2026-09-20
 
 ### Fixed
@@ -67,7 +78,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-[Unreleased]: https://github.com/pioneerdotai/memory/compare/v3.1.4...HEAD
+[Unreleased]: https://github.com/pioneerdotai/memory/compare/v3.1.5...HEAD
+[3.1.5]: https://github.com/pioneerdotai/memory/compare/v3.1.4...v3.1.5
 [3.1.4]: https://github.com/pioneerdotai/memory/compare/v3.1.3...v3.1.4
 [3.1.3]: https://github.com/memvid/memvid/compare/v3.1.2...v3.1.3
 [3.1.2]: https://github.com/memvid/memvid/compare/v3.1.1...v3.1.2
