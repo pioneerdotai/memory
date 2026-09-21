@@ -50,6 +50,13 @@ pub struct Memvid {
     pub(crate) path: PathBuf,
     pub(crate) lock: FileLock,
     pub(crate) read_only: bool,
+    /// Once set, this handle is terminal and can never publish another mutation. Cached reads may
+    /// still work, but callers must reopen before relying on a coherent snapshot because this
+    /// handle may no longer hold any OS lock.
+    pub(crate) write_disabled: Option<String>,
+    /// A second guard retained only when an I/O error prevents determining which inode is
+    /// currently published. Holding both possible destination inodes is safer than releasing one.
+    pub(crate) publication_fallback_lock: Option<FileLock>,
     pub(crate) header: Header,
     pub(crate) toc: Toc,
     pub(crate) wal: EmbeddedWal,
@@ -176,13 +183,8 @@ impl Memvid {
         let path_ref = path.as_ref();
         ensure_single_file(path_ref)?;
 
-        OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(path_ref)?;
-        let (mut file, lock) = FileLock::open_and_lock(path_ref)?;
+        let (mut file, lock) = FileLock::open_or_create_and_lock(path_ref)?;
+        file.set_len(0)?;
 
         let header = Header {
             magic: MAGIC,
@@ -221,6 +223,8 @@ impl Memvid {
             path: path_ref.to_path_buf(),
             lock,
             read_only: false,
+            write_disabled: None,
+            publication_fallback_lock: None,
             header,
             toc,
             wal,
@@ -403,6 +407,8 @@ impl Memvid {
             path: path_ref.to_path_buf(),
             lock,
             read_only,
+            write_disabled: None,
+            publication_fallback_lock: None,
             header,
             toc,
             wal,
@@ -513,7 +519,7 @@ impl Memvid {
     }
 
     fn open_read_only_snapshot(path_ref: &Path) -> Result<Self> {
-        let mut file = OpenOptions::new().read(true).write(true).open(path_ref)?;
+        let (mut file, lock) = FileLock::open_read_only(path_ref)?;
         let TailSnapshot {
             toc,
             footer_offset,
@@ -525,7 +531,6 @@ impl Memvid {
         header.footer_offset = footer_offset;
         header.toc_checksum = toc.toc_checksum;
 
-        let lock = FileLock::acquire_with_mode(&file, LockMode::Shared)?;
         let wal = EmbeddedWal::open_read_only(&file, &header)?;
 
         #[cfg(feature = "lex")]
@@ -541,6 +546,8 @@ impl Memvid {
             path: path_ref.to_path_buf(),
             lock,
             read_only: true,
+            write_disabled: None,
+            publication_fallback_lock: None,
             header,
             toc,
             wal,
@@ -613,8 +620,8 @@ impl Memvid {
         let path_ref = path.as_ref();
         ensure_single_file(path_ref)?;
 
-        let file = OpenOptions::new().read(true).write(true).open(path_ref)?;
-        let lock = match FileLock::try_acquire(&file, path_ref)? {
+        let candidate = OpenOptions::new().read(true).write(true).open(path_ref)?;
+        let lock = match FileLock::try_acquire(&candidate, path_ref)? {
             Some(lock) => lock,
             None => {
                 return Err(MemvidError::Lock(
@@ -622,6 +629,7 @@ impl Memvid {
                 ));
             }
         };
+        let file = lock.clone_handle()?;
         Self::open_locked(file, lock, path_ref)
     }
 
@@ -656,7 +664,7 @@ impl Memvid {
     }
 
     #[cfg(feature = "parallel_segments")]
-    fn load_manifest_segments(&mut self, entries: Vec<IndexSegmentRef>) {
+    pub(crate) fn load_manifest_segments(&mut self, entries: Vec<IndexSegmentRef>) {
         if entries.is_empty() {
             return;
         }
@@ -671,6 +679,41 @@ impl Memvid {
                 self.toc.segment_catalog.index_segments.push(entry);
             }
         }
+    }
+
+    #[cfg(feature = "parallel_segments")]
+    pub(crate) fn release_manifest_wal_before_shared_lock(&mut self) -> Result<()> {
+        let Some(manifest_wal) = self.manifest_wal.as_mut() else {
+            return Ok(());
+        };
+        manifest_wal.flush()?;
+        if !manifest_wal.is_empty() {
+            return Err(MemvidError::Lock(
+                "cannot downgrade while the manifest WAL contains recovery entries".to_string(),
+            ));
+        }
+
+        // Close our fd before unlinking the name, while the capsule is still exclusively locked.
+        // A later upgrade must open a fresh named journal rather than reuse an unlinked fd.
+        drop(self.manifest_wal.take());
+        let wal_path = manifest_wal_path(&self.path);
+        match std::fs::remove_file(wal_path) {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(err.into()),
+        }
+    }
+
+    #[cfg(feature = "parallel_segments")]
+    pub(crate) fn reopen_manifest_wal_after_exclusive_lock(&mut self) -> Result<()> {
+        if self.manifest_wal.is_some() {
+            return Ok(());
+        }
+        let manifest_wal = ManifestWal::open(manifest_wal_path(&self.path))?;
+        let entries = manifest_wal.replay()?;
+        self.load_manifest_segments(entries);
+        self.manifest_wal = Some(manifest_wal);
+        Ok(())
     }
 
     /// Load the memories track from the manifest if present.

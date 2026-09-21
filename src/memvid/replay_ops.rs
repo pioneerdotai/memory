@@ -237,6 +237,8 @@ impl Memvid {
         use crate::replay::storage;
         use std::io::{Seek, SeekFrom, Write};
 
+        self.ensure_writable()?;
+
         if self.completed_sessions.is_empty() {
             // Clear the replay manifest when all sessions are deleted
             if self.toc.replay_manifest.is_some() {
@@ -421,6 +423,8 @@ impl Memvid {
         use crate::replay::storage;
         use std::io::Write;
 
+        self.ensure_not_terminal()?;
+
         let session = match &self.active_session {
             Some(s) => s,
             None => {
@@ -465,6 +469,7 @@ impl Memvid {
                 Ok(true)
             }
             Err(e) => {
+                self.ensure_not_terminal()?;
                 tracing::warn!("Failed to load active session: {}, removing stale file", e);
                 let _ = std::fs::remove_file(&path);
                 Ok(false)
@@ -475,10 +480,87 @@ impl Memvid {
     /// Clear the active session sidecar file.
     #[cfg(feature = "replay")]
     pub fn clear_active_session_file(&self) -> Result<()> {
+        self.ensure_not_terminal()?;
         let path = self.active_session_path();
         if path.exists() {
             std::fs::remove_file(&path)?;
         }
         Ok(())
+    }
+}
+
+#[cfg(all(test, feature = "replay"))]
+mod active_session_locking_tests {
+    use super::*;
+    use crate::lock::LockMode;
+
+    #[test]
+    fn terminal_handle_cannot_delete_or_replace_current_active_session() {
+        crate::run_serial_test(|| {
+            let dir = tempfile::tempdir().expect("temp dir");
+            let path = dir.path().join("active-session-terminal.mv2");
+            let mut seed = Memvid::create(&path).expect("create");
+            seed.put_bytes(b"seed").expect("put seed");
+            seed.commit().expect("commit seed");
+            drop(seed);
+
+            let mut stale = Memvid::open_read_only(&path).expect("stale candidate");
+            let reader = Memvid::open_read_only(&path).expect("competing reader");
+            crate::lock::set_lock_max_attempts(Some(0));
+            let upgrade = stale.commit();
+            crate::lock::set_lock_max_attempts(None);
+            upgrade.expect_err("upgrade must fail");
+            assert_eq!(stale.lock.mode(), LockMode::None);
+            drop(reader);
+
+            let mut current = Memvid::open(&path).expect("current writer");
+            let current_session_id = current
+                .start_session(Some("current writer".into()), None)
+                .expect("start current session");
+            current.save_active_session().expect("save current session");
+            let sidecar = current.active_session_path();
+            let expected = std::fs::read(&sidecar).expect("saved session bytes");
+
+            assert!(stale.clear_active_session_file().is_err());
+            assert_eq!(std::fs::read(&sidecar).unwrap(), expected);
+            assert!(
+                stale.save_active_session().is_err(),
+                "None branch is guarded"
+            );
+            assert_eq!(std::fs::read(&sidecar).unwrap(), expected);
+            stale
+                .start_session(Some("stale writer".into()), None)
+                .unwrap();
+            assert!(
+                stale.save_active_session().is_err(),
+                "Some branch is guarded"
+            );
+            assert_eq!(std::fs::read(&sidecar).unwrap(), expected);
+
+            assert!(
+                current
+                    .load_active_session()
+                    .expect("reload current session")
+            );
+            assert_eq!(current.active_session_id(), Some(current_session_id));
+
+            std::fs::write(&sidecar, b"invalid active session").expect("inject invalid sidecar");
+            let invalid = std::fs::read(&sidecar).unwrap();
+            assert!(
+                stale.load_active_session().is_err(),
+                "terminal handle must reject the decode-error deletion branch"
+            );
+            assert_eq!(std::fs::read(&sidecar).unwrap(), invalid);
+
+            current
+                .save_active_session()
+                .expect("current writer restores session");
+            assert!(
+                current
+                    .load_active_session()
+                    .expect("current writer reloads")
+            );
+            assert_eq!(current.active_session_id(), Some(current_session_id));
+        });
     }
 }

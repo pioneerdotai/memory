@@ -791,6 +791,7 @@ fn skip_then_parallel_commit_persists_cache_only_vectors() {
     parallel_commit(&mut mem);
     assert_skip_parallel_contents(&mut mem);
 
+    mem.downgrade_to_shared().unwrap();
     let mut reopened_before_finalize = Memvid::open_read_only(&path).unwrap();
     assert_skip_parallel_contents(&mut reopened_before_finalize);
     drop(reopened_before_finalize);
@@ -832,6 +833,7 @@ fn pending_manifest_vectors_survive_parallel_commit_and_finalize() {
 
     assert_exact_vector(&mut mem, &[1.0, 0.0, 0.0, 0.0], 0);
     assert_exact_vector(&mut mem, &[0.0, 1.0, 0.0, 0.0], 1);
+    mem.downgrade_to_shared().unwrap();
     let mut reopened_before_finalize = Memvid::open_read_only(&path).unwrap();
     assert_exact_vector(&mut reopened_before_finalize, &[1.0, 0.0, 0.0, 0.0], 0);
     assert_exact_vector(&mut reopened_before_finalize, &[0.0, 1.0, 0.0, 0.0], 1);

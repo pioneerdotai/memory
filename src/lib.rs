@@ -328,7 +328,7 @@ pub use replay::{
 #[cfg(test)]
 use once_cell::sync::Lazy;
 use std::fs::File;
-use std::io::Cursor;
+use std::io::{Cursor, Seek, SeekFrom};
 use std::path::Path;
 #[cfg(test)]
 use std::sync::Mutex;
@@ -418,38 +418,224 @@ impl Memvid {
     }
 
     pub(crate) fn ensure_writable(&mut self) -> Result<()> {
+        self.ensure_not_terminal()?;
         if self.read_only {
-            self.lock.upgrade_to_exclusive()?;
+            // Compute the baseline while the shared lock still protects this exact file object.
+            // It is needed only across the unavoidable unlocked conversion window.
+            let expected = match self.snapshot_fingerprint() {
+                Ok(fingerprint) => fingerprint,
+                Err(err) => {
+                    self.write_disabled = Some(format!(
+                        "writable access disabled because snapshot validation failed: {err}"
+                    ));
+                    return Err(err);
+                }
+            };
+            if let Err(err) = self.lock.upgrade_to_exclusive_for_path(&self.path) {
+                self.write_disabled = Some(format!(
+                    "writable access disabled after failed lock upgrade: {err}"
+                ));
+                return Err(err);
+            }
+            let actual = match self.snapshot_fingerprint() {
+                Ok(fingerprint) => fingerprint,
+                Err(err) => {
+                    let _ = self.lock.unlock();
+                    self.write_disabled = Some(format!(
+                        "writable access disabled because snapshot validation failed: {err}"
+                    ));
+                    return Err(err);
+                }
+            };
+            if actual != expected {
+                let _ = self.lock.unlock();
+                return self.disable_writes(
+                    "cannot upgrade a stale snapshot after the file changed during lock conversion",
+                );
+            }
+            #[cfg(feature = "parallel_segments")]
+            if let Err(err) = self.reopen_manifest_wal_after_exclusive_lock() {
+                let _ = self.lock.unlock();
+                self.write_disabled = Some(format!(
+                    "writable access disabled because the manifest WAL could not be reopened: {err}"
+                ));
+                return Err(err);
+            }
             self.read_only = false;
         }
         Ok(())
     }
 
     pub fn downgrade_to_shared(&mut self) -> Result<()> {
+        if let Some(reason) = &self.write_disabled {
+            return Err(MemvidError::Lock(reason.clone()));
+        }
         if self.read_only {
             return Ok(());
         }
         if self.dirty || self.tantivy_index_pending() {
             return Ok(());
         }
-        self.lock.downgrade_to_shared()?;
+        let expected = self.snapshot_fingerprint()?;
+        #[cfg(feature = "parallel_segments")]
+        if let Err(err) = self.release_manifest_wal_before_shared_lock() {
+            self.write_disabled = Some(format!(
+                "writable access disabled because the manifest WAL could not be released: {err}"
+            ));
+            return Err(err);
+        }
+        if let Err(err) = self.lock.downgrade_to_shared_for_path(&self.path) {
+            self.write_disabled = Some(format!(
+                "writable access disabled after failed lock downgrade: {err}"
+            ));
+            return Err(err);
+        }
+        let actual = match self.snapshot_fingerprint() {
+            Ok(fingerprint) => fingerprint,
+            Err(err) => {
+                let _ = self.lock.unlock();
+                self.write_disabled = Some(format!(
+                    "writable access disabled because snapshot validation failed: {err}"
+                ));
+                return Err(err);
+            }
+        };
+        if actual != expected {
+            let _ = self.lock.unlock();
+            return self.disable_writes(
+                "cannot downgrade to a shared snapshot after the file changed during lock conversion",
+            );
+        }
         self.read_only = true;
         Ok(())
     }
+
+    pub(crate) fn snapshot_fingerprint(&self) -> Result<[u8; 32]> {
+        #[cfg(test)]
+        SNAPSHOT_FINGERPRINT_CALLS.with(|calls| calls.set(calls.get() + 1));
+        if !FileLock::is_current_path_file(&self.file, &self.path)? {
+            return Err(MemvidError::Lock(
+                "snapshot file no longer matches the published path".to_string(),
+            ));
+        }
+        let mut positioned_file = &self.file;
+        let original_position = positioned_file.stream_position()?;
+        let fingerprint_result = self.snapshot_fingerprint_from_current_file();
+        let restore_result = positioned_file.seek(SeekFrom::Start(original_position));
+        if let Err(restore_error) = restore_result {
+            return Err(restore_error.into());
+        }
+        fingerprint_result
+    }
+
+    fn snapshot_fingerprint_from_current_file(&self) -> Result<[u8; 32]> {
+        const HASH_BUFFER_SIZE: usize = 64 * 1024;
+        let file_len = self.file.metadata()?.len();
+        let mut hasher = blake3::Hasher::new();
+        let mut buffer = [0_u8; HASH_BUFFER_SIZE];
+        let mut offset = 0_u64;
+        while offset < file_len {
+            let remaining = file_len - offset;
+            let requested = usize::try_from(remaining.min(HASH_BUFFER_SIZE as u64))
+                .expect("bounded fingerprint read size");
+            #[cfg(test)]
+            let requested = {
+                let mut requested = requested;
+                FINGERPRINT_FAIL_AFTER_OFFSET.with(|fail_after| {
+                    if let Some(limit) = fail_after.get() {
+                        if offset >= limit {
+                            fail_after.set(None);
+                            requested = 0;
+                        } else {
+                            requested = requested.min((limit - offset) as usize);
+                        }
+                    }
+                });
+                requested
+            };
+            #[cfg(test)]
+            if requested == 0 {
+                return Err(std::io::Error::other(
+                    "injected positional read failure after partial fingerprint",
+                )
+                .into());
+            }
+            let read = positional_read(&self.file, &mut buffer[..requested], offset)?;
+            if read == 0 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "snapshot changed while computing fingerprint",
+                )
+                .into());
+            }
+            hasher.update(&buffer[..read]);
+            offset += read as u64;
+        }
+        Ok(*hasher.finalize().as_bytes())
+    }
+
+    pub(crate) fn disable_writes<T>(&mut self, reason: &str) -> Result<T> {
+        self.write_disabled = Some(reason.to_string());
+        Err(MemvidError::Lock(reason.to_string()))
+    }
+
+    pub(crate) fn ensure_not_terminal(&self) -> Result<()> {
+        match &self.write_disabled {
+            Some(reason) => Err(MemvidError::Lock(reason.clone())),
+            None => Ok(()),
+        }
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static SNAPSHOT_FINGERPRINT_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static FINGERPRINT_FAIL_AFTER_OFFSET: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
 }
 
 impl Drop for Memvid {
     fn drop(&mut self) {
-        if self.dirty {
+        if self.dirty && self.write_disabled.is_none() {
             let _ = self.commit();
         }
         // Clean up temporary manifest.wal file (parallel_segments feature)
         #[cfg(feature = "parallel_segments")]
         {
             use crate::memvid::lifecycle::cleanup_manifest_wal_public;
-            cleanup_manifest_wal_public(self.path());
+            // Only the current exclusive owner that actually opened this journal may unlink it.
+            // A read-only or terminal stale handle must never remove another writer's WAL.
+            if self
+                .manifest_wal
+                .as_ref()
+                .is_some_and(crate::io::manifest_wal::ManifestWal::is_empty)
+                && self.lock.mode() == crate::lock::LockMode::Exclusive
+                && FileLock::is_current_path_file(&self.file, self.path()).unwrap_or(false)
+            {
+                drop(self.manifest_wal.take());
+                cleanup_manifest_wal_public(self.path());
+            }
         }
     }
+}
+
+#[cfg(unix)]
+fn positional_read(file: &File, buffer: &mut [u8], offset: u64) -> std::io::Result<usize> {
+    use std::os::unix::fs::FileExt;
+    file.read_at(buffer, offset)
+}
+
+#[cfg(windows)]
+fn positional_read(file: &File, buffer: &mut [u8], offset: u64) -> std::io::Result<usize> {
+    use std::os::windows::fs::FileExt;
+    file.seek_read(buffer, offset)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn positional_read(file: &File, buffer: &mut [u8], offset: u64) -> std::io::Result<usize> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut clone = file.try_clone()?;
+    clone.seek(SeekFrom::Start(offset))?;
+    clone.read(buffer)
 }
 
 pub(crate) fn persist_header(file: &mut File, header: &Header) -> Result<()> {
@@ -594,9 +780,18 @@ fn image_preview_from_metadata(meta: &DocMetadata) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Read;
+    use crate::lock::LockMode;
+    use std::io::{Read, Seek, SeekFrom};
     use std::num::NonZeroU64;
     use tempfile::tempdir;
+
+    fn fingerprint_calls() -> usize {
+        SNAPSHOT_FINGERPRINT_CALLS.with(std::cell::Cell::get)
+    }
+
+    fn reset_fingerprint_calls() {
+        SNAPSHOT_FINGERPRINT_CALLS.with(|calls| calls.set(0));
+    }
 
     #[test]
     fn create_put_commit_reopen() {
@@ -626,6 +821,470 @@ mod tests {
             assert_eq!(wal_stats.pending_bytes, 0);
             // Sequence is 2: one from create() writing manifests, one from put()
             assert_eq!(wal_stats.sequence, 2);
+        });
+    }
+
+    #[test]
+    fn in_place_change_during_upgrade_disables_stale_snapshot() {
+        run_serial_test(|| {
+            let dir = tempdir().expect("tmp");
+            let path = dir.path().join("upgrade-in-place.mv2");
+            let mut seed = Memvid::create(&path).expect("create");
+            seed.put_bytes(b"seed").expect("put seed");
+            seed.commit().expect("commit seed");
+            drop(seed);
+
+            let mut stale = Memvid::open_read_only(&path).expect("shared snapshot");
+            let before = same_file::Handle::from_path(&path).expect("inode before");
+            let writer_path = path.clone();
+            crate::lock::set_transition_hook(move || {
+                let mut writer = Memvid::open(&writer_path).expect("window writer");
+                writer.put_bytes(b"concurrent").expect("concurrent put");
+                writer
+                    .commit_skip_indexes()
+                    .expect("supported in-place commit");
+                let after = same_file::Handle::from_path(&writer_path).expect("inode after");
+                assert_eq!(before, after, "test mutation must keep the same inode");
+            });
+
+            let error = stale
+                .put_bytes(b"stale")
+                .expect_err("changed snapshot cannot become a writer");
+            assert!(
+                error
+                    .to_string()
+                    .contains("file changed during lock conversion")
+            );
+            assert_eq!(stale.lock.mode(), LockMode::None);
+            assert!(stale.commit().is_err(), "poisoned handle stays unusable");
+            assert!(
+                stale.put_bytes(b"retry").is_err(),
+                "repeated mutation cannot reuse the stale snapshot"
+            );
+            drop(stale);
+
+            let mut reopened = Memvid::open_read_only(&path).expect("independent reopen");
+            assert_eq!(reopened.frame_count(), 2);
+            assert_eq!(
+                reopened
+                    .frame_canonical_payload(1)
+                    .expect("concurrent payload"),
+                b"concurrent"
+            );
+        });
+    }
+
+    #[test]
+    fn read_only_open_does_not_scan_the_capsule_for_conversion_fingerprint() {
+        run_serial_test(|| {
+            let dir = tempdir().expect("tmp");
+            let path = dir.path().join("lazy-fingerprint.mv2");
+            let mut writer = Memvid::create(&path).expect("create");
+            writer.put_bytes(b"seed").expect("put seed");
+            writer.commit().expect("commit seed");
+            drop(writer);
+
+            reset_fingerprint_calls();
+            let reader = Memvid::open_read_only(&path).expect("first read-only open");
+            assert_eq!(
+                fingerprint_calls(),
+                0,
+                "ordinary open must not scan the file"
+            );
+            drop(reader);
+            let reader = Memvid::open_read_only(&path).expect("second read-only open");
+            assert_eq!(
+                fingerprint_calls(),
+                0,
+                "repeated opens must remain scan-free"
+            );
+            drop(reader);
+        });
+    }
+
+    #[test]
+    fn snapshot_fingerprint_restores_shared_cursor_after_success_and_partial_error() {
+        run_serial_test(|| {
+            let dir = tempdir().expect("tmp");
+            let path = dir.path().join("fingerprint-cursor.mv2");
+            let mut writer = Memvid::create(&path).expect("create");
+            writer.put_bytes(b"seed").expect("put seed");
+            writer.commit().expect("commit seed");
+
+            let mut cloned = writer.file.try_clone().expect("clone file object");
+            (&writer.file)
+                .seek(SeekFrom::Start(37))
+                .expect("set original position");
+            assert_eq!(cloned.stream_position().expect("clone position"), 37);
+            writer
+                .snapshot_fingerprint()
+                .expect("successful fingerprint");
+            assert_eq!(
+                (&writer.file).stream_position().expect("original position"),
+                37
+            );
+            assert_eq!(cloned.stream_position().expect("clone position"), 37);
+
+            (&writer.file)
+                .seek(SeekFrom::Start(91))
+                .expect("set second position");
+            FINGERPRINT_FAIL_AFTER_OFFSET.with(|limit| limit.set(Some(1024)));
+            let error = writer
+                .snapshot_fingerprint()
+                .expect_err("partial fingerprint read must fail");
+            assert!(error.to_string().contains("partial fingerprint"));
+            assert_eq!(
+                (&writer.file).stream_position().expect("restored position"),
+                91
+            );
+            assert_eq!(cloned.stream_position().expect("clone position"), 91);
+        });
+    }
+
+    #[test]
+    fn memvid_downgrade_and_upgrade_preserve_snapshot_and_physical_locking() {
+        run_serial_test(|| {
+            let dir = tempdir().expect("tmp");
+            let path = dir.path().join("memvid-conversion.mv2");
+            let mut writer = Memvid::create(&path).expect("create");
+            writer.enable_vec().expect("enable vec");
+            writer
+                .put_with_embedding(b"seed", vec![1.0, 0.0, 0.0, 0.0])
+                .expect("put seed");
+            writer.commit().expect("commit seed");
+
+            reset_fingerprint_calls();
+            writer.downgrade_to_shared().expect("downgrade");
+            assert_eq!(
+                fingerprint_calls(),
+                2,
+                "downgrade hashes only around its window"
+            );
+            let second_reader = Memvid::open_read_only(&path).expect("second shared reader");
+            assert_eq!(fingerprint_calls(), 2, "read-only open does not add a scan");
+            assert!(
+                FileLock::try_acquire(&writer.file, &path)
+                    .expect("exclusive probe")
+                    .is_none(),
+                "live readers must physically exclude a writer"
+            );
+            drop(second_reader);
+
+            writer
+                .put_with_embedding(b"alpha", vec![0.0, 1.0, 0.0, 0.0])
+                .expect("unchanged shared snapshot upgrades");
+            assert_eq!(
+                fingerprint_calls(),
+                4,
+                "upgrade hashes only around its window"
+            );
+            writer.commit().expect("commit after upgrade");
+            drop(writer);
+
+            let mut reopened = Memvid::open_read_only(&path).expect("reopen");
+            assert_eq!(reopened.frame_canonical_payload(0).unwrap(), b"seed");
+            assert_eq!(reopened.frame_canonical_payload(1).unwrap(), b"alpha");
+            assert_eq!(
+                reopened.search_vec(&[0.0, 1.0, 0.0, 0.0], 1).unwrap()[0].frame_id,
+                1
+            );
+        });
+    }
+
+    #[test]
+    fn terminal_handle_cannot_bypass_writer_lock_with_batch_or_replay_write() {
+        run_serial_test(|| {
+            let dir = tempdir().expect("tmp");
+            let path = dir.path().join("terminal-bypass.mv2");
+            let mut seed = Memvid::create(&path).expect("create");
+            seed.enable_vec().expect("enable vec");
+            seed.put_with_embedding_and_options(
+                b"seed",
+                vec![1.0, 0.0, 0.0, 0.0],
+                PutOptions::builder()
+                    .uri("mv2://terminal/seed")
+                    .search_text("seed")
+                    .auto_tag(false)
+                    .extract_dates(false)
+                    .extract_triplets(false)
+                    .instant_index(false)
+                    .extraction_budget_ms(0)
+                    .build(),
+            )
+            .expect("put seed");
+            seed.commit().expect("commit seed");
+            drop(seed);
+
+            let mut stale = Memvid::open_read_only(&path).expect("stale candidate");
+            let reader = Memvid::open_read_only(&path).expect("competing reader");
+            crate::lock::set_lock_max_attempts(Some(0));
+            let upgrade = stale.commit();
+            crate::lock::set_lock_max_attempts(None);
+            upgrade.expect_err("upgrade must lose its shared lock");
+            assert_eq!(stale.lock.mode(), LockMode::None);
+            drop(reader);
+
+            let mut current = Memvid::open(&path).expect("current writer");
+            current
+                .put_with_embedding_and_options(
+                    b"beta",
+                    vec![0.0, 1.0, 0.0, 0.0],
+                    PutOptions::builder()
+                        .uri("mv2://terminal/beta")
+                        .search_text("beta")
+                        .auto_tag(false)
+                        .extract_dates(false)
+                        .extract_triplets(false)
+                        .instant_index(false)
+                        .extraction_budget_ms(0)
+                        .build(),
+                )
+                .expect("put beta");
+            current.commit().expect("commit beta and its vector");
+            let inode_before_skip = same_file::Handle::from_path(&path).expect("inode before skip");
+            current.put_bytes(b"gamma").expect("put same-inode payload");
+            current.commit_skip_indexes().expect("same-inode commit");
+            assert_eq!(
+                inode_before_skip,
+                same_file::Handle::from_path(&path).expect("inode after skip"),
+                "commit_skip_indexes must exercise the supported in-place path"
+            );
+            let before = current.snapshot_fingerprint().expect("before fingerprint");
+
+            assert!(
+                stale
+                    .begin_batch(crate::PutManyOpts {
+                        wal_pre_size_bytes: 4 * 1024 * 1024,
+                        ..Default::default()
+                    })
+                    .is_err(),
+                "terminal handle cannot grow the WAL"
+            );
+            assert!(
+                stale.end_batch().is_err(),
+                "terminal handle cannot flush the WAL"
+            );
+            #[cfg(feature = "replay")]
+            {
+                stale.start_session(Some("terminal".into()), None).unwrap();
+                stale.end_session().unwrap();
+                assert!(
+                    stale.save_replay_sessions().is_err(),
+                    "terminal handle cannot append replay bytes"
+                );
+            }
+            assert_eq!(
+                current.snapshot_fingerprint().expect("after fingerprint"),
+                before,
+                "rejected direct writes must not change the capsule"
+            );
+
+            current
+                .finalize_indexes()
+                .expect("current writer finalizes after the in-place commit");
+            drop(current);
+            drop(stale);
+            let mut reopened = Memvid::open_read_only(&path).expect("reopen");
+            let beta = reopened.frame_by_uri("mv2://terminal/beta").expect("beta");
+            assert_eq!(reopened.frame_canonical_payload(beta.id).unwrap(), b"beta");
+            assert_eq!(reopened.frame_canonical_payload(2).unwrap(), b"gamma");
+            assert_eq!(
+                reopened.search_vec(&[0.0, 1.0, 0.0, 0.0], 1).unwrap()[0].frame_id,
+                beta.id
+            );
+        });
+    }
+
+    #[cfg(feature = "parallel_segments")]
+    #[test]
+    fn dropping_terminal_reader_does_not_remove_current_writers_manifest_wal() {
+        run_serial_test(|| {
+            let dir = tempdir().expect("tmp");
+            let path = dir.path().join("manifest-ownership.mv2");
+            let manifest_path = path.with_extension("manifest.wal");
+            let mut seed = Memvid::create(&path).expect("create");
+            seed.put_bytes(b"seed").expect("put seed");
+            seed.commit().expect("commit seed");
+            drop(seed);
+            assert!(!manifest_path.exists(), "owner cleanup after normal close");
+
+            let mut stale = Memvid::open_read_only(&path).expect("stale candidate");
+            let reader = Memvid::open_read_only(&path).expect("competing reader");
+            crate::lock::set_lock_max_attempts(Some(0));
+            let upgrade = stale.commit();
+            crate::lock::set_lock_max_attempts(None);
+            upgrade.expect_err("upgrade must fail");
+            drop(reader);
+
+            let mut current = Memvid::open(&path).expect("current writer");
+            assert!(
+                current.manifest_wal.is_some(),
+                "writer owns a real ManifestWal"
+            );
+            assert!(manifest_path.exists(), "writer journal exists");
+            current.put_bytes(b"beta").expect("current put");
+            current
+                .commit_skip_indexes()
+                .expect("current in-place commit");
+
+            drop(stale);
+            assert!(
+                manifest_path.exists(),
+                "terminal read handle must not unlink the current writer's journal"
+            );
+            current
+                .put_bytes(b"gamma")
+                .expect("writer continues after stale drop");
+            current.commit().expect("writer commits after stale drop");
+            drop(current);
+            assert!(
+                !manifest_path.exists(),
+                "owning writer performs normal cleanup"
+            );
+
+            let reopened = Memvid::open_read_only(&path).expect("reopen");
+            assert_eq!(reopened.frame_count(), 3);
+        });
+    }
+
+    #[cfg(feature = "parallel_segments")]
+    #[test]
+    fn downgrade_closes_and_cleans_owned_manifest_wal_for_both_drop_orders() {
+        run_serial_test(|| {
+            for writer_first in [true, false] {
+                let dir = tempdir().expect("tmp");
+                let path = dir.path().join(format!("downgrade-{writer_first}.mv2"));
+                let manifest_path = path.with_extension("manifest.wal");
+                let mut writer = Memvid::create(&path).expect("create");
+                writer.put_bytes(b"seed").expect("put seed");
+                writer.commit().expect("commit seed");
+                assert_eq!(std::fs::metadata(&manifest_path).unwrap().len(), 12);
+
+                writer.downgrade_to_shared().expect("downgrade");
+                assert!(writer.manifest_wal.is_none());
+                assert!(
+                    !manifest_path.exists(),
+                    "downgrade removes the closed empty owned journal"
+                );
+                let reader = Memvid::open_read_only(&path).expect("second shared reader");
+                if writer_first {
+                    drop(writer);
+                    drop(reader);
+                } else {
+                    drop(reader);
+                    drop(writer);
+                }
+                assert!(!manifest_path.exists(), "only the mv2 file remains");
+                assert_eq!(
+                    Memvid::open_read_only(&path).expect("reopen").frame_count(),
+                    1
+                );
+                assert!(!manifest_path.exists());
+            }
+        });
+    }
+
+    #[cfg(feature = "parallel_segments")]
+    #[test]
+    fn upgrade_reopens_named_manifest_wal_before_parallel_commit() {
+        run_serial_test(|| {
+            let dir = tempdir().expect("tmp");
+            let path = dir.path().join("downgrade-upgrade-parallel.mv2");
+            let manifest_path = path.with_extension("manifest.wal");
+            let mut writer = Memvid::create(&path).expect("create");
+            writer.enable_vec().expect("enable vec");
+            writer
+                .put_with_embedding_and_options(
+                    b"seed",
+                    vec![1.0, 0.0, 0.0, 0.0],
+                    PutOptions::builder().uri("mv2://manifest/seed").build(),
+                )
+                .expect("put seed");
+            writer.commit().expect("commit seed");
+            writer.downgrade_to_shared().expect("downgrade");
+            assert!(!manifest_path.exists());
+
+            writer
+                .put_with_embedding_and_options(
+                    b"beta",
+                    vec![0.0, 1.0, 0.0, 0.0],
+                    PutOptions::builder().uri("mv2://manifest/beta").build(),
+                )
+                .expect("upgrade and put beta");
+            assert!(writer.manifest_wal.is_some());
+            assert!(manifest_path.exists(), "upgrade opens a new named journal");
+            writer
+                .commit_parallel(crate::BuildOpts::default())
+                .expect("parallel commit after upgrade");
+            drop(writer);
+            assert!(!manifest_path.exists(), "owner cleans journal on close");
+
+            let mut reopened = Memvid::open_read_only(&path).expect("reopen");
+            for (uri, payload, vector) in [
+                (
+                    "mv2://manifest/seed",
+                    b"seed".as_slice(),
+                    [1.0, 0.0, 0.0, 0.0],
+                ),
+                (
+                    "mv2://manifest/beta",
+                    b"beta".as_slice(),
+                    [0.0, 1.0, 0.0, 0.0],
+                ),
+            ] {
+                let frame = reopened.frame_by_uri(uri).expect("frame URI");
+                assert_eq!(reopened.frame_canonical_payload(frame.id).unwrap(), payload);
+                assert_eq!(
+                    reopened.search_vec(&vector, 1).unwrap()[0].frame_id,
+                    frame.id
+                );
+            }
+        });
+    }
+
+    #[cfg(feature = "parallel_segments")]
+    #[test]
+    fn downgrade_and_drop_preserve_nonempty_manifest_wal_for_recovery() {
+        use crate::types::{IndexSegmentRef, SegmentCommon, SegmentKind, SegmentStats};
+
+        run_serial_test(|| {
+            let dir = tempdir().expect("tmp");
+            let path = dir.path().join("manifest-recovery.mv2");
+            let manifest_path = path.with_extension("manifest.wal");
+            let mut writer = Memvid::create(&path).expect("create");
+            writer.put_bytes(b"seed").expect("put seed");
+            writer.commit().expect("commit seed");
+            let descriptor = IndexSegmentRef {
+                kind: SegmentKind::Vector,
+                common: SegmentCommon::new(7, 1024, 128, [7; 32]),
+                stats: SegmentStats {
+                    doc_count: 1,
+                    vector_count: 1,
+                    time_entries: 0,
+                    bytes_uncompressed: 128,
+                    build_micros: 1,
+                },
+            };
+            writer
+                .manifest_wal
+                .as_mut()
+                .expect("owned journal")
+                .append_segments(std::slice::from_ref(&descriptor))
+                .expect("append recovery entry");
+
+            assert!(
+                writer.downgrade_to_shared().is_err(),
+                "downgrade must not discard recovery entries"
+            );
+            assert!(manifest_path.exists());
+            drop(writer);
+            assert!(manifest_path.exists(), "Drop retains recovery journal");
+            let journal = crate::io::manifest_wal::ManifestWal::open(&manifest_path)
+                .expect("reopen retained journal");
+            let replayed = journal.replay().unwrap();
+            assert_eq!(replayed.len(), 1);
+            assert_eq!(replayed[0].common.segment_id, descriptor.common.segment_id);
+            assert_eq!(replayed[0].common.checksum, descriptor.common.checksum);
         });
     }
 

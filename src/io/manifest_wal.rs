@@ -76,6 +76,11 @@ impl ManifestWal {
         Ok(self.entries.clone())
     }
 
+    /// Returns true when every journaled descriptor has already been materialised.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
     /// Flushes the WAL to durable storage (fsync).
     pub fn flush(&mut self) -> Result<()> {
         self.file.sync_data()?;

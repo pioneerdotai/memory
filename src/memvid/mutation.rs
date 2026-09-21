@@ -9,7 +9,9 @@
 
 use std::cmp::min;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::fs::{File, OpenOptions};
+use std::fs::File;
+#[cfg(test)]
+use std::fs::OpenOptions;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::sync::OnceLock;
@@ -42,6 +44,7 @@ use crate::analysis::auto_tag::AutoTagger;
 use crate::constants::{WAL_SIZE_LARGE, WAL_SIZE_MEDIUM};
 use crate::footer::CommitFooter;
 use crate::io::wal::{EmbeddedWal, WalRecord};
+use crate::lock::FileLock;
 use crate::memvid::chunks::{plan_document_chunks, plan_text_chunks};
 use crate::memvid::lifecycle::{Memvid, prepare_toc_bytes};
 use crate::reader::{
@@ -79,6 +82,8 @@ const WAL_SHIFT_BUFFER_SIZE: usize = 8 * 1024 * 1024;
 #[cfg(test)]
 thread_local! {
     static FAIL_BEFORE_ATOMIC_PUBLISH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static FAIL_BEFORE_STAGING_SYNC: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static FAIL_AFTER_ATOMIC_PUBLISH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static FAIL_AFTER_COMPACT_TRUNCATE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
@@ -87,6 +92,26 @@ fn fail_before_atomic_publish() -> Result<()> {
     let should_fail = FAIL_BEFORE_ATOMIC_PUBLISH.with(|flag| flag.replace(false));
     if should_fail {
         return Err(std::io::Error::other("injected failure before atomic publish").into());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+fn fail_before_staging_sync() -> Result<()> {
+    let should_fail = FAIL_BEFORE_STAGING_SYNC.with(|flag| flag.replace(false));
+    if should_fail {
+        return Err(std::io::Error::other("injected failure before staging sync").into());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+fn fail_after_atomic_publish() -> Result<()> {
+    let should_fail = FAIL_AFTER_ATOMIC_PUBLISH.with(|flag| flag.replace(false));
+    if should_fail {
+        return Err(
+            std::io::Error::other("injected durability failure after atomic publish").into(),
+        );
     }
     Ok(())
 }
@@ -174,7 +199,10 @@ impl CommitStaging {
     }
 
     fn commit(self) -> Result<()> {
-        self.atomic.commit().map_err(Into::into)
+        self.atomic.commit()?;
+        #[cfg(test)]
+        fail_after_atomic_publish()?;
+        Ok(())
     }
 
     fn discard(self) -> Result<()> {
@@ -445,6 +473,9 @@ impl Memvid {
         staging.copy_from(&self.file)?;
 
         let staging_handle = staging.clone_file()?;
+        // Lock the inode that will become the destination before publishing it. The old
+        // destination lock remains held until this one has been installed on `self`.
+        let staging_lock = FileLock::acquire(&staging_handle, self.path())?;
         let new_wal = EmbeddedWal::open(&staging_handle, &self.header)?;
         let original_file = std::mem::replace(&mut self.file, staging_handle);
         let original_wal = std::mem::replace(&mut self.wal, new_wal);
@@ -457,68 +488,105 @@ impl Memvid {
         #[cfg(feature = "lex")]
         let original_tantivy_dirty = self.tantivy_dirty;
 
-        let destination_path = self.path().to_path_buf();
         let mut original_file = Some(original_file);
         let mut original_wal = Some(original_wal);
 
-        match op(self) {
-            Ok(()) => {
-                self.file.sync_all()?;
-                #[cfg(test)]
-                let publish_result = fail_before_atomic_publish().and_then(|()| staging.commit());
-                #[cfg(not(test))]
-                let publish_result = staging.commit();
-                match publish_result {
-                    Ok(()) => {
-                        drop(original_file.take());
-                        drop(original_wal.take());
-                        self.file = OpenOptions::new()
-                            .read(true)
-                            .write(true)
-                            .open(&destination_path)?;
-                        self.wal = EmbeddedWal::open(&self.file, &self.header)?;
-                        Ok(())
-                    }
-                    Err(commit_err) => {
-                        if let Some(file) = original_file.take() {
-                            self.file = file;
-                        }
-                        if let Some(wal) = original_wal.take() {
-                            self.wal = wal;
-                        }
-                        self.header = original_header;
-                        self.toc = original_toc;
-                        self.data_end = original_data_end;
-                        self.generation = original_generation;
-                        self.dirty = original_dirty;
-                        self.lex_enabled = original_lex_enabled;
-                        #[cfg(feature = "lex")]
-                        {
-                            self.tantivy_dirty = original_tantivy_dirty;
-                        }
-                        Err(commit_err)
-                    }
-                }
+        let operation_result = op(self).and_then(|()| {
+            #[cfg(test)]
+            fail_before_staging_sync()?;
+            self.file.sync_all().map_err(Into::into)
+        });
+        if let Err(err) = operation_result {
+            let _ = staging.discard();
+            if let Some(file) = original_file.take() {
+                self.file = file;
             }
-            Err(err) => {
-                let _ = staging.discard();
-                if let Some(file) = original_file.take() {
-                    self.file = file;
+            if let Some(wal) = original_wal.take() {
+                self.wal = wal;
+            }
+            self.header = original_header;
+            self.toc = original_toc;
+            self.data_end = original_data_end;
+            self.generation = original_generation;
+            self.dirty = original_dirty;
+            self.lex_enabled = original_lex_enabled;
+            #[cfg(feature = "lex")]
+            {
+                self.tantivy_dirty = original_tantivy_dirty;
+            }
+            self.write_disabled = Some(format!(
+                "writable access disabled after staging operation failed: {err}"
+            ));
+            return Err(err);
+        }
+
+        #[cfg(test)]
+        let publish_result = fail_before_atomic_publish().and_then(|()| staging.commit());
+        #[cfg(not(test))]
+        let publish_result = staging.commit();
+        match publish_result {
+            Ok(()) => {
+                drop(original_file.take());
+                drop(original_wal.take());
+                let old_lock = std::mem::replace(&mut self.lock, staging_lock);
+                drop(old_lock);
+                Ok(())
+            }
+            Err(commit_err) => {
+                // AtomicWriteFile performs rename before syncing the containing directory. An
+                // error therefore does not say whether publication happened. Determine which
+                // inode owns the destination while both possible inodes are still locked.
+                let staging_is_current = FileLock::is_current_path_file(&self.file, self.path());
+                let original_is_current = original_file.as_ref().map_or(Ok(false), |file| {
+                    FileLock::is_current_path_file(file, self.path())
+                });
+
+                if matches!(staging_is_current, Ok(true)) {
+                    drop(original_file.take());
+                    drop(original_wal.take());
+                    let old_lock = std::mem::replace(&mut self.lock, staging_lock);
+                    drop(old_lock);
+                    self.write_disabled = Some(format!(
+                        "writable access disabled after publication with uncertain durability: {commit_err}"
+                    ));
+                    return Err(commit_err);
                 }
-                if let Some(wal) = original_wal.take() {
-                    self.wal = wal;
-                }
-                self.header = original_header;
-                self.toc = original_toc;
-                self.data_end = original_data_end;
-                self.generation = original_generation;
-                self.dirty = original_dirty;
-                self.lex_enabled = original_lex_enabled;
-                #[cfg(feature = "lex")]
+
+                if matches!(staging_is_current, Ok(false))
+                    && matches!(original_is_current, Ok(true))
                 {
-                    self.tantivy_dirty = original_tantivy_dirty;
+                    if let Some(file) = original_file.take() {
+                        self.file = file;
+                    }
+                    if let Some(wal) = original_wal.take() {
+                        self.wal = wal;
+                    }
+                    self.header = original_header;
+                    self.toc = original_toc;
+                    self.data_end = original_data_end;
+                    self.generation = original_generation;
+                    self.dirty = original_dirty;
+                    self.lex_enabled = original_lex_enabled;
+                    #[cfg(feature = "lex")]
+                    {
+                        self.tantivy_dirty = original_tantivy_dirty;
+                    }
+                    self.write_disabled = Some(format!(
+                        "writable access disabled after atomic publication failed before replacement: {commit_err}"
+                    ));
+                    return Err(commit_err);
                 }
-                Err(err)
+
+                // If identity inspection itself failed, do not guess. Keep both candidate locks,
+                // retain the staging state, and permanently disable writes on this handle.
+                drop(original_file.take());
+                drop(original_wal.take());
+                let old_lock = std::mem::replace(&mut self.lock, staging_lock);
+                self.publication_fallback_lock = Some(old_lock);
+                self.write_disabled = Some(format!(
+                    "writable access disabled because publication state is indeterminate: {commit_err}"
+                ));
+                Err(commit_err)
             }
         }
     }
@@ -820,6 +888,7 @@ impl Memvid {
     /// **You must call [`end_batch()`](Self::end_batch) when done** to flush the WAL
     /// and restore normal operation.
     pub fn begin_batch(&mut self, opts: PutManyOpts) -> Result<()> {
+        self.ensure_writable()?;
         if opts.wal_pre_size_bytes > 0 {
             self.ensure_wal_capacity(opts.wal_pre_size_bytes)?;
         }
@@ -876,6 +945,7 @@ impl Memvid {
     /// This performs a single `fsync` for all appends accumulated during the batch,
     /// then clears batch options so subsequent puts use default behaviour.
     pub fn end_batch(&mut self) -> Result<()> {
+        self.ensure_writable()?;
         // Single fsync for the entire batch
         self.wal.flush()?;
         self.wal.set_skip_sync(false);
@@ -4356,6 +4426,7 @@ mod commit_publication_tests {
     use super::*;
     use crate::SketchVariant;
     use crate::io::header::HeaderCodec;
+    use crate::lock::LockMode;
     #[cfg(not(feature = "replay"))]
     use crate::replay::ReplayManifest;
 
@@ -4366,6 +4437,53 @@ mod commit_publication_tests {
             .open(path)
             .unwrap();
         HeaderCodec::read(&mut file).unwrap()
+    }
+
+    fn fault_options(name: &str) -> PutOptions {
+        PutOptions::builder()
+            .uri(format!("mv2://fault/{name}"))
+            .search_text(name)
+            .auto_tag(false)
+            .extract_dates(false)
+            .extract_triplets(false)
+            .instant_index(false)
+            .extraction_budget_ms(0)
+            .build()
+    }
+
+    fn assert_terminal_direct_writes_rejected(writer: &mut Memvid) {
+        let before = writer
+            .snapshot_fingerprint()
+            .expect("fingerprint before rejected writes");
+        assert!(
+            writer
+                .begin_batch(PutManyOpts {
+                    wal_pre_size_bytes: 4 * 1024 * 1024,
+                    ..Default::default()
+                })
+                .is_err(),
+            "terminal handle must reject batch WAL growth"
+        );
+        assert!(
+            writer.end_batch().is_err(),
+            "terminal handle must reject WAL flush"
+        );
+        #[cfg(feature = "replay")]
+        {
+            writer.start_session(Some("terminal".into()), None).unwrap();
+            writer.end_session().unwrap();
+            assert!(
+                writer.save_replay_sessions().is_err(),
+                "terminal handle must reject replay publication"
+            );
+        }
+        assert_eq!(
+            writer
+                .snapshot_fingerprint()
+                .expect("fingerprint after rejected writes"),
+            before,
+            "rejected direct writes must not alter capsule bytes"
+        );
     }
 
     #[test]
@@ -4409,6 +4527,7 @@ mod commit_publication_tests {
             .commit()
             .expect_err("fault injection must abort publication");
         assert!(err.to_string().contains("injected failure"));
+        assert_terminal_direct_writes_rejected(&mut mem);
 
         // The compacted staging copy was never published: the committed file
         // still has the exact old header and length. Its WAL remains available
@@ -4451,6 +4570,165 @@ mod commit_publication_tests {
             reopened.search_vec(&[0.0, 1.0, 0.0, 0.0], 1).unwrap()[0].frame_id,
             1
         );
+    }
+
+    #[test]
+    fn staging_sync_failure_preserves_committed_file_and_disables_handle() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("staging-sync-failure.mv2");
+        let mut writer = Memvid::create(&path).unwrap();
+        writer.enable_vec().unwrap();
+        writer
+            .put_with_embedding_and_options(
+                b"seed",
+                vec![1.0, 0.0, 0.0, 0.0],
+                fault_options("seed"),
+            )
+            .unwrap();
+        writer.commit().unwrap();
+        writer
+            .put_with_embedding_and_options(
+                b"alpha",
+                vec![0.0, 1.0, 0.0, 0.0],
+                fault_options("alpha"),
+            )
+            .unwrap();
+
+        FAIL_BEFORE_STAGING_SYNC.with(|flag| flag.set(true));
+        let error = writer
+            .commit()
+            .expect_err("staging sync fault must be reported");
+        assert!(error.to_string().contains("before staging sync"));
+        assert!(writer.write_disabled.is_some());
+        assert_eq!(writer.lock.mode(), LockMode::Exclusive);
+        assert!(
+            FileLock::try_acquire(&writer.file, &path)
+                .unwrap()
+                .is_none(),
+            "original writer lock must remain physically held"
+        );
+
+        assert!(
+            writer.commit().is_err(),
+            "partially mutated staging state must not be retried on this handle"
+        );
+        assert_terminal_direct_writes_rejected(&mut writer);
+        drop(writer);
+        let committed = Memvid::open_read_only(&path).unwrap();
+        assert!(committed.frame_by_uri("mv2://fault/seed").is_ok());
+        assert!(committed.frame_by_uri("mv2://fault/alpha").is_err());
+        drop(committed);
+
+        let mut recovered = Memvid::open(&path).expect("writable reopen recovers pending WAL");
+        let alpha = recovered.frame_by_uri("mv2://fault/alpha").unwrap();
+        assert_eq!(
+            recovered.frame_canonical_payload(alpha.id).unwrap(),
+            b"alpha"
+        );
+        recovered.commit().unwrap();
+        drop(recovered);
+
+        let mut reopened = Memvid::open_read_only(&path).unwrap();
+        let alpha = reopened.frame_by_uri("mv2://fault/alpha").unwrap();
+        assert_eq!(
+            reopened.frame_canonical_payload(alpha.id).unwrap(),
+            b"alpha"
+        );
+        assert_eq!(
+            reopened.search_vec(&[0.0, 1.0, 0.0, 0.0], 1).unwrap()[0].frame_id,
+            alpha.id
+        );
+    }
+
+    #[test]
+    fn post_rename_error_keeps_new_inode_locked_and_disables_old_writer() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("post-rename-failure.mv2");
+        let mut writer = Memvid::create(&path).unwrap();
+        writer.enable_vec().unwrap();
+        writer
+            .put_with_embedding_and_options(
+                b"seed",
+                vec![1.0, 0.0, 0.0, 0.0],
+                fault_options("seed"),
+            )
+            .unwrap();
+        writer.commit().unwrap();
+        writer
+            .put_with_embedding_and_options(
+                b"alpha",
+                vec![0.0, 1.0, 0.0, 0.0],
+                fault_options("alpha"),
+            )
+            .unwrap();
+
+        FAIL_AFTER_ATOMIC_PUBLISH.with(|flag| flag.set(true));
+        let error = writer
+            .commit()
+            .expect_err("directory durability fault remains visible");
+        assert!(error.to_string().contains("after atomic publish"));
+        assert!(writer.write_disabled.is_some());
+        assert_eq!(writer.lock.mode(), LockMode::Exclusive);
+        assert!(writer.commit().is_err(), "retry on the handle is forbidden");
+        assert_terminal_direct_writes_rejected(&mut writer);
+        assert!(
+            writer
+                .put_with_embedding_and_options(
+                    b"stale",
+                    vec![0.0, 0.0, 1.0, 0.0],
+                    fault_options("stale"),
+                )
+                .is_err(),
+            "further mutations on the handle are forbidden"
+        );
+
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let waiter_path = path.clone();
+        let waiter = std::thread::spawn(move || {
+            let result = (|| -> Result<()> {
+                let mut next = Memvid::open(&waiter_path)?;
+                next.put_with_embedding_and_options(
+                    b"beta",
+                    vec![0.0, 0.0, 1.0, 0.0],
+                    fault_options("beta"),
+                )?;
+                next.commit()
+            })();
+            done_tx.send(result).unwrap();
+        });
+        assert!(
+            done_rx
+                .recv_timeout(std::time::Duration::from_millis(150))
+                .is_err(),
+            "new destination inode must stay locked after the reported error"
+        );
+
+        drop(writer);
+        done_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("waiter completed")
+            .expect("waiter commit");
+        waiter.join().unwrap();
+
+        let mut reopened = Memvid::open_read_only(&path).unwrap();
+        for (name, vector) in [
+            ("seed", [1.0, 0.0, 0.0, 0.0]),
+            ("alpha", [0.0, 1.0, 0.0, 0.0]),
+            ("beta", [0.0, 0.0, 1.0, 0.0]),
+        ] {
+            let frame = reopened
+                .frame_by_uri(&format!("mv2://fault/{name}"))
+                .unwrap();
+            assert_eq!(
+                reopened.frame_canonical_payload(frame.id).unwrap(),
+                name.as_bytes()
+            );
+            assert_eq!(
+                reopened.search_vec(&vector, 1).unwrap()[0].frame_id,
+                frame.id
+            );
+        }
+        assert!(reopened.frame_by_uri("mv2://fault/stale").is_err());
     }
 
     #[test]
@@ -4764,12 +5042,16 @@ mod commit_publication_tests {
             let mut mem = Memvid::open(&empty).unwrap();
             *mem.sketches_mut() = crate::SketchTrack::default();
             mem.finalize_indexes().unwrap();
+            // finalize persisted the requested empty track, but sketches_mut leaves the generic
+            // dirty flag set. Clear it before the explicit lock downgrade just as this test did
+            // before Drop below.
+            mem.dirty = false;
+            mem.downgrade_to_shared().unwrap();
             let mut finalized = Memvid::open_read_only(&empty).unwrap();
             assert_large_quantized_layout(&mut finalized, &vectors, None);
             assert!(finalized.toc.sketch_track.is_none());
             drop(finalized);
             // Isolate finalize itself from Drop's normal dirty retry.
-            mem.dirty = false;
             drop(mem);
             let mut reopened = Memvid::open_read_only(&empty).unwrap();
             assert_large_quantized_layout(&mut reopened, &vectors, None);

@@ -90,6 +90,7 @@ fn create_handles_existing_file() {
         // If create succeeds, the old data should be gone (new file)
         // let mut mem = result.unwrap();
         mem.commit().unwrap();
+        drop(mem);
         // Reopen and verify it's empty (new file was created)
         let mem = Memvid::open_read_only(&path).unwrap();
         let stats = mem.stats().unwrap();
