@@ -15,7 +15,7 @@ use std::sync::{Arc, RwLock};
 
 use crate::constants::{MAGIC, SPEC_VERSION, WAL_OFFSET, WAL_SIZE_TINY};
 use crate::error::{MemvidError, Result};
-use crate::footer::{FooterSlice, find_last_valid_footer};
+use crate::footer::{FooterSlice, find_last_valid_footer, find_last_valid_footer_with_charge};
 use crate::io::header::HeaderCodec;
 #[cfg(feature = "parallel_segments")]
 use crate::io::manifest_wal::ManifestWal;
@@ -40,6 +40,108 @@ use memmap2::Mmap;
 const DEFAULT_LOCK_TIMEOUT_MS: u64 = 250;
 const DEFAULT_HEARTBEAT_MS: u64 = 2_000;
 const DEFAULT_STALE_GRACE_MS: u64 = 10_000;
+const MAX_TOC_SCAN_BYTES: usize = 64 * 1024 * 1024;
+const TOC_CHECKSUM_BYTES: usize = 32;
+const MAX_TOC_DECODE_PASSES: usize = 3;
+const HINT_NEIGHBORHOOD_BYTES: usize = 64;
+// A valid candidate can require two full hashes (commit footer plus internal checksum) and three
+// decode passes (current, legacy V2, legacy V1). Keep those format-required allowances separate
+// from eight searchable-window hash passes so false candidates cannot consume decode capacity.
+// At MAX_INDEX_BYTES this bounds recovery to 3 GiB of charged work:
+//   hashes: 2 * 512 MiB + 8 * 64 MiB = 1.5 GiB
+//   decode: 3 * 512 MiB = 1.5 GiB
+const MAX_TOC_HASH_PASSES: usize = 2;
+const TOC_SEARCH_WORK_MULTIPLIER: usize = 8;
+
+#[derive(Debug)]
+struct TocScanBudget {
+    limit: usize,
+    hash_limit: usize,
+    decode_limit: usize,
+    hashed_bytes: usize,
+    decoded_bytes: usize,
+    candidates_checked: usize,
+    prefix_matches: usize,
+}
+
+impl TocScanBudget {
+    fn for_file_len(file_len: usize) -> Self {
+        let searchable_bytes = file_len.min(MAX_TOC_SCAN_BYTES);
+        let supported_toc_bytes =
+            file_len.min(usize::try_from(crate::MAX_INDEX_BYTES).unwrap_or(usize::MAX));
+        let hash_limit = supported_toc_bytes
+            .saturating_mul(MAX_TOC_HASH_PASSES)
+            .saturating_add(searchable_bytes.saturating_mul(TOC_SEARCH_WORK_MULTIPLIER));
+        let decode_limit = supported_toc_bytes.saturating_mul(MAX_TOC_DECODE_PASSES);
+        Self::with_limits(hash_limit, decode_limit)
+    }
+
+    #[cfg(test)]
+    fn new(limit: usize) -> Self {
+        Self {
+            limit,
+            hash_limit: limit,
+            decode_limit: limit,
+            hashed_bytes: 0,
+            decoded_bytes: 0,
+            candidates_checked: 0,
+            prefix_matches: 0,
+        }
+    }
+
+    fn with_limits(hash_limit: usize, decode_limit: usize) -> Self {
+        Self {
+            limit: hash_limit.saturating_add(decode_limit),
+            hash_limit,
+            decode_limit,
+            hashed_bytes: 0,
+            decoded_bytes: 0,
+            candidates_checked: 0,
+            prefix_matches: 0,
+        }
+    }
+
+    fn charge_hash(&mut self, bytes: usize) -> Result<()> {
+        self.charge(bytes, self.hashed_bytes, self.hash_limit, "hashing")?;
+        self.hashed_bytes = self.hashed_bytes.saturating_add(bytes);
+        Ok(())
+    }
+
+    fn charge_decode(&mut self, bytes: usize) -> Result<()> {
+        self.charge(bytes, self.decoded_bytes, self.decode_limit, "decoding")?;
+        self.decoded_bytes = self.decoded_bytes.saturating_add(bytes);
+        Ok(())
+    }
+
+    fn charge(
+        &self,
+        bytes: usize,
+        operation_used: usize,
+        operation_limit: usize,
+        operation: &str,
+    ) -> Result<()> {
+        let used = self.hashed_bytes.saturating_add(self.decoded_bytes);
+        if bytes > operation_limit.saturating_sub(operation_used)
+            || bytes > self.limit.saturating_sub(used)
+        {
+            return Err(MemvidError::InvalidToc {
+                reason: format!(
+                    "TOC recovery work limit exceeded while {operation} candidates \
+                     (total limit: {} bytes, total used: {} bytes, {operation} limit: {} bytes, \
+                      {operation} used: {} bytes)",
+                    self.limit, used, operation_limit, operation_used
+                )
+                .into(),
+            });
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn used(&self) -> usize {
+        self.hashed_bytes.saturating_add(self.decoded_bytes)
+    }
+}
 
 /// Primary handle for interacting with a `.mv2` memory file.
 ///
@@ -361,8 +463,8 @@ impl Memvid {
         }
 
         let mut header = HeaderCodec::read(&mut file)?;
-        let toc = match read_toc(&mut file, &header) {
-            Ok(toc) => toc,
+        let (toc, recovery_verified_checksum) = match read_toc(&mut file, &header) {
+            Ok(toc) => (toc, false),
             Err(err @ (MemvidError::Decode(_) | MemvidError::InvalidToc { .. })) => {
                 tracing::info!("toc decode failed ({}); attempting recovery", err);
                 let (toc, recovered_offset) = recover_toc(&mut file, Some(header.footer_offset))?;
@@ -373,11 +475,17 @@ impl Memvid {
                     header.toc_checksum = toc.toc_checksum;
                     crate::persist_header(&mut file, &header)?;
                 }
-                toc
+                (toc, true)
             }
             Err(err) => return Err(err),
         };
-        let checksum_result = toc.verify_checksum();
+        // recover_toc verifies the checksum against the original serialized bytes under its
+        // shared work budget. Avoid an unbudgeted decode/serialize/hash verification pass here.
+        let checksum_result = if recovery_verified_checksum {
+            Ok(())
+        } else {
+            toc.verify_checksum()
+        };
 
         // Validate segment integrity early to catch corruption before loading indexes
         let file_len = file.metadata().map(|m| m.len()).unwrap_or(0);
@@ -1016,55 +1124,83 @@ pub(crate) fn read_toc(file: &mut File, header: &Header) -> Result<Toc> {
     Ok(toc)
 }
 
-fn verify_toc_prefix(bytes: &[u8]) -> Result<()> {
+fn verify_toc_prefix(bytes: &[u8]) -> Result<u64> {
     const MAX_SEGMENTS: u64 = 1_000_000;
-    const MAX_FRAMES: u64 = 1_000_000;
-    const MIN_SEGMENT_META_BYTES: u64 = 32;
+    const MAX_FRAMES: u64 = 10_000_000;
+    // canonical_config uses fixed-width integers. SegmentMeta consists of three u64 values,
+    // two FrameId (u64) values, a 32-byte checksum, and a u32 enum discriminant.
+    const SEGMENT_META_BYTES: u64 = 76;
     const MIN_FRAME_BYTES: u64 = 64;
-    // TOC trailer layout (little-endian):
-    // [toc_version:u64][segments_len:u64][frames_len:u64]...
-    let read_u64 = |range: std::ops::Range<usize>, context: &str| -> Result<u64> {
-        let slice = bytes.get(range).ok_or_else(|| MemvidError::InvalidToc {
-            reason: context.to_string().into(),
-        })?;
+    // TOC prefix layout (fixed-int little-endian bincode):
+    // [toc_version:u64][segments_len:u64][SegmentMeta; segments_len][frames_len:u64]...
+    let read_u64 = |offset: usize, context: &str| -> Result<u64> {
+        let end = offset
+            .checked_add(8)
+            .ok_or_else(|| MemvidError::InvalidToc {
+                reason: context.to_string().into(),
+            })?;
+        let slice = bytes
+            .get(offset..end)
+            .ok_or_else(|| MemvidError::InvalidToc {
+                reason: context.to_string().into(),
+            })?;
         let array: [u8; 8] = slice.try_into().map_err(|_| MemvidError::InvalidToc {
             reason: context.to_string().into(),
         })?;
         Ok(u64::from_le_bytes(array))
     };
 
-    if bytes.len() < 24 {
+    if bytes.len() < 16 {
         return Err(MemvidError::InvalidToc {
             reason: "toc trailer too small".into(),
         });
     }
-    let toc_version = read_u64(0..8, "toc version missing or truncated")?;
+    let toc_version = read_u64(0, "toc version missing or truncated")?;
     if toc_version > 32 {
         return Err(MemvidError::InvalidToc {
             reason: "toc version unreasonable".into(),
         });
     }
-    let segments_len = read_u64(8..16, "segment count missing or truncated")?;
+    let segments_len = read_u64(8, "segment count missing or truncated")?;
     if segments_len > MAX_SEGMENTS {
         return Err(MemvidError::InvalidToc {
             reason: "segment count unreasonable".into(),
         });
     }
-    let frames_len = read_u64(16..24, "frame count missing or truncated")?;
+    let segment_bytes = segments_len
+        .checked_mul(SEGMENT_META_BYTES)
+        .ok_or_else(|| MemvidError::InvalidToc {
+            reason: "segment byte length overflow".into(),
+        })?;
+    let frames_len_offset =
+        16u64
+            .checked_add(segment_bytes)
+            .ok_or_else(|| MemvidError::InvalidToc {
+                reason: "frame count offset overflow".into(),
+            })?;
+    let frames_len_offset =
+        usize::try_from(frames_len_offset).map_err(|_| MemvidError::InvalidToc {
+            reason: "frame count offset exceeds addressable memory".into(),
+        })?;
+    let frames_len = read_u64(
+        frames_len_offset,
+        "segment metadata or frame count truncated",
+    )?;
     if frames_len > MAX_FRAMES {
         return Err(MemvidError::InvalidToc {
             reason: "frame count unreasonable".into(),
         });
     }
-    let required = segments_len
-        .saturating_mul(MIN_SEGMENT_META_BYTES)
-        .saturating_add(frames_len.saturating_mul(MIN_FRAME_BYTES));
+    let required = (frames_len_offset as u64)
+        .saturating_add(8)
+        .saturating_add(frames_len.saturating_mul(MIN_FRAME_BYTES))
+        .saturating_add(TOC_CHECKSUM_BYTES as u64);
     if required > bytes.len() as u64 {
         return Err(MemvidError::InvalidToc {
             reason: "toc payload inconsistent with counts".into(),
         });
     }
-    Ok(())
+    Ok(frames_len)
 }
 
 /// Ensure frame payloads do not overlap each other or exceed file boundary.
@@ -1112,61 +1248,59 @@ fn ensure_non_overlapping_frames(toc: &Toc, file_len: u64) -> Result<()> {
 
 pub(crate) fn recover_toc(file: &mut File, hint: Option<u64>) -> Result<(Toc, u64)> {
     let len = file.metadata()?.len();
+    let file_len = usize::try_from(len).unwrap_or(usize::MAX);
+    let mut budget = TocScanBudget::for_file_len(file_len);
+    recover_toc_with_budget(file, hint, &mut budget)
+}
+
+fn recover_toc_with_budget(
+    file: &mut File,
+    hint: Option<u64>,
+    budget: &mut TocScanBudget,
+) -> Result<(Toc, u64)> {
+    let len = file.metadata()?.len();
     // Safety: we only create a read-only mapping over stable file bytes.
     let mmap = unsafe { Mmap::map(&*file)? };
     tracing::debug!(file_len = len, "attempting toc recovery");
 
-    // First, try to find a valid footer which includes validated TOC bytes
-    if let Some(footer_slice) = find_last_valid_footer(&mmap) {
+    // First, try to find a valid footer. Footer hashes, internal TOC checksum verification, and
+    // decoding all consume the same budget later used by hint and fallback scanning.
+    if let Some(footer_slice) =
+        find_last_valid_footer_with_charge(&mmap, |bytes| budget.charge_hash(bytes))?
+    {
         tracing::debug!(
             footer_offset = footer_slice.footer_offset,
             toc_offset = footer_slice.toc_offset,
             toc_len = footer_slice.toc_bytes.len(),
             "found valid footer during recovery"
         );
-        // The footer has already validated the TOC hash, so we can directly decode it
-        match Toc::decode(footer_slice.toc_bytes) {
-            Ok(toc) => {
-                return Ok((toc, footer_slice.toc_offset as u64));
-            }
-            Err(err) => {
-                tracing::warn!(
-                    error = %err,
-                    "footer-validated TOC failed to decode, falling back to scan"
-                );
-            }
+        if let Some(toc) = decode_checksummed_toc(footer_slice.toc_bytes, budget, true)? {
+            return Ok((toc, footer_slice.toc_offset as u64));
         }
+        tracing::warn!("footer-validated TOC failed internal validation, falling back to scan");
     }
 
-    // If we have a header-provided hint (`footer_offset`) but the commit footer itself is corrupted,
-    // we can often still recover because the TOC bytes are intact. In that case, assume the TOC
-    // spans from `hint` up to the final fixed-size commit footer and decode it best-effort.
+    // A committed TOC can end either immediately at EOF (footer wholly absent) or immediately
+    // before the fixed-size footer (footer present but corrupt). Try both layouts at and close to
+    // the header hint before blind scanning. Nearby offsets preserve recovery from small hint
+    // damage without paying for the many naturally plausible prefixes inside a serialized TOC.
     if let Some(hint_offset) = hint {
-        use crate::footer::FOOTER_SIZE;
-
         // Safe: file successfully mmapped so length fits in usize
         #[allow(clippy::cast_possible_truncation)]
         let start = (hint_offset.min(len)) as usize;
-        if mmap.len().saturating_sub(start) >= FOOTER_SIZE {
-            let toc_end = mmap.len().saturating_sub(FOOTER_SIZE);
-            if toc_end > start {
-                let toc_bytes = &mmap[start..toc_end];
-                if verify_toc_prefix(toc_bytes).is_ok() {
-                    let attempt = panic::catch_unwind(|| Toc::decode(toc_bytes));
-                    if let Ok(Ok(toc)) = attempt {
-                        tracing::debug!(
-                            recovered_offset = hint_offset,
-                            recovered_frames = toc.frames.len(),
-                            "recovered toc from hinted offset without validated footer"
-                        );
-                        return Ok((toc, hint_offset));
-                    }
-                }
-            }
+        if let Some((toc, recovered_offset)) = recover_toc_near_hint(&mmap, start, budget)? {
+            tracing::debug!(
+                recovered_offset,
+                recovered_frames = toc.frames.len(),
+                "recovered checksummed toc near header hint"
+            );
+            return Ok((toc, recovered_offset as u64));
         }
     }
 
-    // Fallback to manual scan if footer-based recovery failed
+    // Fallback to manual scan if footer-based recovery failed. The budget is shared by both
+    // ranges, and is linear in the searchable window. This prevents plausible prefixes from
+    // causing the same large suffix to be hashed once per byte offset.
     let mut ranges = Vec::new();
     if let Some(hint_offset) = hint {
         // Safe: file successfully mmapped so length fits in usize
@@ -1181,7 +1315,7 @@ pub(crate) fn recover_toc(file: &mut File, hint: Option<u64>) -> Result<(Toc, u6
     }
 
     for (start, end) in ranges {
-        if let Some(found) = scan_range_for_toc(&mmap, start, end) {
+        if let Some(found) = scan_range_for_toc(&mmap, start, end, budget)? {
             return Ok(found);
         }
     }
@@ -1191,51 +1325,131 @@ pub(crate) fn recover_toc(file: &mut File, hint: Option<u64>) -> Result<(Toc, u6
     })
 }
 
-fn scan_range_for_toc(data: &[u8], start: usize, end: usize) -> Option<(Toc, u64)> {
-    if start >= end || end > data.len() {
-        return None;
+fn recover_toc_near_hint(
+    data: &[u8],
+    hint: usize,
+    budget: &mut TocScanBudget,
+) -> Result<Option<(Toc, usize)>> {
+    if let Some(toc) = try_toc_layouts_at(data, hint, budget)? {
+        return Ok(Some((toc, hint)));
     }
-    const MAX_TOC_BYTES: usize = 64 * 1024 * 1024;
-    const ZERO_CHECKSUM: [u8; 32] = [0u8; 32];
 
-    // We only ever consider offsets where the candidate TOC slice would be <= MAX_TOC_BYTES,
+    for distance in 1..=HINT_NEIGHBORHOOD_BYTES {
+        if let Some(offset) = hint.checked_sub(distance)
+            && let Some(toc) = try_toc_layouts_at(data, offset, budget)?
+        {
+            return Ok(Some((toc, offset)));
+        }
+        if let Some(offset) = hint
+            .checked_add(distance)
+            .filter(|offset| *offset < data.len())
+            && let Some(toc) = try_toc_layouts_at(data, offset, budget)?
+        {
+            return Ok(Some((toc, offset)));
+        }
+    }
+    Ok(None)
+}
+
+fn try_toc_layouts_at(
+    data: &[u8],
+    offset: usize,
+    budget: &mut TocScanBudget,
+) -> Result<Option<Toc>> {
+    if offset >= data.len() {
+        return Ok(None);
+    }
+
+    // Whole TOC at EOF: the commit footer was never written or was completely truncated.
+    if let Some(toc) = decode_checksummed_toc(&data[offset..], budget, false)? {
+        return Ok(Some(toc));
+    }
+
+    // Whole TOC followed by a corrupt fixed-size commit footer.
+    let toc_end = data.len().saturating_sub(crate::footer::FOOTER_SIZE);
+    if toc_end > offset
+        && let Some(toc) = decode_checksummed_toc(&data[offset..toc_end], budget, false)?
+    {
+        return Ok(Some(toc));
+    }
+    Ok(None)
+}
+
+fn decode_checksummed_toc(
+    bytes: &[u8],
+    budget: &mut TocScanBudget,
+    allow_empty: bool,
+) -> Result<Option<Toc>> {
+    budget.candidates_checked = budget.candidates_checked.saturating_add(1);
+    if bytes.len() < TOC_CHECKSUM_BYTES {
+        return Ok(None);
+    }
+    let frames_len = match verify_toc_prefix(bytes) {
+        Ok(frames_len) => frames_len,
+        Err(_) => return Ok(None),
+    };
+    // An empty TOC is valid only when a commit footer has authenticated its exact extent.
+    // Hint and blind-scan recovery must never accept an empty candidate as a fallback.
+    if frames_len == 0 && !allow_empty {
+        return Ok(None);
+    }
+    budget.prefix_matches = budget.prefix_matches.saturating_add(1);
+
+    budget.charge_hash(bytes.len())?;
+    let (body, stored_checksum) = bytes.split_at(bytes.len() - TOC_CHECKSUM_BYTES);
+    let mut hasher = Hasher::new();
+    hasher.update(body);
+    hasher.update(&[0u8; TOC_CHECKSUM_BYTES]);
+    if hasher.finalize().as_bytes() != stored_checksum {
+        return Ok(None);
+    }
+
+    // Toc::decode may inspect current, V2, and V1 encodings. Reserving all three full input
+    // passes is a conservative upper bound; no checksum verification re-serialization follows.
+    budget.charge_decode(bytes.len().saturating_mul(MAX_TOC_DECODE_PASSES))?;
+    let attempt = panic::catch_unwind(|| Toc::decode(bytes));
+    match attempt {
+        Ok(Ok(toc)) => Ok(Some(toc)),
+        _ => Ok(None),
+    }
+}
+
+fn scan_range_for_toc(
+    data: &[u8],
+    start: usize,
+    end: usize,
+    budget: &mut TocScanBudget,
+) -> Result<Option<(Toc, u64)>> {
+    if start >= end || end > data.len() {
+        return Ok(None);
+    }
+    // We only ever consider offsets where the candidate TOC slice would be <= MAX_TOC_SCAN_BYTES,
     // otherwise the loop devolves into iterating over the entire file for large memories.
-    let min_offset = data.len().saturating_sub(MAX_TOC_BYTES);
+    let min_offset = data.len().saturating_sub(MAX_TOC_SCAN_BYTES);
     let scan_start = start.max(min_offset);
 
     for offset in (scan_start..end).rev() {
         let slice = &data[offset..];
-        if slice.len() < 16 {
+        if slice.len() < TOC_CHECKSUM_BYTES {
             continue;
         }
-        debug_assert!(slice.len() <= MAX_TOC_BYTES);
-
-        // No footer found - try old format with checksum
-        if slice.len() < ZERO_CHECKSUM.len() {
+        debug_assert!(slice.len() <= MAX_TOC_SCAN_BYTES);
+        // Both supported endpoint layouts share the same structural prefix. Reject an invalid or
+        // empty fallback once per offset before trying either checksum extent.
+        if !matches!(verify_toc_prefix(slice), Ok(frames_len) if frames_len > 0) {
             continue;
         }
-        let (body, stored_checksum) = slice.split_at(slice.len() - ZERO_CHECKSUM.len());
-        let mut hasher = Hasher::new();
-        hasher.update(body);
-        hasher.update(&ZERO_CHECKSUM);
-        if hasher.finalize().as_bytes() != stored_checksum {
-            continue;
-        }
-        if verify_toc_prefix(slice).is_err() {
-            continue;
-        }
-        let attempt = panic::catch_unwind(|| Toc::decode(slice));
-        if let Ok(Ok(toc)) = attempt {
+        if let Some(toc) = try_toc_layouts_at(data, offset, budget)? {
             let recovered_offset = offset as u64;
             tracing::debug!(
                 recovered_offset,
                 recovered_frames = toc.frames.len(),
                 "recovered toc via scan"
             );
-            return Some((toc, recovered_offset));
+            return Ok(Some((toc, recovered_offset)));
         }
     }
-    None
+    Ok(None)
 }
 
 pub(crate) fn prepare_toc_bytes(toc: &mut Toc) -> Result<Vec<u8>> {
@@ -1656,7 +1870,150 @@ fn validate_segment_integrity(toc: &Toc, header: &Header, file_len: u64) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::PutOptions;
+    use crate::constants::HEADER_SIZE;
+    use crate::footer::{CommitFooter, FOOTER_SIZE};
+    use std::fs::OpenOptions;
+    use std::io::Write;
     use tempfile::tempdir;
+
+    const RECOVERY_HINT_DELTAS: [i64; 10] = [0, -9, 9, -64, 64, -65, 65, -128, 128, 512];
+
+    fn checksummed_nonempty_toc() -> (Toc, Vec<u8>) {
+        let dir = tempdir().expect("TOC source tmp");
+        let path = dir.path().join("source.mv2");
+        let toc = {
+            let mut mem = Memvid::create(&path).expect("create TOC source");
+            mem.put_bytes(b"recovery fixture payload").expect("put");
+            mem.commit().expect("commit");
+            mem.toc.clone()
+        };
+        let bytes = toc.encode().expect("encode TOC");
+        (toc, bytes)
+    }
+
+    fn open_fixture(bytes: &[u8]) -> (tempfile::TempDir, PathBuf, File) {
+        let dir = tempdir().expect("tmp");
+        let path = dir.path().join("recovery.mv2");
+        std::fs::write(&path, bytes).expect("write fixture");
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .expect("open fixture");
+        (dir, path, file)
+    }
+
+    fn recovery_put_options(index: usize) -> PutOptions {
+        PutOptions::builder()
+            .uri(format!("mv2://doc/{index}"))
+            .auto_tag(false)
+            .extract_dates(false)
+            .extract_triplets(false)
+            .instant_index(false)
+            .extraction_budget_ms(0)
+            .build()
+    }
+
+    fn create_document_capsule(path: &Path, documents: usize) -> (Header, Toc) {
+        let toc = {
+            let mut mem = Memvid::create(path).expect("create document capsule");
+            for index in 0..documents {
+                let payload = format!("recovery document {index}");
+                mem.put_bytes_with_options(payload.as_bytes(), recovery_put_options(index))
+                    .expect("put recovery document");
+            }
+            mem.commit().expect("commit document capsule");
+            mem.toc.clone()
+        };
+        let mut file = File::open(path).expect("open document capsule header");
+        let header = HeaderCodec::read(&mut file).expect("read document capsule header");
+        (header, toc)
+    }
+
+    fn hint_with_delta(offset: u64, delta: i64) -> u64 {
+        offset.checked_add_signed(delta).expect("valid test hint")
+    }
+
+    fn remove_commit_footer(path: &Path, hint_delta: i64) -> Header {
+        let mut bytes = std::fs::read(path).expect("read committed capsule");
+        let header_bytes: [u8; HEADER_SIZE] = bytes[..HEADER_SIZE]
+            .try_into()
+            .expect("header-sized prefix");
+        let header = HeaderCodec::decode(&header_bytes).expect("decode capsule header");
+        bytes.truncate(bytes.len() - FOOTER_SIZE);
+        let hint = hint_with_delta(header.footer_offset, hint_delta);
+        bytes[8..16].copy_from_slice(&hint.to_le_bytes());
+        std::fs::write(path, bytes).expect("write footerless capsule");
+        header
+    }
+
+    fn assert_recovered_documents(path: &Path, documents: usize) {
+        let mut mem = Memvid::open(path).expect("recover footerless capsule");
+        assert_eq!(mem.frame_count(), documents);
+        for index in 0..documents {
+            let uri = format!("mv2://doc/{index}");
+            let expected = format!("recovery document {index}");
+            let frame = mem.frame_by_uri(&uri).expect("recovered URI");
+            assert_eq!(frame.uri.as_deref(), Some(uri.as_str()));
+            assert_eq!(
+                mem.frame_canonical_payload(frame.id)
+                    .expect("recovered payload"),
+                expected.as_bytes()
+            );
+        }
+    }
+
+    fn rewrite_header_hint(path: &Path, hint: u64) {
+        let mut file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path)
+            .expect("open capsule for header rewrite");
+        let mut header = HeaderCodec::read(&mut file).expect("read capsule header for rewrite");
+        header.footer_offset = hint;
+        crate::persist_header(&mut file, &header).expect("rewrite capsule header hint");
+    }
+
+    fn add_test_segment(toc: &mut Toc, segment_id: u64) {
+        toc.segments.push(crate::types::SegmentMeta {
+            id: segment_id,
+            frame_range: (0, toc.frames.len() as u64),
+            primary_checksum: [0x5A; 32],
+            compression: crate::types::SegmentCompression::None,
+            bytes_offset: 0,
+            bytes_length: 0,
+        });
+    }
+
+    fn install_serialized_toc(path: &Path, toc_bytes: &[u8]) -> Header {
+        let mut file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path)
+            .expect("open fixture for TOC rewrite");
+        let mut header = HeaderCodec::read(&mut file).expect("read fixture header");
+        let footer = CommitFooter {
+            toc_len: toc_bytes.len() as u64,
+            toc_hash: Toc::calculate_checksum(toc_bytes),
+            generation: 2,
+        };
+        file.set_len(header.footer_offset)
+            .expect("truncate fixture at TOC offset");
+        file.seek(SeekFrom::Start(header.footer_offset))
+            .expect("seek fixture TOC offset");
+        file.write_all(toc_bytes).expect("write replacement TOC");
+        file.write_all(&footer.encode())
+            .expect("write replacement footer");
+        file.flush().expect("flush replacement TOC");
+        header.toc_checksum.copy_from_slice(
+            toc_bytes
+                .get(toc_bytes.len() - TOC_CHECKSUM_BYTES..)
+                .expect("serialized TOC checksum"),
+        );
+        crate::persist_header(&mut file, &header).expect("persist segmented TOC checksum");
+        header
+    }
 
     #[test]
     fn toc_prefix_underflow_surfaces_reason() {
@@ -1670,6 +2027,542 @@ mod tests {
             }
             other => panic!("unexpected error: {other:?}"),
         }
+    }
+
+    #[test]
+    fn toc_prefix_accounts_for_serialized_segment_metadata() {
+        let dir = tempdir().expect("prefix fixture tmp");
+        let path = dir.path().join("prefix.mv2");
+        let (_, mut toc) = create_document_capsule(&path, 8);
+        add_test_segment(&mut toc, 1000);
+        let bytes = prepare_toc_bytes(&mut toc).expect("encode segmented TOC");
+        assert_eq!(verify_toc_prefix(&bytes).expect("valid prefix"), 8);
+
+        let truncated = &bytes[..16 + 75];
+        assert!(verify_toc_prefix(truncated).is_err());
+
+        let mut excessive_segments = bytes.clone();
+        excessive_segments[8..16].copy_from_slice(&1_000_001u64.to_le_bytes());
+        assert!(verify_toc_prefix(&excessive_segments).is_err());
+
+        let mut excessive_frames = bytes;
+        excessive_frames[16 + 76..16 + 84].copy_from_slice(&10_000_001u64.to_le_bytes());
+        assert!(verify_toc_prefix(&excessive_frames).is_err());
+    }
+
+    #[test]
+    fn recovery_budget_covers_supported_toc_size_and_separates_hash_from_decode() {
+        let max_toc = usize::try_from(crate::MAX_INDEX_BYTES).expect("MAX_INDEX_BYTES fits usize");
+        let max_search = MAX_TOC_SCAN_BYTES * TOC_SEARCH_WORK_MULTIPLIER;
+        let mut budget = TocScanBudget::for_file_len(max_toc);
+
+        assert_eq!(budget.hash_limit, 2 * max_toc + max_search);
+        assert_eq!(budget.decode_limit, 3 * max_toc);
+        assert_eq!(budget.limit, 3 * 1024 * 1024 * 1024);
+        budget
+            .charge_hash(2 * max_toc)
+            .expect("two maximum-size hashes must fit");
+        budget
+            .charge_decode(3 * max_toc)
+            .expect("three maximum-size decode passes must fit");
+        assert_eq!(budget.used(), 5 * max_toc);
+
+        let mut false_candidate_budget = TocScanBudget::for_file_len(max_toc);
+        false_candidate_budget
+            .charge_hash(false_candidate_budget.hash_limit)
+            .expect("hash allowance must be usable");
+        let err = false_candidate_budget
+            .charge_hash(1)
+            .expect_err("hashing must not borrow the reserved decode allowance");
+        assert!(err.to_string().contains("work limit exceeded"));
+        false_candidate_budget
+            .charge_decode(false_candidate_budget.decode_limit)
+            .expect("decode allowance remains independently available");
+
+        const REPRO_TOC_BYTES: usize = 135_266_972;
+        let old_limit = MAX_TOC_SCAN_BYTES * 10;
+        assert!(REPRO_TOC_BYTES * 5 > old_limit);
+        let mut repro_budget = TocScanBudget::for_file_len(REPRO_TOC_BYTES + 69_688 + FOOTER_SIZE);
+        repro_budget
+            .charge_hash(REPRO_TOC_BYTES * 2)
+            .expect("reproduction hashes fit the revised budget");
+        repro_budget
+            .charge_decode(REPRO_TOC_BYTES * 3)
+            .expect("reproduction decode reserve fits the revised budget");
+    }
+
+    #[test]
+    fn recovers_segmented_current_and_legacy_tocs_from_valid_footer() {
+        let mut measurements = Vec::new();
+        for segment_id in [7, 1000, 1_000_001] {
+            let source_dir = tempdir().expect("segmented source tmp");
+            let source = source_dir.path().join("source.mv2");
+            let (_, mut toc) = create_document_capsule(&source, 32);
+            add_test_segment(&mut toc, segment_id);
+            let mut current = toc.clone();
+            let variants = [
+                prepare_toc_bytes(&mut current).expect("encode current segmented TOC"),
+                crate::toc::encode_legacy_v1_for_test(&toc),
+                crate::toc::encode_legacy_v2_for_test(&toc),
+            ];
+
+            for (variant, toc_bytes) in variants.into_iter().enumerate() {
+                let case_dir = tempdir().expect("segmented case tmp");
+                let path = case_dir
+                    .path()
+                    .join(format!("segmented-{variant}-{segment_id}.mv2"));
+                std::fs::copy(&source, &path).expect("copy segmented fixture");
+                let header = install_serialized_toc(&path, &toc_bytes);
+                let mut file = OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open(&path)
+                    .expect("open segmented fixture for recovery");
+                let file_len = file.metadata().expect("stat segmented fixture").len() as usize;
+                let mut budget = TocScanBudget::for_file_len(file_len);
+                let (recovered, offset) =
+                    recover_toc_with_budget(&mut file, Some(header.footer_offset), &mut budget)
+                        .expect("valid segmented TOC footer must recover");
+                assert_eq!(offset, header.footer_offset);
+                assert_eq!(recovered.frames.len(), 32);
+                assert_eq!(recovered.segments[0].id, segment_id);
+                assert!(budget.used() <= budget.limit);
+                measurements.push((segment_id, variant, file_len, budget.used()));
+                drop(file);
+                assert_recovered_documents(&path, 32);
+            }
+        }
+        eprintln!("segmented TOC footer recovery measurements: {measurements:?}");
+    }
+
+    #[test]
+    fn recovers_multidocument_current_toc_without_footer_for_hint_matrix() {
+        let mut measurements = Vec::new();
+        for documents in [1, 8, 32, 64] {
+            let source_dir = tempdir().expect("source tmp");
+            let source = source_dir.path().join(format!("source-{documents}.mv2"));
+            create_document_capsule(&source, documents);
+
+            for hint_delta in RECOVERY_HINT_DELTAS {
+                let case_dir = tempdir().expect("case tmp");
+                let path = case_dir.path().join("footerless.mv2");
+                std::fs::copy(&source, &path).expect("copy independent fixture");
+                let header = remove_commit_footer(&path, hint_delta);
+                let mut file = OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open(&path)
+                    .expect("open recovery measurement fixture");
+                let file_len = file.metadata().expect("stat fixture").len() as usize;
+                let mut budget = TocScanBudget::for_file_len(file_len);
+                let hint = hint_with_delta(header.footer_offset, hint_delta);
+                let (toc, recovered_offset) =
+                    recover_toc_with_budget(&mut file, Some(hint), &mut budget)
+                        .expect("measure footerless recovery");
+                assert_eq!(toc.frames.len(), documents);
+                assert_eq!(recovered_offset, header.footer_offset);
+                measurements.push((
+                    documents,
+                    hint_delta,
+                    file_len,
+                    budget.hashed_bytes,
+                    budget.decoded_bytes,
+                    budget.used(),
+                ));
+                drop(file);
+                assert_recovered_documents(&path, documents);
+            }
+        }
+        eprintln!("footerless current TOC recovery measurements: {measurements:?}");
+    }
+
+    #[test]
+    fn recovers_multidocument_legacy_tocs_without_footer_for_hint_matrix() {
+        let mut measurements = Vec::new();
+        for documents in [1, 8, 32, 64] {
+            let source_dir = tempdir().expect("source tmp");
+            let source = source_dir.path().join(format!("source-{documents}.mv2"));
+            let (header, toc) = create_document_capsule(&source, documents);
+            let source_bytes = std::fs::read(&source).expect("read source capsule");
+            let variants = [
+                crate::toc::encode_legacy_v1_for_test(&toc),
+                crate::toc::encode_legacy_v2_for_test(&toc),
+            ];
+
+            for (variant, legacy_toc) in variants.into_iter().enumerate() {
+                for hint_delta in RECOVERY_HINT_DELTAS {
+                    let case_dir = tempdir().expect("legacy case tmp");
+                    let path = case_dir
+                        .path()
+                        .join(format!("legacy-{variant}-{hint_delta}.mv2"));
+                    let mut bytes = source_bytes[..header.footer_offset as usize].to_vec();
+                    bytes.extend_from_slice(&legacy_toc);
+                    let hint = hint_with_delta(header.footer_offset, hint_delta);
+                    bytes[8..16].copy_from_slice(&hint.to_le_bytes());
+                    std::fs::write(&path, bytes).expect("write legacy fixture");
+
+                    let mut file = OpenOptions::new()
+                        .read(true)
+                        .write(true)
+                        .open(&path)
+                        .expect("open legacy recovery fixture");
+                    let file_len = file.metadata().expect("stat legacy fixture").len() as usize;
+                    let mut budget = TocScanBudget::for_file_len(file_len);
+                    let (recovered, offset) =
+                        recover_toc_with_budget(&mut file, Some(hint), &mut budget)
+                            .expect("measure legacy footerless recovery");
+                    assert_eq!(offset, header.footer_offset);
+                    assert_eq!(recovered.frames.len(), documents);
+                    assert!(budget.used() <= budget.limit);
+                    measurements.push((variant, documents, hint_delta, file_len, budget.used()));
+                    drop(file);
+                    assert_recovered_documents(&path, documents);
+                }
+            }
+        }
+        eprintln!("footerless legacy TOC recovery measurements: {measurements:?}");
+    }
+
+    #[test]
+    fn recovers_current_and_legacy_tocs_without_hint() {
+        let source_dir = tempdir().expect("no-hint source tmp");
+        let source = source_dir.path().join("source.mv2");
+        let (header, toc) = create_document_capsule(&source, 32);
+        let source_bytes = std::fs::read(&source).expect("read no-hint source");
+        let mut current = toc.clone();
+        let variants = [
+            prepare_toc_bytes(&mut current).expect("encode current no-hint TOC"),
+            crate::toc::encode_legacy_v1_for_test(&toc),
+            crate::toc::encode_legacy_v2_for_test(&toc),
+        ];
+
+        for (variant, toc_bytes) in variants.into_iter().enumerate() {
+            let mut bytes = source_bytes[..header.footer_offset as usize].to_vec();
+            bytes.extend_from_slice(&toc_bytes);
+            let (_dir, _path, mut file) = open_fixture(&bytes);
+            let mut budget = TocScanBudget::for_file_len(bytes.len());
+            let (recovered, offset) = recover_toc_with_budget(&mut file, None, &mut budget)
+                .expect("recover ordinary TOC without hint");
+            assert_eq!(offset, header.footer_offset, "variant {variant}");
+            assert_eq!(recovered.frames.len(), 32, "variant {variant}");
+            assert!(budget.used() <= budget.limit);
+        }
+    }
+
+    #[test]
+    fn recovers_large_supported_toc_across_footer_and_hint_paths() {
+        const LARGE_TITLE_BYTES: usize = 129 * 1024 * 1024;
+
+        let source_dir = tempdir().expect("large TOC source tmp");
+        let source = source_dir.path().join("large-source.mv2");
+        let (header, mut toc) = create_document_capsule(&source, 1);
+        toc.frames[0].title = Some("t".repeat(LARGE_TITLE_BYTES));
+        let toc_bytes = prepare_toc_bytes(&mut toc).expect("encode large supported TOC");
+        assert!(toc_bytes.len() > 128 * 1024 * 1024);
+        assert!(toc_bytes.len() as u64 <= crate::MAX_INDEX_BYTES);
+        install_serialized_toc(&source, &toc_bytes);
+        let toc_len = toc_bytes.len();
+        drop(toc_bytes);
+        drop(toc);
+
+        for case in [
+            "correct-footer",
+            "wrong-hint",
+            "missing-footer",
+            "corrupt-footer",
+        ] {
+            let case_dir = tempdir().expect("large TOC case tmp");
+            let path = case_dir.path().join(format!("{case}.mv2"));
+            std::fs::copy(&source, &path).expect("copy large TOC fixture");
+
+            match case {
+                "correct-footer" => {}
+                "wrong-hint" => rewrite_header_hint(&path, header.footer_offset + 9),
+                "missing-footer" => {
+                    let file = OpenOptions::new()
+                        .write(true)
+                        .open(&path)
+                        .expect("open large fixture for footer truncation");
+                    let len = file.metadata().expect("stat large fixture").len();
+                    file.set_len(len - FOOTER_SIZE as u64)
+                        .expect("remove large fixture footer");
+                }
+                "corrupt-footer" => {
+                    let mut file = OpenOptions::new()
+                        .write(true)
+                        .open(&path)
+                        .expect("open large fixture for footer corruption");
+                    let len = file.metadata().expect("stat large fixture").len();
+                    file.seek(SeekFrom::Start(len - FOOTER_SIZE as u64))
+                        .expect("seek large fixture footer");
+                    file.write_all(b"X").expect("corrupt large fixture footer");
+                    file.flush().expect("flush corrupt large fixture footer");
+                }
+                _ => unreachable!(),
+            }
+
+            assert_recovered_documents(&path, 1);
+        }
+
+        eprintln!(
+            "large TOC recovery fixture: toc_bytes={toc_len}, toc_offset={}",
+            header.footer_offset
+        );
+    }
+
+    #[test]
+    fn full_recovery_bounds_overlapping_invalid_footer_hashes() {
+        let mut measurements = Vec::new();
+        for marker_count in [64usize, 128, 256] {
+            let mut bytes = vec![0xA5; FOOTER_SIZE];
+            for generation in 0..marker_count {
+                let footer = CommitFooter {
+                    toc_len: bytes.len() as u64,
+                    toc_hash: [0xFF; 32],
+                    generation: generation as u64,
+                };
+                bytes.extend_from_slice(&footer.encode());
+            }
+            let (_dir, _path, mut file) = open_fixture(&bytes);
+            let mut budget = TocScanBudget::for_file_len(bytes.len());
+            let err = recover_toc_with_budget(&mut file, None, &mut budget)
+                .expect_err("invalid overlapping footers must not recover");
+
+            assert!(err.to_string().contains("recovery work limit exceeded"));
+            assert!(budget.used() <= budget.limit);
+            measurements.push((
+                marker_count,
+                bytes.len(),
+                budget.hashed_bytes,
+                budget.used(),
+            ));
+        }
+        eprintln!("full recovery invalid-footer measurements: {measurements:?}");
+    }
+
+    #[test]
+    fn second_fallback_range_uses_first_ranges_remaining_budget() {
+        let prefix = [
+            1, 0, 0, 0, 0, 0, 0, 0, // version
+            0, 0, 0, 0, 0, 0, 0, 0, // segments
+            1, 0, 0, 0, 0, 0, 0, 0, // frames
+        ];
+        let mut data = Vec::with_capacity(64 * 1024);
+        while data.len() < 32 * 1024 {
+            data.extend_from_slice(&prefix);
+        }
+        data.truncate(32 * 1024);
+        data.extend(std::iter::repeat_n(0xFF, 32 * 1024));
+        let split = data.len() / 2;
+        data[split..split + prefix.len()].copy_from_slice(&prefix);
+        let mut budget = TocScanBudget::new(data.len() * 2);
+
+        let first = scan_range_for_toc(&data, split, data.len(), &mut budget)
+            .expect("first range must complete within budget");
+        assert!(first.is_none());
+        let after_first = budget.used();
+        assert!(
+            after_first > 0,
+            "first range must consume part of the budget"
+        );
+        assert!(after_first < budget.limit);
+
+        let err = scan_range_for_toc(&data, 0, split, &mut budget)
+            .expect_err("second range must consume the shared remainder");
+        assert!(err.to_string().contains("recovery work limit exceeded"));
+        assert!(budget.used() > after_first);
+        assert!(budget.used() <= budget.limit);
+    }
+
+    #[test]
+    fn recovery_scan_work_is_linear_for_zero_filled_inputs() {
+        let mut measurements = Vec::new();
+        for size in [4 * 1024, 16 * 1024, 64 * 1024] {
+            let data = vec![0u8; size];
+            let limit = size * (MAX_TOC_HASH_PASSES + TOC_SEARCH_WORK_MULTIPLIER);
+            let mut budget = TocScanBudget::new(limit);
+            let found = scan_range_for_toc(&data, 0, data.len(), &mut budget)
+                .expect("zero-filled input must finish within budget");
+            assert!(found.is_none());
+            assert!(budget.hashed_bytes <= limit);
+            assert_eq!(budget.decoded_bytes, 0);
+            assert!(budget.candidates_checked <= size);
+            measurements.push((size, budget.hashed_bytes, budget.candidates_checked));
+        }
+
+        eprintln!("zero-filled recovery measurements: {measurements:?}");
+    }
+
+    #[test]
+    fn recovery_scan_bounds_repeated_plausible_prefixes_across_ranges() {
+        let prefix = [
+            1, 0, 0, 0, 0, 0, 0, 0, // version
+            0, 0, 0, 0, 0, 0, 0, 0, // segments
+            1, 0, 0, 0, 0, 0, 0, 0, // frames
+        ];
+        let mut data = Vec::with_capacity(96 * 1024);
+        while data.len() < 96 * 1024 {
+            data.extend_from_slice(&prefix);
+        }
+        data.truncate(96 * 1024);
+
+        let limit = data.len() * (MAX_TOC_HASH_PASSES + TOC_SEARCH_WORK_MULTIPLIER);
+        let mut budget = TocScanBudget::new(limit);
+        let split = data.len() / 2;
+        let result = match scan_range_for_toc(&data, split, data.len(), &mut budget) {
+            Ok(None) => scan_range_for_toc(&data, 0, split, &mut budget),
+            other => other,
+        };
+
+        let err = result.expect_err("repeated plausible prefixes must exhaust the shared budget");
+        assert!(err.to_string().contains("recovery work limit exceeded"));
+        assert!(
+            budget.prefix_matches > 1,
+            "fixture must exercise false candidates"
+        );
+        assert!(budget.hashed_bytes <= limit);
+        assert!(budget.hashed_bytes.saturating_add(budget.decoded_bytes) <= limit);
+    }
+
+    #[test]
+    fn recovery_finds_checksum_verified_toc_from_commit_footer() {
+        let (expected, toc_bytes) = checksummed_nonempty_toc();
+        let footer = CommitFooter {
+            toc_len: toc_bytes.len() as u64,
+            toc_hash: Toc::calculate_checksum(&toc_bytes),
+            generation: 7,
+        };
+        let mut bytes = vec![0xA5; 257];
+        let expected_offset = bytes.len() as u64;
+        bytes.extend_from_slice(&toc_bytes);
+        bytes.extend_from_slice(&footer.encode());
+        let (_dir, _path, mut file) = open_fixture(&bytes);
+
+        let (recovered, offset) = recover_toc(&mut file, None).expect("recover by footer");
+        assert_eq!(offset, expected_offset);
+        assert_eq!(recovered.toc_checksum, expected.toc_checksum);
+    }
+
+    #[test]
+    fn recovery_uses_intact_toc_when_commit_footer_is_corrupt() {
+        let source_dir = tempdir().expect("corrupt-footer source tmp");
+        let source = source_dir.path().join("source.mv2");
+        let (header, expected) = create_document_capsule(&source, 32);
+
+        for hint_delta in [0, -128, 128] {
+            let case_dir = tempdir().expect("corrupt-footer case tmp");
+            let path = case_dir
+                .path()
+                .join(format!("corrupt-footer-{hint_delta}.mv2"));
+            std::fs::copy(&source, &path).expect("copy corrupt-footer fixture");
+            let mut bytes = std::fs::read(&path).expect("read corrupt-footer fixture");
+            let footer_offset = bytes.len() - FOOTER_SIZE;
+            bytes[footer_offset] ^= 0xFF;
+            std::fs::write(&path, bytes).expect("corrupt commit footer");
+            let hint = hint_with_delta(header.footer_offset, hint_delta);
+            rewrite_header_hint(&path, hint);
+
+            let mut file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&path)
+                .expect("open corrupt-footer fixture");
+            let mut budget = TocScanBudget::for_file_len(
+                file.metadata().expect("stat corrupt-footer fixture").len() as usize,
+            );
+            let (recovered, offset) = recover_toc_with_budget(&mut file, Some(hint), &mut budget)
+                .expect("recover intact TOC before corrupt footer");
+            assert_eq!(offset, header.footer_offset);
+            assert_eq!(recovered.toc_checksum, expected.toc_checksum);
+            assert!(budget.used() <= budget.limit);
+            drop(file);
+            assert_recovered_documents(&path, 32);
+        }
+    }
+
+    #[test]
+    fn recovery_scan_supports_legacy_toc_and_incorrect_hint() {
+        let source_dir = tempdir().expect("source tmp");
+        let source_path = source_dir.path().join("source.mv2");
+        let expected = {
+            let mut mem = Memvid::create(&source_path).expect("create source");
+            mem.put_bytes(b"legacy recovery payload").expect("put");
+            mem.commit().expect("commit");
+            mem.toc.clone()
+        };
+        let variants = [
+            crate::toc::encode_legacy_v1_for_test(&expected),
+            crate::toc::encode_legacy_v2_for_test(&expected),
+        ];
+        for legacy_bytes in variants {
+            let (legacy_body, legacy_checksum) = legacy_bytes.split_at(legacy_bytes.len() - 32);
+            let mut hasher = Hasher::new();
+            hasher.update(legacy_body);
+            hasher.update(&[0u8; 32]);
+            assert_eq!(hasher.finalize().as_bytes(), legacy_checksum);
+            let mut bytes = vec![0xA5; 211];
+            let expected_offset = bytes.len() as u64;
+            bytes.extend_from_slice(&legacy_bytes);
+            let (_dir, _path, mut file) = open_fixture(&bytes);
+
+            let wrong_hint = expected_offset + 9;
+            let (recovered, offset) =
+                recover_toc(&mut file, Some(wrong_hint)).expect("scan for legacy TOC");
+            assert_eq!(offset, expected_offset);
+            assert_eq!(recovered.frames.len(), expected.frames.len());
+            recovered.verify_checksum().expect("legacy checksum");
+        }
+    }
+
+    #[test]
+    fn recovery_rejects_corrupt_toc_checksum() {
+        let (_toc, mut toc_bytes) = checksummed_nonempty_toc();
+        let expected_offset = 149;
+        toc_bytes.last_mut().map(|byte| *byte ^= 0xFF);
+        let mut bytes = vec![0xA5; expected_offset];
+        bytes.extend_from_slice(&toc_bytes);
+        let (_dir, path, mut file) = open_fixture(&bytes);
+        let before = std::fs::read(&path).expect("read before recovery");
+
+        let err = recover_toc(&mut file, Some(expected_offset as u64))
+            .expect_err("corrupt checksum must not recover");
+        assert!(matches!(err, MemvidError::InvalidToc { .. }));
+        assert_eq!(std::fs::read(path).expect("read after recovery"), before);
+    }
+
+    #[test]
+    fn truncated_at_header_footer_offset_fails_without_modifying_file() {
+        let dir = tempdir().expect("tmp");
+        let path = dir.path().join("truncated.mv2");
+        {
+            let mut mem = Memvid::create(&path).expect("create");
+            mem.put_bytes(b"payload retained before missing TOC")
+                .expect("put");
+            mem.commit().expect("commit");
+        }
+
+        let mut file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .expect("open fixture");
+        let mut header_bytes = [0u8; HEADER_SIZE];
+        file.read_exact(&mut header_bytes).expect("read header");
+        let header = HeaderCodec::decode(&header_bytes).expect("decode header");
+        file.set_len(header.footer_offset)
+            .expect("truncate before TOC");
+        file.flush().expect("flush truncation");
+        drop(file);
+        let before = std::fs::read(&path).expect("read truncated fixture");
+
+        let err = Memvid::open(&path).err().expect("missing TOC must fail");
+        assert!(matches!(err, MemvidError::InvalidToc { .. }));
+        assert_eq!(
+            std::fs::read(&path).expect("read after failed open"),
+            before
+        );
+        assert_eq!(before.len() as u64, header.footer_offset);
+        assert!(before.len() >= HEADER_SIZE + FOOTER_SIZE);
     }
 
     #[test]

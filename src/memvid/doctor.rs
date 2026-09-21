@@ -444,7 +444,9 @@ impl DoctorPlanner {
             ));
         }
 
-        if let Err(err) = toc.verify_checksum() {
+        // recover_toc already verified the checksum against the original serialized bytes under
+        // its shared work budget. Only the ordinary read path still needs canonical verification.
+        if !recovered && let Err(err) = toc.verify_checksum() {
             probe.findings.push(DoctorFinding::error(
                 DoctorFindingCode::TocChecksumMismatch,
                 err.to_string(),

@@ -186,6 +186,50 @@ impl LegacyTocV2 {
     }
 }
 
+#[cfg(test)]
+pub(crate) fn encode_legacy_v1_for_test(toc: &Toc) -> Vec<u8> {
+    let mut legacy = LegacyTocV1 {
+        toc_version: toc.toc_version,
+        segments: toc.segments.clone(),
+        frames: toc.frames.clone(),
+        indexes: toc.indexes.clone(),
+        time_index: toc.time_index.clone(),
+        temporal_track: toc.temporal_track.clone(),
+        segment_catalog: toc.segment_catalog.clone(),
+        ticket_ref: toc.ticket_ref.clone(),
+        memory_binding: toc.memory_binding.clone(),
+        merkle_root: toc.merkle_root,
+        toc_checksum: [0u8; 32],
+    };
+    let checksum_target = legacy.encode().expect("encode legacy TOC checksum target");
+    legacy.toc_checksum = Toc::calculate_checksum(&checksum_target);
+    legacy.encode().expect("encode legacy TOC")
+}
+
+#[cfg(test)]
+pub(crate) fn encode_legacy_v2_for_test(toc: &Toc) -> Vec<u8> {
+    let mut legacy = LegacyTocV2 {
+        toc_version: toc.toc_version,
+        segments: toc.segments.clone(),
+        frames: toc.frames.clone(),
+        indexes: toc.indexes.clone(),
+        time_index: toc.time_index.clone(),
+        temporal_track: toc.temporal_track.clone(),
+        memories_track: toc.memories_track.clone(),
+        logic_mesh: toc.logic_mesh.clone(),
+        segment_catalog: toc.segment_catalog.clone(),
+        ticket_ref: toc.ticket_ref.clone(),
+        memory_binding: toc.memory_binding.clone(),
+        merkle_root: toc.merkle_root,
+        toc_checksum: [0u8; 32],
+    };
+    let checksum_target = legacy
+        .encode()
+        .expect("encode legacy V2 TOC checksum target");
+    legacy.toc_checksum = Toc::calculate_checksum(&checksum_target);
+    legacy.encode().expect("encode legacy V2 TOC")
+}
+
 impl Toc {
     /// Computes the BLAKE3 checksum used for the TOC integrity field.
     #[must_use]

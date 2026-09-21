@@ -74,8 +74,25 @@ pub struct FooterSlice<'a> {
 /// Scan the provided bytes backwards to locate the most recent valid footer.
 #[must_use]
 pub fn find_last_valid_footer(bytes: &[u8]) -> Option<FooterSlice<'_>> {
+    match find_last_valid_footer_with_charge(bytes, |_| Ok::<(), std::convert::Infallible>(())) {
+        Ok(found) => found,
+        Err(never) => match never {},
+    }
+}
+
+/// Recovery-only variant which charges every byte submitted to BLAKE3 before hashing it.
+///
+/// The public footer API remains unbounded for compatibility; recovery supplies one shared
+/// budget covering footer search and its later fallback phases.
+pub(crate) fn find_last_valid_footer_with_charge<'a, F, E>(
+    bytes: &'a [u8],
+    mut charge_hash: F,
+) -> std::result::Result<Option<FooterSlice<'a>>, E>
+where
+    F: FnMut(usize) -> std::result::Result<(), E>,
+{
     if bytes.len() < FOOTER_SIZE {
-        return None;
+        return Ok(None);
     }
 
     let total_len = bytes.len();
@@ -98,23 +115,24 @@ pub fn find_last_valid_footer(bytes: &[u8]) -> Option<FooterSlice<'_>> {
             }
             let toc_offset = toc_end - toc_len;
             let toc_bytes = &bytes[toc_offset..toc_end];
+            charge_hash(toc_bytes.len())?;
             if !footer.hash_matches(toc_bytes) {
                 search_end = pos;
                 continue;
             }
-            return Some(FooterSlice {
+            return Ok(Some(FooterSlice {
                 footer_offset: pos,
                 toc_offset,
                 footer,
                 toc_bytes,
-            });
+            }));
         }
         if pos == 0 {
             break;
         }
         search_end = pos;
     }
-    None
+    Ok(None)
 }
 
 #[cfg(test)]
