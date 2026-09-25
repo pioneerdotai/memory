@@ -85,6 +85,8 @@ thread_local! {
     static FAIL_BEFORE_STAGING_SYNC: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static FAIL_AFTER_ATOMIC_PUBLISH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static FAIL_AFTER_COMPACT_TRUNCATE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static FAIL_AFTER_REBUILD_TRUNCATE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static EXIT_AFTER_REBUILD_TRUNCATE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 #[cfg(test)]
@@ -1385,15 +1387,24 @@ impl Memvid {
 
     pub(crate) fn recover_wal(&mut self) -> Result<()> {
         let records = self.wal.records_after(self.header.wal_sequence)?;
+        if records.is_empty() && !self.tantivy_index_pending() {
+            return Ok(());
+        }
+        // Replay can overwrite derived ranges and truncate the old TOC before
+        // an index rebuild succeeds. Protect both the committed snapshot and
+        // its pending WAL with the same atomic publication protocol as commit.
+        self.with_staging_lock(move |mem| mem.recover_wal_inner(records))
+    }
+
+    fn recover_wal_inner(&mut self, records: Vec<WalRecord>) -> Result<()> {
         if records.is_empty() {
             if self.tantivy_index_pending() {
                 self.flush_tantivy()?;
             }
             return Ok(());
         }
-        // Recovery writes directly to the committed file. Read and validate
-        // every source segment before compact payload placement can overwrite
-        // it; rebuild_indexes must consume only this materialized cache.
+        // Materialize source segments before compact payload placement can
+        // overwrite them in staging, just as for a normal commit.
         self.materialize_vec_segments_for_rebuild()?;
         let delta = self.apply_records(records)?;
         if !delta.is_empty() {
@@ -1403,10 +1414,7 @@ impl Memvid {
                 inserted_time_entries = delta.inserted_time_entries.len(),
                 "recover applied delta"
             );
-            // WAL recovery operates on the committed file rather than an
-            // atomic staging copy. Preserve the old tail until recovery has
-            // durably published its replacement.
-            self.rebuild_indexes(&delta.inserted_embeddings, &delta.inserted_frames, false)?;
+            self.rebuild_indexes(&delta.inserted_embeddings, &delta.inserted_frames, true)?;
             self.persist_sketch_track()?;
             self.rewrite_toc_footer()?;
             self.header.toc_checksum = self.toc.toc_checksum;
@@ -2300,8 +2308,9 @@ impl Memvid {
         // Full index snapshots are replaceable derived data. Normal commits
         // run on an atomic staging copy, so that copy can discard the previous
         // derived tail and write the new generation at the compact boundary.
-        // Non-staged callers (notably WAL recovery) retain the old committed
-        // tail until their existing recovery protocol has completed.
+        // Callers that do not request compaction retain the old derived range;
+        // the old TOC itself is replaced below. Commit and WAL replay must run
+        // this operation on staging, never on their committed destination.
         let safe_truncate_len = if compact_derived_tail {
             self.header.footer_offset = index_start;
             index_start
@@ -2310,6 +2319,15 @@ impl Memvid {
         };
         if self.file.metadata()?.len() > safe_truncate_len {
             self.file.set_len(safe_truncate_len)?;
+        }
+        #[cfg(test)]
+        if EXIT_AFTER_REBUILD_TRUNCATE.with(|flag| flag.replace(false)) {
+            // Deliberately bypass all Rust destructors, including Memvid::drop.
+            std::process::exit(86);
+        }
+        #[cfg(test)]
+        if FAIL_AFTER_REBUILD_TRUNCATE.with(|flag| flag.replace(false)) {
+            return Err(std::io::Error::other("injected failure after rebuild truncate").into());
         }
         #[cfg(test)]
         if compact_derived_tail {
@@ -4449,6 +4467,261 @@ mod commit_publication_tests {
             .instant_index(false)
             .extraction_budget_ms(0)
             .build()
+    }
+
+    #[cfg(feature = "lex")]
+    fn assert_recovered_text(mem: &mut Memvid, text: &str, frame_id: FrameId) {
+        let result = mem
+            .search(crate::SearchRequest {
+                query: text.to_string(),
+                top_k: 1,
+                snippet_chars: 80,
+                uri: None,
+                scope: None,
+                cursor: None,
+                #[cfg(feature = "temporal_track")]
+                temporal: None,
+                as_of_frame: None,
+                as_of_ts: None,
+                no_sketch: true,
+                acl_context: None,
+                acl_enforcement_mode: crate::AclEnforcementMode::Audit,
+            })
+            .unwrap();
+        assert_eq!(result.hits.len(), 1);
+        assert_eq!(result.hits[0].frame_id, frame_id);
+    }
+
+    #[test]
+    fn wal_recovery_failures_preserve_committed_file_and_pending_records() {
+        for vectors in [false, true] {
+            for failure in ["truncate", "sync", "publish"] {
+                let dir = tempfile::tempdir().unwrap();
+                let path = dir.path().join("recovery.mv2");
+                let mut writer = Memvid::create(&path).unwrap();
+                if vectors {
+                    writer.enable_vec().unwrap();
+                    writer
+                        .put_with_embedding_and_options(
+                            b"seed",
+                            vec![1.0, 0.0],
+                            fault_options("seed"),
+                        )
+                        .unwrap();
+                } else {
+                    writer
+                        .put_bytes_with_options(b"seed", fault_options("seed"))
+                        .unwrap();
+                }
+                writer.insert_sketch(0, "seed", SketchVariant::Small);
+                writer.commit().unwrap();
+                if vectors {
+                    writer
+                        .put_with_embedding_and_options(
+                            b"alpha",
+                            vec![0.0, 1.0],
+                            fault_options("alpha"),
+                        )
+                        .unwrap();
+                } else {
+                    writer
+                        .put_bytes_with_options(b"alpha", fault_options("alpha"))
+                        .unwrap();
+                }
+                // Model a writer that exited after the durable WAL append without a commit.
+                writer.dirty = false;
+                drop(writer);
+                let before = std::fs::read(&path).unwrap();
+                match failure {
+                    "truncate" => FAIL_AFTER_REBUILD_TRUNCATE.with(|flag| flag.set(true)),
+                    "sync" => FAIL_BEFORE_STAGING_SYNC.with(|flag| flag.set(true)),
+                    "publish" => FAIL_BEFORE_ATOMIC_PUBLISH.with(|flag| flag.set(true)),
+                    _ => unreachable!(),
+                }
+                let error = Memvid::open(&path)
+                    .err()
+                    .expect("recovery must report the fault");
+                assert!(error.to_string().contains("injected failure"), "{error}");
+                assert_eq!(
+                    blake3::hash(&std::fs::read(&path).unwrap()),
+                    blake3::hash(&before),
+                    "failed recovery changed the original: {failure}, vectors={vectors}",
+                );
+                let mut committed = Memvid::open_read_only(&path).unwrap();
+                assert_eq!(committed.frame_count(), 1);
+                assert_eq!(committed.frame_canonical_payload(0).unwrap(), b"seed");
+                assert!(committed.frame_by_uri("mv2://fault/alpha").is_err());
+                drop(committed);
+
+                let mut recovered = Memvid::open(&path).expect("retry recovers the intact WAL");
+                assert_eq!(recovered.frame_count(), 2);
+                for (id, name) in [(0, "seed"), (1, "alpha")] {
+                    assert_eq!(
+                        recovered
+                            .frame_by_uri(&format!("mv2://fault/{name}"))
+                            .unwrap()
+                            .id,
+                        id
+                    );
+                    assert_eq!(
+                        recovered.frame_canonical_payload(id).unwrap(),
+                        name.as_bytes()
+                    );
+                }
+                if vectors {
+                    assert_eq!(recovered.search_vec(&[1.0, 0.0], 1).unwrap()[0].frame_id, 0);
+                    assert_eq!(recovered.search_vec(&[0.0, 1.0], 1).unwrap()[0].frame_id, 1);
+                }
+                #[cfg(feature = "lex")]
+                {
+                    assert_recovered_text(&mut recovered, "seed", 0);
+                    assert_recovered_text(&mut recovered, "alpha", 1);
+                }
+                assert!(recovered.toc.sketch_track.is_some());
+                assert!(recovered.sketch_track.get(0).is_some());
+                assert!(
+                    recovered
+                        .wal
+                        .records_after(recovered.header.wal_sequence)
+                        .unwrap()
+                        .is_empty()
+                );
+                assert!(
+                    FileLock::try_acquire(&recovered.file, &path)
+                        .unwrap()
+                        .is_none()
+                );
+                drop(recovered);
+                let published = std::fs::read(&path).unwrap();
+                let reopened = Memvid::open(&path).unwrap();
+                assert_eq!(reopened.frame_count(), 2);
+                drop(reopened);
+                assert_eq!(
+                    std::fs::read(&path).unwrap(),
+                    published,
+                    "second open must not replay twice"
+                );
+                assert_eq!(Memvid::open_read_only(&path).unwrap().frame_count(), 2);
+            }
+        }
+    }
+
+    #[test]
+    fn wal_recovery_process_exit_preserves_committed_file() {
+        const CHILD_PATH: &str = "MEMVID_TEST_RECOVERY_EXIT_PATH";
+        if let Some(path) = std::env::var_os(CHILD_PATH) {
+            EXIT_AFTER_REBUILD_TRUNCATE.with(|flag| flag.set(true));
+            let _ = Memvid::open(path);
+            panic!("recovery did not reach the exit injection");
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("interrupted-recovery.mv2");
+        let mut writer = Memvid::create(&path).unwrap();
+        writer
+            .put_bytes_with_options(b"seed", fault_options("seed"))
+            .unwrap();
+        writer.commit().unwrap();
+        writer
+            .put_bytes_with_options(b"alpha", fault_options("alpha"))
+            .unwrap();
+        writer.dirty = false;
+        drop(writer);
+        let before = std::fs::read(&path).unwrap();
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "memvid::mutation::commit_publication_tests::wal_recovery_process_exit_preserves_committed_file",
+                "--test-threads=1",
+            ])
+            .env(CHILD_PATH, &path)
+            .spawn().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let status = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break status;
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("recovery child timed out");
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        assert_eq!(status.code(), Some(86));
+        assert_eq!(
+            blake3::hash(&std::fs::read(&path).unwrap()),
+            blake3::hash(&before)
+        );
+        assert_eq!(Memvid::open_read_only(&path).unwrap().frame_count(), 1);
+        let mut recovered = Memvid::open(&path).unwrap();
+        assert_eq!(recovered.frame_count(), 2);
+        assert_eq!(recovered.frame_canonical_payload(0).unwrap(), b"seed");
+        assert_eq!(recovered.frame_canonical_payload(1).unwrap(), b"alpha");
+        drop(recovered);
+        assert_eq!(Memvid::open_read_only(&path).unwrap().frame_count(), 2);
+    }
+
+    #[test]
+    fn wal_recovery_post_publish_error_keeps_complete_snapshot() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("recovery-post-publish.mv2");
+        let mut writer = Memvid::create(&path).unwrap();
+        writer
+            .put_bytes_with_options(b"seed", fault_options("seed"))
+            .unwrap();
+        writer.commit().unwrap();
+        writer
+            .put_bytes_with_options(b"alpha", fault_options("alpha"))
+            .unwrap();
+        writer.dirty = false;
+        drop(writer);
+        FAIL_AFTER_ATOMIC_PUBLISH.with(|flag| flag.set(true));
+        let error = Memvid::open(&path)
+            .err()
+            .expect("post-publication error stays visible");
+        assert!(error.to_string().contains("after atomic publish"));
+        let mut snapshot = Memvid::open_read_only(&path).unwrap();
+        assert_eq!(snapshot.frame_count(), 2);
+        assert_eq!(snapshot.frame_canonical_payload(0).unwrap(), b"seed");
+        assert_eq!(snapshot.frame_canonical_payload(1).unwrap(), b"alpha");
+        drop(snapshot);
+        let published = std::fs::read(&path).unwrap();
+        let recovered = Memvid::open(&path).unwrap();
+        assert_eq!(recovered.frame_count(), 2);
+        drop(recovered);
+        assert_eq!(std::fs::read(&path).unwrap(), published);
+    }
+
+    #[cfg(feature = "lex")]
+    #[test]
+    fn wal_recovery_lex_flush_without_records_is_staged() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("recovery-lex-only.mv2");
+        let mut writer = Memvid::create(&path).unwrap();
+        writer
+            .put_bytes_with_options(b"seed", fault_options("seed"))
+            .unwrap();
+        writer.commit().unwrap();
+        assert!(
+            writer
+                .wal
+                .records_after(writer.header.wal_sequence)
+                .unwrap()
+                .is_empty()
+        );
+        // init_tantivy can rebuild an index on open even without pending frame records.
+        writer.tantivy_dirty = true;
+        let before = std::fs::read(&path).unwrap();
+        FAIL_BEFORE_ATOMIC_PUBLISH.with(|flag| flag.set(true));
+        let error = writer
+            .recover_wal()
+            .expect_err("lex-only recovery must use staging");
+        assert!(error.to_string().contains("injected failure"));
+        assert!(writer.write_disabled.is_some());
+        drop(writer);
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        let mut reader = Memvid::open_read_only(&path).unwrap();
+        assert_recovered_text(&mut reader, "seed", 0);
     }
 
     fn assert_terminal_direct_writes_rejected(writer: &mut Memvid) {
