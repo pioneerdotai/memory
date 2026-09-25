@@ -26,6 +26,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Atomic commits ensure consistency
 - File locking prevents concurrent write conflicts
 
+## [3.1.7] - 2026-09-25
+
+### Fixed
+- Match Unicode words and phrases consistently across Tantivy retrieval and post-filtering, including Cyrillic uppercase and lowercase queries.
+- Return empty Tantivy results when no legacy lexical index is available instead of reporting `LexNotEnabled`; retain existing legacy fallback and errors for configured but unreadable indexes.
+- Preserve snippet offsets in the original UTF-8 text when lowercasing changes character byte lengths, reusing normalized text when possible.
+
+### Compatibility
+- The public API and `.mv2` format are unchanged. Existing healthy capsules can use the corrected search without reindexing.
+
 ## [3.1.6] - 2026-09-25
 
 ### Fixed
