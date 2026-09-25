@@ -26,6 +26,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Atomic commits ensure consistency
 - File locking prevents concurrent write conflicts
 
+## [3.1.6] - 2026-09-25
+
+### Fixed
+- Replay pending WAL records on an atomic staging copy, preserving the committed capsule and pending WAL if index rebuilding fails or the recovery process exits before publication.
+- Apply the same publication protection to recovery-time lexical index flushes without pending frame records, retaining writer-lock handoff and post-publication error handling.
+
+### Compatibility
+- The public API and `.mv2` format are unchanged. This prevents destructive in-place WAL recovery; it does not reconstruct TOCs already lost from damaged capsules.
+
 ## [3.1.5] - 2026-09-21
 
 ### Fixed
