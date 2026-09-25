@@ -77,6 +77,128 @@ fn search_uris(mem: &mut Memvid, query: &str, scope: Option<&str>, top_k: usize)
     .collect()
 }
 
+#[test]
+#[cfg(feature = "lex")]
+fn search_unicode_case_preserves_words_phrases_and_boolean_filters() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("unicode.mv2");
+    {
+        let mut mem = Memvid::create(&path).unwrap();
+        mem.enable_lex().unwrap();
+        for (uri, text) in [
+            ("mv2://accepted", "Приму Заявку завтра"),
+            ("mv2://rejected", "ПРИМУ отказ завтра"),
+        ] {
+            mem.put_bytes_with_options(
+                text.as_bytes(),
+                PutOptions::builder().uri(uri).search_text(text).build(),
+            )
+            .unwrap();
+        }
+        mem.commit().unwrap();
+    }
+    let before = std::fs::read(&path).unwrap();
+    let mut mem = Memvid::open_read_only(&path).unwrap();
+    for query in ["приму", "Приму", "ПРИМУ"] {
+        let mut uris = search_uris(&mut mem, query, None, 10);
+        uris.sort();
+        uris.dedup();
+        assert_eq!(uris, ["mv2://accepted", "mv2://rejected"], "{query}");
+    }
+    for query in [
+        "\"приму заявку\"",
+        "\"ПРИМУ ЗАЯВКУ\"",
+        "приму AND заявку",
+        "ПРИМУ AND ЗАЯВКУ",
+        "приму AND NOT отказ",
+        "ПРИМУ AND NOT ОТКАЗ",
+    ] {
+        assert_eq!(
+            search_uris(&mut mem, query, None, 10),
+            ["mv2://accepted"],
+            "{query}"
+        );
+    }
+    drop(mem);
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+}
+
+#[test]
+#[cfg(feature = "lex")]
+fn search_tantivy_filtered_hits_without_legacy_index_are_empty() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("filtered.mv2");
+    create_searchable_memory(&path);
+    let before = std::fs::read(&path).unwrap();
+    let footer = memvid_core::find_last_valid_footer(&before).unwrap();
+    let toc = memvid_core::Toc::decode(footer.toc_bytes).unwrap();
+    assert!(toc.indexes.lex.is_none());
+    assert!(!toc.segment_catalog.tantivy_segments.is_empty());
+    let mut mem = Memvid::open_read_only(&path).unwrap();
+    // Tantivy finds the document, but the post-search scope filter rejects it.
+    assert!(search_uris(&mut mem, "quantum", Some("mv2://absent/"), 10).is_empty());
+    assert!(search_uris(&mut mem, "nonexistentwordzxqv", None, 10).is_empty());
+    assert_eq!(
+        search_uris(&mut mem, "quantum", None, 10),
+        ["mv2://physics/quantum"]
+    );
+    drop(mem);
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+}
+
+#[test]
+#[cfg(feature = "lex")]
+fn search_unicode_snippet_ranges_refer_to_original_utf8() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("offsets.mv2");
+    // U+0130 expands from two to three bytes when lowercased. Many occurrences
+    // before the match expose offsets accidentally taken from the folded text.
+    let content = format!(
+        "{}Приму заявку завтра {}",
+        "İ ".repeat(90),
+        "end ".repeat(40)
+    );
+    {
+        let mut mem = Memvid::create(&path).unwrap();
+        mem.enable_lex().unwrap();
+        mem.put_bytes_with_options(
+            content.as_bytes(),
+            PutOptions::builder()
+                .uri("mv2://offsets")
+                .search_text(&content)
+                .build(),
+        )
+        .unwrap();
+        mem.commit().unwrap();
+    }
+    let mut mem = Memvid::open_read_only(&path).unwrap();
+    let result = mem
+        .search(SearchRequest {
+            query: "ПРИМУ".into(),
+            top_k: 10,
+            snippet_chars: 80,
+            uri: None,
+            scope: None,
+            cursor: None,
+            #[cfg(feature = "temporal_track")]
+            temporal: None,
+            as_of_frame: None,
+            as_of_ts: None,
+            no_sketch: true,
+            acl_context: None,
+            acl_enforcement_mode: memvid_core::types::AclEnforcementMode::Audit,
+        })
+        .unwrap();
+    assert!(!result.hits.is_empty());
+    for hit in result.hits {
+        assert!(hit.text.contains("Приму"), "{}", hit.text);
+        assert_eq!(
+            content.get(hit.range.0..hit.range.1),
+            Some(hit.text.as_str())
+        );
+    }
+}
+
 /// Test basic lexical search.
 #[test]
 #[cfg(feature = "lex")]

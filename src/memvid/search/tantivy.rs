@@ -16,6 +16,7 @@ use crate::types::{
     SearchResponse,
 };
 use log::warn;
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::time::Instant;
 
@@ -85,35 +86,15 @@ pub(super) fn try_tantivy_search(
         search_hits.len()
     );
     if search_hits.is_empty() {
-        // Fall back to legacy lex search when Tantivy yields no hits. This avoids silent
-        // zero-hit responses when the analyzer drops tokens (e.g., qtoken_123).
-        // BUT only fall back if lex_index actually exists and has data.
-        let has_lex_data = memvid
-            .toc
-            .indexes
-            .lex
-            .as_ref()
-            .is_some_and(|manifest| manifest.bytes_length > 0);
-        if has_lex_data {
-            memvid.ensure_lex_index()?;
-            return Ok(Some(super::fallback::search_with_lex_fallback(
-                memvid,
-                parsed,
-                query_tokens,
-                request,
-                params,
-                start_time,
-                candidate_filter,
-            )?));
-        }
-        // No lex fallback available, return empty Tantivy results
-        let elapsed = start_time.elapsed().as_millis();
-        return Ok(Some(super::helpers::empty_search_response(
-            request.query.clone(),
-            params.clone(),
-            elapsed,
-            crate::types::SearchEngineKind::Tantivy,
-        )));
+        return Ok(Some(super::fallback::search_with_available_lex_fallback(
+            memvid,
+            parsed,
+            query_tokens,
+            request,
+            params,
+            start_time,
+            candidate_filter,
+        )?));
     }
 
     let snippet_window = request.snippet_chars.max(80);
@@ -159,11 +140,11 @@ pub(super) fn try_tantivy_search(
         // Use the frame's search text for evaluation. While hit.content comes from Tantivy,
         // it may have incorrect frame_id mappings due to indexing issues. The frame's search_text
         // from TOC is authoritative for this frame_id.
-        let eval_text = frame_meta
+        let eval_source = frame_meta
             .search_text
             .as_deref()
-            .map(str::to_ascii_lowercase)
-            .unwrap_or_else(|| chunk_info.text.to_ascii_lowercase());
+            .unwrap_or(&chunk_info.text);
+        let eval_text = eval_source.to_lowercase();
 
         // Evaluate the parsed query to filter results. This is necessary for:
         // - Field terms (uri, track, tags, etc.) that Tantivy may have matched loosely
@@ -180,8 +161,15 @@ pub(super) fn try_tantivy_search(
             );
             continue;
         }
-        // Use frame's search text for token occurrence matching as well
-        let occurrences = collect_token_occurrences(&eval_text, &stemmed_tokens);
+        // Snippet offsets must refer to the original chunk, not to normalized
+        // search text (Unicode lowercasing can change UTF-8 byte lengths).
+        let chunk_lower = if eval_source == chunk_info.text {
+            Cow::Borrowed(eval_text.as_str())
+        } else {
+            Cow::Owned(chunk_info.text.to_lowercase())
+        };
+        let occurrences =
+            collect_token_occurrences(&chunk_info.text, &chunk_lower, &stemmed_tokens);
         let slices = compute_snippet_slices(
             &chunk_info.text,
             &occurrences,
@@ -239,8 +227,7 @@ pub(super) fn try_tantivy_search(
 
     if evaluated.is_empty() {
         tracing::debug!("tantivy evaluation produced zero hits; falling back to legacy lex",);
-        memvid.ensure_lex_index()?;
-        return Ok(Some(super::fallback::search_with_lex_fallback(
+        return Ok(Some(super::fallback::search_with_available_lex_fallback(
             memvid,
             parsed,
             query_tokens,
@@ -259,8 +246,7 @@ pub(super) fn try_tantivy_search(
         tracing::debug!(
             "tantivy evaluation produced zero total slices; falling back to legacy lex",
         );
-        memvid.ensure_lex_index()?;
-        return Ok(Some(super::fallback::search_with_lex_fallback(
+        return Ok(Some(super::fallback::search_with_available_lex_fallback(
             memvid,
             parsed,
             query_tokens,

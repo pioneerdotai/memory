@@ -14,6 +14,46 @@ use crate::{MemvidError, Result};
 use std::collections::HashSet;
 use std::time::Instant;
 
+/// Tantivy can yield no usable hits without a legacy index being present.
+/// Only invoke the legacy engine when a cache or persisted source exists.
+pub(super) fn search_with_available_lex_fallback(
+    memvid: &mut Memvid,
+    parsed: &ParsedQuery,
+    query_tokens: &[String],
+    request: &SearchRequest,
+    params: &SearchParams,
+    start_time: Instant,
+    candidate_filter: Option<&HashSet<FrameId>>,
+) -> Result<SearchResponse> {
+    let has_legacy_source = memvid.lex_index.is_some()
+        || memvid
+            .toc
+            .indexes
+            .lex
+            .as_ref()
+            .is_some_and(|manifest| manifest.bytes_length > 0);
+    if has_legacy_source {
+        // Preserve errors for a configured but unreadable legacy index.
+        memvid.ensure_lex_index()?;
+        search_with_lex_fallback(
+            memvid,
+            parsed,
+            query_tokens,
+            request,
+            params,
+            start_time,
+            candidate_filter,
+        )
+    } else {
+        Ok(empty_search_response(
+            request.query.clone(),
+            params.clone(),
+            start_time.elapsed().as_millis(),
+            SearchEngineKind::Tantivy,
+        ))
+    }
+}
+
 pub(super) fn search_with_lex_fallback(
     memvid: &mut Memvid,
     parsed: &ParsedQuery,
@@ -57,7 +97,7 @@ pub(super) fn search_with_lex_fallback(
             stale_skips = stale_skips.saturating_add(1);
             continue;
         };
-        let content_lower = matched.content.to_ascii_lowercase();
+        let content_lower = matched.content.to_lowercase();
         let ctx = EvaluationContext {
             frame: frame_meta,
             content_lower: &content_lower,
@@ -238,7 +278,7 @@ pub(super) fn search_with_filters_only(
 
     for frame in frames {
         let search_text = memvid.frame_search_text(&frame)?;
-        let content_lower = search_text.to_ascii_lowercase();
+        let content_lower = search_text.to_lowercase();
         let ctx = EvaluationContext {
             frame: &frame,
             content_lower: &content_lower,
@@ -336,4 +376,102 @@ pub(super) fn search_with_filters_only(
         engine: SearchEngineKind::LexFallback,
         stale_index_skips: 0,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lex::{LexIndex, LexIndexBuilder};
+    use crate::{AclEnforcementMode, PutOptions};
+
+    #[test]
+    fn tantivy_filtered_results_still_use_available_legacy_index() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("legacy-fallback.mv2");
+        let mut memvid = Memvid::create(&path).unwrap();
+        memvid.enable_lex().unwrap();
+        let text = "searchable legacy document";
+        memvid
+            .put_bytes_with_options(
+                text.as_bytes(),
+                PutOptions::builder()
+                    .uri("mv2://legacy")
+                    .search_text(text)
+                    .build(),
+            )
+            .unwrap();
+        memvid.commit().unwrap();
+        drop(memvid);
+        let mut memvid = Memvid::open_read_only(&path).unwrap();
+        let id = memvid.frame_by_uri("mv2://legacy").unwrap().id;
+        let mut builder = LexIndexBuilder::new();
+        builder.add_document(id, "mv2://legacy", None, text, &Default::default());
+        memvid.lex_index = Some(LexIndex::decode(&builder.finish().unwrap().bytes).unwrap());
+        // Reproduce a stale evaluation text: Tantivy finds the document, but
+        // post-filtering rejects it. The usable legacy cache must still run.
+        memvid.toc.frames[id as usize].search_text = Some("unrelated".into());
+        let result = memvid
+            .search(SearchRequest {
+                query: "searchable".into(),
+                top_k: 10,
+                snippet_chars: 160,
+                uri: None,
+                scope: None,
+                cursor: None,
+                #[cfg(feature = "temporal_track")]
+                temporal: None,
+                as_of_frame: None,
+                as_of_ts: None,
+                no_sketch: true,
+                acl_context: None,
+                acl_enforcement_mode: AclEnforcementMode::Audit,
+            })
+            .unwrap();
+        assert_eq!(result.engine, SearchEngineKind::LexFallback);
+        assert_eq!(result.hits.len(), 1);
+        assert_eq!(result.hits[0].frame_id, id);
+
+        // An invalid configured index must not become a successful empty result.
+        memvid.lex_index = None;
+        memvid.toc.indexes.lex = Some(crate::types::LexIndexManifest {
+            doc_count: 1,
+            generation: 1,
+            bytes_offset: u64::MAX - 16,
+            bytes_length: 8,
+            checksum: [0; 32],
+        });
+        let parsed = crate::search::parse_query("searchable").unwrap();
+        let request = SearchRequest {
+            query: "searchable".into(),
+            top_k: 10,
+            snippet_chars: 160,
+            uri: None,
+            scope: None,
+            cursor: None,
+            #[cfg(feature = "temporal_track")]
+            temporal: None,
+            as_of_frame: None,
+            as_of_ts: None,
+            no_sketch: true,
+            acl_context: None,
+            acl_enforcement_mode: AclEnforcementMode::Audit,
+        };
+        let params = SearchParams {
+            top_k: 10,
+            snippet_chars: 160,
+            cursor: None,
+        };
+        assert!(
+            search_with_available_lex_fallback(
+                &mut memvid,
+                &parsed,
+                &["searchable".into()],
+                &request,
+                &params,
+                Instant::now(),
+                None,
+            )
+            .is_err()
+        );
+    }
 }

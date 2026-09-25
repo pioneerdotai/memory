@@ -316,7 +316,7 @@ impl Parser {
         match self.advance() {
             Some(Token::Word(word)) => Ok(Expr::Term(Term::Text(TextTerm::from_word(word)))),
             Some(Token::Phrase(phrase)) => Ok(Expr::Term(Term::Text(TextTerm::Phrase(
-                phrase.to_ascii_lowercase(),
+                phrase.to_lowercase(),
             )))),
             Some(Token::Field(field, value)) => {
                 let term = FieldTerm::from_pair(&field, &value)?;
@@ -402,7 +402,7 @@ impl TextTerm {
     fn from_word(word: String) -> Self {
         // Strip trailing question marks - they're punctuation, not wildcards
         // Users type "What is machine?" as a question, not a wildcard pattern
-        let lower = word.to_ascii_lowercase();
+        let lower = word.to_lowercase();
         let trimmed = lower.trim_end_matches('?');
 
         // Strip leading/trailing punctuation that won't tokenize well

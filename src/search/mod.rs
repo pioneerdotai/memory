@@ -42,11 +42,11 @@ impl TextTerm {
     pub(crate) fn matches(&self, haystack: &str) -> bool {
         match self {
             TextTerm::Word(word) => {
-                let needle = word.to_ascii_lowercase();
+                let needle = word.to_lowercase();
                 haystack.contains(&needle)
             }
             TextTerm::Phrase(phrase) => {
-                let needle = phrase.to_ascii_lowercase();
+                let needle = phrase.to_lowercase();
                 haystack.contains(&needle)
             }
             TextTerm::Wildcard(pattern) => pattern.regex.is_match(haystack),

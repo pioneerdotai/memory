@@ -182,11 +182,31 @@ fn render_hit(hit: &SearchHit) -> String {
 }
 
 pub(super) fn collect_token_occurrences(
+    content: &str,
     content_lower: &str,
     tokens: &[String],
 ) -> Vec<(usize, usize)> {
+    // Most case mappings (including Cyrillic) preserve UTF-8 byte lengths.
+    // Only build a boundary map for text containing an expanding/shrinking
+    // mapping, e.g. İ -> i + combining dot or K -> k.
+    let same_boundaries = content.len() == content_lower.len()
+        && content
+            .char_indices()
+            .map(|(offset, _)| offset)
+            .eq(content_lower.char_indices().map(|(offset, _)| offset));
+    let boundaries = (!same_boundaries).then(|| {
+        let mut boundaries = Vec::new();
+        let mut normalized_offset = 0;
+        for (original_offset, ch) in content.char_indices() {
+            boundaries.push((normalized_offset, original_offset));
+            normalized_offset += ch.to_lowercase().map(char::len_utf8).sum::<usize>();
+        }
+        boundaries.push((content_lower.len(), content.len()));
+        boundaries
+    });
     let mut occurrences = Vec::new();
     for token in tokens {
+        // Tokens already came through Tantivy's lowercase analyzer.
         let needle = token.trim();
         if needle.is_empty() {
             continue;
@@ -195,7 +215,14 @@ pub(super) fn collect_token_occurrences(
         while let Some(pos) = content_lower[start..].find(needle) {
             let absolute = start + pos;
             let end = absolute + needle.len();
-            occurrences.push((absolute, end));
+            let original_range = if let Some(boundaries) = &boundaries {
+                let first = boundaries.partition_point(|&(offset, _)| offset <= absolute) - 1;
+                let last = boundaries.partition_point(|&(offset, _)| offset < end);
+                (boundaries[first].1, boundaries[last].1)
+            } else {
+                (absolute, end)
+            };
+            occurrences.push(original_range);
             start = end;
         }
     }
@@ -426,5 +453,22 @@ pub(super) fn enrich_hits_with_entities(hits: &mut [SearchHit], memvid: &Memvid)
             let metadata = hit.metadata.get_or_insert_with(SearchHitMetadata::default);
             metadata.entities = entities;
         }
+    }
+}
+
+#[cfg(test)]
+mod unicode_occurrence_tests {
+    use super::collect_token_occurrences;
+
+    #[test]
+    fn case_mapping_preserves_original_ranges_through_expansion_and_contraction() {
+        let content = "İ K ПРИМУ ΟΣ";
+        let tokens = ["i", "k", "приму", "ος"].map(str::to_owned);
+        let occurrences = collect_token_occurrences(content, &content.to_lowercase(), &tokens);
+        let matched: Vec<_> = occurrences
+            .iter()
+            .map(|&(start, end)| &content[start..end])
+            .collect();
+        assert_eq!(matched, ["İ", "K", "ПРИМУ", "ΟΣ"]);
     }
 }
