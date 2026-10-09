@@ -79,6 +79,16 @@ const MAGIC_SNIFF_BYTES: usize = 16;
 const WAL_ENTRY_HEADER_SIZE: u64 = 48;
 const WAL_SHIFT_BUFFER_SIZE: usize = 8 * 1024 * 1024;
 
+#[cfg(all(test, feature = "lex"))]
+#[path = "tantivy_rebuild_tests.rs"]
+mod tantivy_rebuild_tests;
+
+#[cfg(all(test, feature = "lex"))]
+thread_local! {
+    pub(crate) static TANTIVY_REBUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(crate) static FAIL_TANTIVY_REBUILD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 #[cfg(test)]
 thread_local! {
     static FAIL_BEFORE_ATOMIC_PUBLISH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -2386,15 +2396,7 @@ impl Memvid {
                         storage.clear();
                         storage.set_generation(0);
                     }
-                    self.init_tantivy()?;
-                    if let Some(mut engine) = self.tantivy.take() {
-                        self.rebuild_tantivy_engine(&mut engine)?;
-                        self.tantivy = Some(engine);
-                    } else {
-                        return Err(MemvidError::InvalidToc {
-                            reason: "tantivy engine missing during rebuild".into(),
-                        });
-                    }
+                    self.rebuild_tantivy_index()?;
                 } else if self.tantivy.is_some() && !inserted_frame_ids.is_empty() {
                     // Incremental path: engine exists (from open() or previous commit),
                     // instant_index was NOT used so no wrong IDs. Just add new frames.
@@ -2449,15 +2451,7 @@ impl Memvid {
                         storage.clear();
                         storage.set_generation(0);
                     }
-                    self.init_tantivy()?;
-                    if let Some(mut engine) = self.tantivy.take() {
-                        self.rebuild_tantivy_engine(&mut engine)?;
-                        self.tantivy = Some(engine);
-                    } else {
-                        return Err(MemvidError::InvalidToc {
-                            reason: "tantivy engine missing during rebuild".into(),
-                        });
-                    }
+                    self.rebuild_tantivy_index()?;
                 }
 
                 // Set lex_enabled to ensure it persists

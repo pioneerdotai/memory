@@ -15,6 +15,13 @@ use crate::types::{
 };
 use crate::{LexSearchHit, MemvidError, Result, VecSearchHit};
 
+#[cfg(feature = "lex")]
+enum TantivyInitOutcome {
+    Disabled,
+    OpenedOrCreated,
+    Rebuilt,
+}
+
 impl Memvid {
     pub fn enable_lex(&mut self) -> Result<()> {
         self.ensure_writable()?;
@@ -818,10 +825,30 @@ impl Memvid {
     }
 
     pub(crate) fn init_tantivy(&mut self) -> Result<()> {
+        self.prepare_tantivy().map(|_| ())
+    }
+
+    /// Ensure a full rebuild, reusing one already completed during preparation.
+    pub(crate) fn rebuild_tantivy_index(&mut self) -> Result<()> {
+        let outcome = self.prepare_tantivy()?;
+        let Some(mut engine) = self.tantivy.take() else {
+            return Err(MemvidError::InvalidToc {
+                reason: "tantivy engine missing during rebuild".into(),
+            });
+        };
+        if !matches!(outcome, TantivyInitOutcome::Rebuilt) {
+            self.rebuild_tantivy_engine(&mut engine)?;
+        }
+        self.tantivy = Some(engine);
+        Ok(())
+    }
+
+    /// Reports work done in this call, independently of the flush/instant-index dirty flag.
+    fn prepare_tantivy(&mut self) -> Result<TantivyInitOutcome> {
         if !self.lex_enabled {
             self.tantivy = None;
             self.tantivy_dirty = false;
-            return Ok(());
+            return Ok(TantivyInitOutcome::Disabled);
         }
 
         let segments = if self.toc.segment_catalog.tantivy_segments.is_empty() {
@@ -907,7 +934,11 @@ impl Memvid {
         // This handles files created before the segment-based lex_enabled check was added
         self.lex_enabled = true;
 
-        Ok(())
+        Ok(if rebuilt {
+            TantivyInitOutcome::Rebuilt
+        } else {
+            TantivyInitOutcome::OpenedOrCreated
+        })
     }
 
     #[must_use]
@@ -1036,6 +1067,13 @@ pub fn is_frame_text_indexable(frame: &crate::types::Frame) -> bool {
 #[cfg(feature = "lex")]
 impl Memvid {
     pub(crate) fn rebuild_tantivy_engine(&mut self, engine: &mut TantivyEngine) -> Result<bool> {
+        #[cfg(test)]
+        {
+            crate::memvid::mutation::TANTIVY_REBUILDS.with(|count| count.set(count.get() + 1));
+            if crate::memvid::mutation::FAIL_TANTIVY_REBUILD.with(|flag| flag.replace(false)) {
+                return Err(std::io::Error::other("injected Tantivy rebuild failure").into());
+            }
+        }
         let mut prepared_docs: Vec<(Frame, String)> = Vec::new();
         let frames = self.toc.frames.clone();
         let active_frames: Vec<_> = frames
