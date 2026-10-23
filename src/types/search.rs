@@ -39,6 +39,10 @@ impl Default for SearchEngineKind {
 /// Search request accepted by the core; supports lexical, hybrid, and temporal filters.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchRequest {
+    /// Optional prepared query vector. When supplied, fuse lexical and vector
+    /// retrieval before applying this request's positional cursor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query_embedding: Option<Vec<f32>>,
     /// Query string (lexical or semantic depending on engine).
     pub query: String,
     /// Maximum hits to return.

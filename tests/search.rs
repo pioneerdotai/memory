@@ -56,6 +56,7 @@ fn create_searchable_memory(path: &std::path::Path) {
 #[cfg(feature = "lex")]
 fn search_uris(mem: &mut Memvid, query: &str, scope: Option<&str>, top_k: usize) -> Vec<String> {
     mem.search(SearchRequest {
+        query_embedding: None,
         query: query.to_string(),
         top_k,
         snippet_chars: 200,
@@ -174,6 +175,7 @@ fn search_unicode_snippet_ranges_refer_to_original_utf8() {
     let mut mem = Memvid::open_read_only(&path).unwrap();
     let result = mem
         .search(SearchRequest {
+            query_embedding: None,
             query: "ПРИМУ".into(),
             top_k: 10,
             snippet_chars: 80,
@@ -211,6 +213,7 @@ fn search_basic_query() {
     let mut mem = Memvid::open_read_only(&path).unwrap();
     let results = mem
         .search(SearchRequest {
+            query_embedding: None,
             query: "quantum".to_string(),
             top_k: 10,
             snippet_chars: 200,
@@ -248,6 +251,7 @@ fn search_multiple_results() {
     // Search for "mechanics" should find both quantum and classical
     let results = mem
         .search(SearchRequest {
+            query_embedding: None,
             query: "mechanics".to_string(),
             top_k: 10,
             snippet_chars: 200,
@@ -302,6 +306,7 @@ fn search_respects_top_k() {
     let mut mem = Memvid::open_read_only(&path).unwrap();
     let results = mem
         .search(SearchRequest {
+            query_embedding: None,
             query: "document".to_string(),
             top_k: 5,
             snippet_chars: 200,
@@ -335,6 +340,7 @@ fn search_with_scope() {
     // Search only in physics scope
     let results = mem
         .search(SearchRequest {
+            query_embedding: None,
             query: "mechanics".to_string(),
             top_k: 10,
             snippet_chars: 200,
@@ -435,6 +441,7 @@ fn search_returns_snippets() {
     let mut mem = Memvid::open_read_only(&path).unwrap();
     let results = mem
         .search(SearchRequest {
+            query_embedding: None,
             query: "quantum".to_string(),
             top_k: 10,
             snippet_chars: 200,
@@ -470,6 +477,7 @@ fn search_no_results() {
     let mut mem = Memvid::open_read_only(&path).unwrap();
     let results = mem
         .search(SearchRequest {
+            query_embedding: None,
             query: "xyznonexistentterm".to_string(),
             top_k: 10,
             snippet_chars: 200,
@@ -505,6 +513,7 @@ fn search_empty_memory() {
     let mut mem = Memvid::open_read_only(&path).unwrap();
     let results = mem
         .search(SearchRequest {
+            query_embedding: None,
             query: "anything".to_string(),
             top_k: 10,
             snippet_chars: 200,

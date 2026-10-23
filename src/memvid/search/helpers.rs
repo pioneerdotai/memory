@@ -46,7 +46,7 @@ pub(super) fn timestamp_to_rfc3339(timestamp: i64) -> Option<String> {
         })
 }
 
-pub(super) fn parse_cursor(cursor: Option<&str>, total_hits: usize) -> Result<usize> {
+pub(crate) fn parse_cursor(cursor: Option<&str>, total_hits: usize) -> Result<usize> {
     let Some(token) = cursor else {
         return Ok(0);
     };

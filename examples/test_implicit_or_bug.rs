@@ -42,6 +42,7 @@ fn main() -> memvid_core::Result<()> {
 
     // Search with implicit operator
     let results = mem.search(SearchRequest {
+        query_embedding: None,
         query: "machine python".to_string(),
         top_k: 10,
         snippet_chars: 200,

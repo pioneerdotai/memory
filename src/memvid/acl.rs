@@ -94,6 +94,20 @@ impl AclDecision {
 }
 
 impl Memvid {
+    pub(crate) fn acl_search_frame_ids(
+        &self,
+        context: Option<&AclContext>,
+    ) -> Result<HashSet<u64>> {
+        let context = validate_enforce_acl_context(context)?;
+        Ok(self
+            .toc
+            .frames
+            .iter()
+            .filter(|frame| evaluate_acl_metadata(&frame.extra_metadata, Some(&context)).allowed)
+            .map(|frame| frame.id)
+            .collect())
+    }
+
     pub(crate) fn apply_acl_to_search_hits(
         &self,
         hits: &mut Vec<SearchHit>,

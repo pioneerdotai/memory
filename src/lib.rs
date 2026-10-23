@@ -1343,6 +1343,7 @@ mod tests {
 
             // Use modern search() API instead of deprecated search_lex()
             let request = SearchRequest {
+                query_embedding: None,
                 query: "memory".to_string(),
                 top_k: 10,
                 snippet_chars: 200,
@@ -1364,6 +1365,7 @@ mod tests {
 
             let mut reopened = Memvid::open(&path).expect("open");
             let request = SearchRequest {
+                query_embedding: None,
                 query: "wal".to_string(),
                 top_k: 10,
                 snippet_chars: 200,
@@ -1437,6 +1439,7 @@ mod tests {
 
             let response = mem
                 .search(SearchRequest {
+                    query_embedding: None,
                     query: "capacity tickets".into(),
                     top_k: 5,
                     snippet_chars: 160,
@@ -1500,6 +1503,7 @@ mod tests {
 
             let response = mem
                 .search(SearchRequest {
+                    query_embedding: None,
                     query: "target segment".into(),
                     top_k: 5,
                     snippet_chars: 160,
@@ -1586,6 +1590,7 @@ mod tests {
 
             let uri_response = mem
                 .search(SearchRequest {
+                    query_embedding: None,
                     query: "tickets".into(),
                     top_k: 10,
                     snippet_chars: 120,
@@ -1611,6 +1616,7 @@ mod tests {
 
             let scope_response = mem
                 .search(SearchRequest {
+                    query_embedding: None,
                     query: "tickets".into(),
                     top_k: 10,
                     snippet_chars: 120,
@@ -1666,6 +1672,7 @@ mod tests {
 
             let first_page = mem
                 .search(SearchRequest {
+                    query_embedding: None,
                     query: "tickets".into(),
                     top_k: 1,
                     snippet_chars: 90,
@@ -1691,6 +1698,7 @@ mod tests {
 
             let second_page = mem
                 .search(SearchRequest {
+                    query_embedding: None,
                     query: "tickets".into(),
                     top_k: 1,
                     snippet_chars: 90,
@@ -1734,6 +1742,7 @@ mod tests {
 
             let response = mem
                 .search(SearchRequest {
+                    query_embedding: None,
                     query: "tickets".into(),
                     top_k: 5,
                     snippet_chars: 120,

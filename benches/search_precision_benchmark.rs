@@ -62,6 +62,7 @@ fn bench_query_latency(c: &mut Criterion) {
                 let start = Instant::now();
                 let _results = mem
                     .search(SearchRequest {
+                        query_embedding: None,
                         query: "machine learning".to_string(),
                         top_k: 10,
                         snippet_chars: 200,
@@ -97,6 +98,7 @@ fn bench_precision(c: &mut Criterion) {
                 let start = Instant::now();
                 let results = mem
                     .search(SearchRequest {
+                        query_embedding: None,
                         query: "machine python".to_string(),
                         top_k: 100,
                         snippet_chars: 200,
@@ -142,6 +144,7 @@ fn bench_result_count(c: &mut Criterion) {
                 let start = Instant::now();
                 let results = mem
                     .search(SearchRequest {
+                        query_embedding: None,
                         query: "machine learning".to_string(),
                         top_k: 100,
                         snippet_chars: 200,

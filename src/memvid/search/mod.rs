@@ -43,7 +43,76 @@ use time_filter::frame_ids_in_date_range;
 
 #[cfg(feature = "lex")]
 impl Memvid {
-    pub fn search(&mut self, request: SearchRequest) -> Result<SearchResponse> {
+    /// Retrieve a lexical/hybrid page without answer-generation heuristics.
+    /// The caller may reuse one prepared embedding across multiple memories.
+    /// Cursors are offsets into the fused result order; approximate vector ranks
+    /// may change between calls.
+    fn search_with_embedding(
+        &mut self,
+        request: SearchRequest,
+        embedding: &[f32],
+    ) -> Result<SearchResponse> {
+        let start_time = Instant::now();
+        let offset = helpers::parse_cursor(request.cursor.as_deref(), usize::MAX)?;
+        let wanted = offset.saturating_add(request.top_k).saturating_add(1);
+        let mut prefix = wanted.max(32);
+        let mut response = loop {
+            let mut lexical_request = request.clone();
+            lexical_request.cursor = None;
+            lexical_request.top_k = prefix;
+            lexical_request.no_sketch = true;
+            let mut lexical = self.search(lexical_request)?;
+            let vector = self.vec_search_page(
+                &request.query,
+                embedding,
+                prefix,
+                request.snippet_chars,
+                request.scope.as_deref(),
+                request.acl_context.as_ref(),
+                request.acl_enforcement_mode,
+                None,
+                Some(&request),
+            )?;
+            let exhausted = lexical.next_cursor.is_none() && vector.next_cursor.is_none();
+            lexical.hits =
+                crate::memvid::ask::fuse_hits_rrf(vec![lexical.hits, vector.hits], prefix)
+                    .unwrap_or_default();
+            lexical.engine = SearchEngineKind::Hybrid;
+            if lexical.hits.len() >= wanted || exhausted || prefix == usize::MAX {
+                lexical.next_cursor =
+                    if lexical.hits.len() > offset.saturating_add(request.top_k) || !exhausted {
+                        Some(offset.saturating_add(request.top_k).to_string())
+                    } else {
+                        None
+                    };
+                break lexical;
+            }
+            prefix = prefix.saturating_mul(2);
+        };
+        response.total_hits = response.hits.len();
+        response.hits = response
+            .hits
+            .into_iter()
+            .skip(offset)
+            .take(request.top_k)
+            .collect();
+        for (i, hit) in response.hits.iter_mut().enumerate() {
+            hit.rank = offset + i + 1;
+        }
+        response.params = SearchParams {
+            top_k: request.top_k,
+            snippet_chars: request.snippet_chars,
+            cursor: request.cursor,
+        };
+        response.context = build_context(&response.hits);
+        response.elapsed_ms = start_time.elapsed().as_millis();
+        Ok(response)
+    }
+
+    pub fn search(&mut self, mut request: SearchRequest) -> Result<SearchResponse> {
+        if let Some(embedding) = request.query_embedding.take() {
+            return self.search_with_embedding(request, &embedding);
+        }
         if !self.lex_enabled {
             return Err(MemvidError::LexNotEnabled);
         }
@@ -186,6 +255,14 @@ impl Memvid {
             };
         }
 
+        if request.acl_enforcement_mode == crate::types::AclEnforcementMode::Enforce {
+            let allowed = self.acl_search_frame_ids(request.acl_context.as_ref())?;
+            candidate_filter = Some(match candidate_filter {
+                Some(existing) => existing.intersection(&allowed).copied().collect(),
+                None => allowed,
+            });
+        }
+
         // SKETCH PRE-FILTER: Use sketch track for fast candidate generation if available
         // This dramatically reduces the number of documents sent to BM25/Tantivy
         if self.has_sketches() && has_text_terms && !request.no_sketch {
@@ -217,12 +294,7 @@ impl Memvid {
                             .into_iter()
                             .filter(|id| sketch_set.contains(id))
                             .collect();
-                        if filtered.is_empty() {
-                            // Fall back to sketch-only if intersection is empty
-                            Some(sketch_set)
-                        } else {
-                            Some(filtered)
-                        }
+                        Some(filtered)
                     }
                     None => Some(sketch_set),
                 };

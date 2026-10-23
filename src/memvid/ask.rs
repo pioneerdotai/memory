@@ -24,6 +24,31 @@ impl Memvid {
     where
         E: VecEmbedder + ?Sized,
     {
+        let offset =
+            crate::memvid::search::helpers::parse_cursor(request.cursor.as_deref(), usize::MAX)?;
+        let mut prefix_request = request.clone();
+        prefix_request.cursor = None;
+        prefix_request.top_k = offset.saturating_add(request.top_k).saturating_add(1);
+        self.ask_unpaged(
+            prefix_request,
+            embedder,
+            offset,
+            request.top_k,
+            request.cursor,
+        )
+    }
+
+    fn ask_unpaged<E>(
+        &mut self,
+        request: AskRequest,
+        embedder: Option<&E>,
+        offset: usize,
+        page_size: usize,
+        cursor: Option<String>,
+    ) -> Result<AskResponse>
+    where
+        E: VecEmbedder + ?Sized,
+    {
         if !self.lex_enabled {
             return Err(MemvidError::LexNotEnabled);
         }
@@ -45,13 +70,13 @@ impl Memvid {
         let effective_top_k = if is_analytical {
             // Analytical questions require comprehensive context across all time periods
             // to detect changes, reversions, comparisons, etc.
-            (request.top_k * 5).max(50)
+            request.top_k.saturating_mul(5).max(50)
         } else if is_aggregation {
             // For aggregation questions, retrieve more candidates to ensure diversity
-            (request.top_k * 3).max(30)
+            request.top_k.saturating_mul(3).max(30)
         } else if is_recency {
             // For recency questions, retrieve more candidates so recency boost can find the newest
-            (request.top_k * 2).max(20)
+            request.top_k.saturating_mul(2).max(20)
         } else {
             request.top_k
         };
@@ -81,6 +106,7 @@ impl Memvid {
         };
 
         let mut search_request = SearchRequest {
+            query_embedding: None,
             query: search_query,
             top_k: effective_top_k,
             snippet_chars: request.snippet_chars,
@@ -219,7 +245,7 @@ impl Memvid {
             // Create a modified request with a large top_k to retrieve the full timeline
             // Analytical questions need to see ALL time periods to detect changes/reversions
             let mut analytical_request = request.clone();
-            analytical_request.top_k = 100; // Get up to 100 timeline entries for comprehensive context
+            analytical_request.top_k = effective_top_k;
             if let Ok(timeline_response) = self.build_timeline_fallback_response(
                 &analytical_request,
                 &search_request,
@@ -266,7 +292,7 @@ impl Memvid {
                     self,
                     query_embedding.as_deref().unwrap_or(&[]),
                     &request,
-                    effective_top_k.max(24).min(64),
+                    effective_top_k.max(24),
                 )?;
                 if !vec_hits.is_empty() {
                     candidate_lists.push(vec_hits);
@@ -377,6 +403,19 @@ impl Memvid {
             retrieval.total_hits = retrieval.hits.len();
         }
 
+        let end = offset.saturating_add(page_size);
+        retrieval.next_cursor = (retrieval.hits.len() > end).then(|| end.to_string());
+        retrieval.hits = retrieval
+            .hits
+            .into_iter()
+            .skip(offset)
+            .take(page_size)
+            .collect();
+        for (i, hit) in retrieval.hits.iter_mut().enumerate() {
+            hit.rank = offset + i + 1;
+        }
+        retrieval.params.top_k = page_size;
+        retrieval.params.cursor = cursor;
         retrieval.context = build_context(&retrieval.hits);
 
         let (answer, citations, synthesis_ms) = if request.context_only {
@@ -1364,7 +1403,30 @@ fn vector_hits(
         }
     }
 
-    let vec_response = memvid.vec_search_with_embedding_acl(
+    let filter = SearchRequest {
+        query_embedding: None,
+        query: request.question.clone(),
+        top_k: limit,
+        snippet_chars: request.snippet_chars,
+        uri: request.uri.clone(),
+        scope: request.scope.clone(),
+        cursor: None,
+        #[cfg(feature = "temporal_track")]
+        temporal: request.temporal.clone().or_else(|| {
+            (request.start.is_some() || request.end.is_some()).then(|| TemporalFilter {
+                start_utc: request.start,
+                end_utc: request.end,
+                phrase: None,
+                tz: None,
+            })
+        }),
+        as_of_frame: request.as_of_frame,
+        as_of_ts: request.as_of_ts,
+        no_sketch: true,
+        acl_context: request.acl_context.clone(),
+        acl_enforcement_mode: request.acl_enforcement_mode,
+    };
+    let vec_response = memvid.vec_search_page(
         &request.question,
         query_embedding,
         limit,
@@ -1372,13 +1434,18 @@ fn vector_hits(
         request.scope.as_deref(),
         request.acl_context.as_ref(),
         request.acl_enforcement_mode,
+        None,
+        Some(&filter),
     )?;
 
     Ok(vec_response.hits)
 }
 
 /// Fuse multiple hit lists using Reciprocal Rank Fusion.
-fn fuse_hits_rrf(mut lists: Vec<Vec<SearchHit>>, target: usize) -> Option<Vec<SearchHit>> {
+pub(crate) fn fuse_hits_rrf(
+    mut lists: Vec<Vec<SearchHit>>,
+    target: usize,
+) -> Option<Vec<SearchHit>> {
     if lists.is_empty() {
         return None;
     }
@@ -1415,7 +1482,7 @@ fn fuse_hits_rrf(mut lists: Vec<Vec<SearchHit>>, target: usize) -> Option<Vec<Se
     combined.sort_by(|a, b| {
         b.1.partial_cmp(&a.1)
             .unwrap_or(std::cmp::Ordering::Equal)
-            .then(a.2.rank.cmp(&b.2.rank))
+            .then(a.0.cmp(&b.0))
     });
 
     let mut result = Vec::new();

@@ -26,6 +26,7 @@ fn assert_rebuilds(expected: usize) {
 fn assert_text(mem: &mut Memvid, text: &str, expected: &[FrameId]) {
     let response = mem
         .search(SearchRequest {
+            query_embedding: None,
             query: text.into(),
             top_k: 20,
             snippet_chars: 80,

@@ -39,6 +39,7 @@ fn test_implicit_and_precision() -> memvid_core::Result<()> {
     mem.commit()?;
 
     let results = mem.search(SearchRequest {
+        query_embedding: None,
         query: "machine python".to_string(),
         top_k: 10,
         snippet_chars: 200,
@@ -94,6 +95,7 @@ fn test_explicit_operators_still_work() -> memvid_core::Result<()> {
 
     // Explicit AND
     let results = mem.search(SearchRequest {
+        query_embedding: None,
         query: "Rust AND Go".to_string(),
         top_k: 10,
         snippet_chars: 200,
@@ -113,6 +115,7 @@ fn test_explicit_operators_still_work() -> memvid_core::Result<()> {
 
     // Explicit OR
     let results = mem.search(SearchRequest {
+        query_embedding: None,
         query: "Rust OR Go".to_string(),
         top_k: 10,
         snippet_chars: 200,

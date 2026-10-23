@@ -4467,6 +4467,7 @@ mod commit_publication_tests {
     fn assert_recovered_text(mem: &mut Memvid, text: &str, frame_id: FrameId) {
         let result = mem
             .search(crate::SearchRequest {
+                query_embedding: None,
                 query: text.to_string(),
                 top_k: 1,
                 snippet_chars: 80,

@@ -51,7 +51,7 @@ pub(super) fn try_tantivy_search(
         .as_deref()
         .and_then(|cursor| cursor.parse::<usize>().ok())
         .unwrap_or(0);
-    let base_docs = request.top_k.max(1) + offset_hint;
+    let base_docs = request.top_k.max(1).saturating_add(offset_hint);
     let mut doc_limit = base_docs.saturating_mul(4).max(20);
     if let Some(filter) = candidate_filter {
         doc_limit = doc_limit.min(filter.len().max(1));
@@ -67,124 +67,140 @@ pub(super) fn try_tantivy_search(
         candidate_filter.map(|set| set.iter().copied().collect());
     let frame_filter_slice = frame_filter_vec.as_deref();
 
-    let search_hits = match engine.search_documents(
-        parsed,
-        uri_filter,
-        scope_filter,
-        frame_filter_slice,
-        doc_limit,
-    ) {
-        Ok(hits) => hits,
-        Err(err) => {
-            warn!("tantivy search failed: {err}");
-            return Ok(None);
-        }
-    };
-    tracing::debug!(
-        "tantivy hits for query '{}': {}",
-        request.query,
-        search_hits.len()
-    );
-    if search_hits.is_empty() {
-        return Ok(Some(super::fallback::search_with_available_lex_fallback(
-            memvid,
-            parsed,
-            query_tokens,
-            request,
-            params,
-            start_time,
-            candidate_filter,
-        )?));
-    }
-
-    let snippet_window = request.snippet_chars.max(80);
-    let max_snippets_per_doc = request.top_k.max(1);
-    let mut evaluated = Vec::new();
-    let mut stale_skips = 0u32;
-    for hit in search_hits {
-        let Some(frame_meta) = memvid
-            .toc
-            .frames
-            .get(usize::try_from(hit.frame_id).unwrap_or(usize::MAX))
-            .cloned()
-        else {
-            tracing::warn!(
-                frame_id = hit.frame_id,
-                "skipping search hit with stale frame_id"
-            );
-            stale_skips = stale_skips.saturating_add(1);
-            continue;
+    let (mut evaluated, stale_skips) = loop {
+        let engine = match memvid.tantivy.as_ref() {
+            Some(engine) => engine,
+            None => return Ok(None),
         };
-        if let Some(uri_expected) = uri_filter {
-            if !uri_matches(frame_meta.uri.as_deref(), uri_expected) {
-                continue;
+        let search_hits = match engine.search_documents(
+            parsed,
+            uri_filter,
+            scope_filter,
+            frame_filter_slice,
+            doc_limit,
+        ) {
+            Ok(hits) => hits,
+            Err(err) => {
+                warn!("tantivy search failed: {err}");
+                return Ok(None);
             }
-        } else if let Some(scope) = scope_filter {
-            match frame_meta.uri.as_deref() {
-                Some(uri) if uri.starts_with(scope) => {}
-                _ => continue,
-            }
+        };
+        tracing::debug!(
+            "tantivy hits for query '{}': {}",
+            request.query,
+            search_hits.len()
+        );
+        if search_hits.is_empty() {
+            return Ok(Some(super::fallback::search_with_available_lex_fallback(
+                memvid,
+                parsed,
+                query_tokens,
+                request,
+                params,
+                start_time,
+                candidate_filter,
+            )?));
         }
 
-        let chunk_info = match memvid.resolve_chunk_context(&frame_meta) {
-            Ok(info) => info,
-            Err(err) => {
-                warn!(
-                    "unable to resolve chunk context for frame {}: {}",
-                    frame_meta.id, err
+        let exhausted = search_hits.len() < doc_limit;
+        let snippet_window = request.snippet_chars.max(80);
+        let max_snippets_per_doc = base_docs.saturating_add(1);
+        let mut evaluated = Vec::new();
+        let mut stale_skips = 0u32;
+        for hit in search_hits {
+            let Some(frame_meta) = memvid
+                .toc
+                .frames
+                .get(usize::try_from(hit.frame_id).unwrap_or(usize::MAX))
+                .cloned()
+            else {
+                tracing::warn!(
+                    frame_id = hit.frame_id,
+                    "skipping search hit with stale frame_id"
+                );
+                stale_skips = stale_skips.saturating_add(1);
+                continue;
+            };
+            if let Some(uri_expected) = uri_filter {
+                if !uri_matches(frame_meta.uri.as_deref(), uri_expected) {
+                    continue;
+                }
+            } else if let Some(scope) = scope_filter {
+                match frame_meta.uri.as_deref() {
+                    Some(uri) if uri.starts_with(scope) => {}
+                    _ => continue,
+                }
+            }
+
+            let chunk_info = match memvid.resolve_chunk_context(&frame_meta) {
+                Ok(info) => info,
+                Err(err) => {
+                    warn!(
+                        "unable to resolve chunk context for frame {}: {}",
+                        frame_meta.id, err
+                    );
+                    continue;
+                }
+            };
+
+            // Use the frame's search text for evaluation. While hit.content comes from Tantivy,
+            // it may have incorrect frame_id mappings due to indexing issues. The frame's search_text
+            // from TOC is authoritative for this frame_id.
+            let eval_source = frame_meta
+                .search_text
+                .as_deref()
+                .unwrap_or(&chunk_info.text);
+            let eval_text = eval_source.to_lowercase();
+
+            // Evaluate the parsed query to filter results. This is necessary for:
+            // - Field terms (uri, track, tags, etc.) that Tantivy may have matched loosely
+            // - Text terms with AND logic (PR #178) - Tantivy matches each term independently,
+            //   but the parsed expression requires ALL terms to be present in the content
+            let ctx = EvaluationContext {
+                frame: &frame_meta,
+                content_lower: &eval_text,
+            };
+            if !parsed.evaluate(&ctx) {
+                tracing::debug!(
+                    "tantivy hit {} culled: failed query evaluation",
+                    frame_meta.id
                 );
                 continue;
             }
-        };
-
-        // Use the frame's search text for evaluation. While hit.content comes from Tantivy,
-        // it may have incorrect frame_id mappings due to indexing issues. The frame's search_text
-        // from TOC is authoritative for this frame_id.
-        let eval_source = frame_meta
-            .search_text
-            .as_deref()
-            .unwrap_or(&chunk_info.text);
-        let eval_text = eval_source.to_lowercase();
-
-        // Evaluate the parsed query to filter results. This is necessary for:
-        // - Field terms (uri, track, tags, etc.) that Tantivy may have matched loosely
-        // - Text terms with AND logic (PR #178) - Tantivy matches each term independently,
-        //   but the parsed expression requires ALL terms to be present in the content
-        let ctx = EvaluationContext {
-            frame: &frame_meta,
-            content_lower: &eval_text,
-        };
-        if !parsed.evaluate(&ctx) {
-            tracing::debug!(
-                "tantivy hit {} culled: failed query evaluation",
-                frame_meta.id
+            // Snippet offsets must refer to the original chunk, not to normalized
+            // search text (Unicode lowercasing can change UTF-8 byte lengths).
+            let chunk_lower = if eval_source == chunk_info.text {
+                Cow::Borrowed(eval_text.as_str())
+            } else {
+                Cow::Owned(chunk_info.text.to_lowercase())
+            };
+            let occurrences =
+                collect_token_occurrences(&chunk_info.text, &chunk_lower, &stemmed_tokens);
+            let slices = compute_snippet_slices(
+                &chunk_info.text,
+                &occurrences,
+                snippet_window,
+                max_snippets_per_doc,
             );
-            continue;
+            if slices.is_empty() {
+                tracing::debug!("tantivy hit {} culled: no snippet slices", frame_meta.id);
+                continue;
+            }
+            // Use content_dates if available, otherwise fall back to frame timestamp
+            let effective_ts = parse_content_date_to_timestamp(&frame_meta.content_dates)
+                .unwrap_or(frame_meta.timestamp);
+            evaluated.push((hit, occurrences, slices, chunk_info, effective_ts));
         }
-        // Snippet offsets must refer to the original chunk, not to normalized
-        // search text (Unicode lowercasing can change UTF-8 byte lengths).
-        let chunk_lower = if eval_source == chunk_info.text {
-            Cow::Borrowed(eval_text.as_str())
-        } else {
-            Cow::Owned(chunk_info.text.to_lowercase())
-        };
-        let occurrences =
-            collect_token_occurrences(&chunk_info.text, &chunk_lower, &stemmed_tokens);
-        let slices = compute_snippet_slices(
-            &chunk_info.text,
-            &occurrences,
-            snippet_window,
-            max_snippets_per_doc,
-        );
-        if slices.is_empty() {
-            tracing::debug!("tantivy hit {} culled: no snippet slices", frame_meta.id);
-            continue;
+
+        let slice_count: usize = evaluated
+            .iter()
+            .map(|(_, _, slices, _, _)| slices.len())
+            .sum();
+        if exhausted || slice_count > base_docs || doc_limit == usize::MAX {
+            break (evaluated, stale_skips);
         }
-        // Use content_dates if available, otherwise fall back to frame timestamp
-        let effective_ts = parse_content_date_to_timestamp(&frame_meta.content_dates)
-            .unwrap_or(frame_meta.timestamp);
-        evaluated.push((hit, occurrences, slices, chunk_info, effective_ts));
-    }
+        doc_limit = doc_limit.saturating_mul(2);
+    };
 
     // Apply recency boosting: re-sort by combined score (BM25 + recency)
     // This helps knowledge-update questions find the most recent information
@@ -219,7 +235,11 @@ pub(super) fn try_tantivy_search(
             .collect();
 
         // Sort by combined score (descending)
-        with_scores.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        with_scores.sort_by(|a, b| {
+            b.0.partial_cmp(&a.0)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(a.1.0.frame_id.cmp(&b.1.0.frame_id))
+        });
 
         // Extract back to evaluated
         evaluated = with_scores.into_iter().map(|(_, item)| item).collect();

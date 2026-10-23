@@ -59,6 +59,7 @@ fn doctor_rebuilds_tantivy_index() {
         let mut mem = Memvid::open_read_only(path).unwrap();
         let results = mem
             .search(SearchRequest {
+                query_embedding: None,
                 query: "document".to_string(),
                 top_k: 10,
                 snippet_chars: 200,
@@ -112,6 +113,7 @@ fn doctor_rebuilds_tantivy_index() {
         let mut mem = Memvid::open_read_only(path).unwrap();
         let results = mem
             .search(SearchRequest {
+                query_embedding: None,
                 query: "document".to_string(),
                 top_k: 10,
                 snippet_chars: 200,
@@ -265,6 +267,7 @@ fn open_file_with_tantivy_segments_enables_lex() {
     {
         let mut mem = Memvid::open_read_only(path).unwrap();
         let result = mem.search(SearchRequest {
+            query_embedding: None,
             query: "test".to_string(),
             top_k: 10,
             snippet_chars: 200,
@@ -358,6 +361,7 @@ fn doctor_rebuild_produces_searchable_index() {
         // Search for "quantum" should find quantum doc
         let results = mem
             .search(SearchRequest {
+                query_embedding: None,
                 query: "quantum".to_string(),
                 top_k: 10,
                 snippet_chars: 200,
@@ -387,6 +391,7 @@ fn doctor_rebuild_produces_searchable_index() {
         // Search for "physics" should find both docs
         let results = mem
             .search(SearchRequest {
+                query_embedding: None,
                 query: "physics".to_string(),
                 top_k: 10,
                 snippet_chars: 200,

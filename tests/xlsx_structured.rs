@@ -278,6 +278,7 @@ fn ingest_arden() -> Option<(std::path::PathBuf, TempDir)> {
 
 fn search_arden(mem: &mut Memvid, query: &str, top_k: usize) -> Vec<memvid_core::SearchHit> {
     mem.search(SearchRequest {
+        query_embedding: None,
         query: query.to_string(),
         top_k,
         snippet_chars: 300,

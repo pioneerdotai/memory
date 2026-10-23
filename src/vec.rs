@@ -230,7 +230,7 @@ impl VecIndex {
 
     #[must_use]
     pub fn search(&self, query: &[f32], limit: usize) -> Vec<VecSearchHit> {
-        if query.is_empty() {
+        if query.is_empty() || limit == 0 {
             return Vec::new();
         }
         match self {
@@ -411,9 +411,13 @@ impl HnswVecIndex {
             static DEST: std::cell::RefCell<Vec<space::Neighbor<u32>>> = const { std::cell::RefCell::new(Vec::new()) };
         }
 
-        // ef_search: query-time search width. Higher = better recall, slower search.
-        // Default: 50 as per maintainer specification. Can be exposed as option later.
-        let ef_search = 50;
+        if limit == 0 || self.graph.is_empty() || query.is_empty() {
+            return Vec::new();
+        }
+        // hnsw 0.11 copies into the entire destination, rather than its filled
+        // prefix. Never provide more slots than the graph or search width.
+        let required_size = limit.min(self.graph.len());
+        let ef_search = required_size.max(50).min(self.graph.len());
 
         SEARCHER.with(|searcher_cell| {
             DEST.with(|dest_cell| {
@@ -421,7 +425,6 @@ impl HnswVecIndex {
                 let mut dest = dest_cell.borrow_mut();
 
                 // Ensure dest has enough capacity
-                let required_size = limit.max(ef_search);
                 if dest.len() < required_size {
                     dest.resize(
                         required_size,
@@ -538,6 +541,29 @@ mod tests {
         let index = VecIndex::decode(&artifact.bytes).expect("decode");
         let hits = index.search(&[0.0, 1.0, 2.0], 10);
         assert_eq!(hits[0].frame_id, 1);
+    }
+
+    #[test]
+    #[cfg(any(feature = "vec", feature = "hnsw_bench"))]
+    fn hnsw_large_requests_and_empty_indexes_do_not_panic() {
+        let docs: Vec<_> = (0..1100)
+            .map(|i| VecDocument {
+                frame_id: i,
+                embedding: vec![i as f32, (i % 17) as f32],
+            })
+            .collect();
+        let index = HnswVecIndex::build(&docs).unwrap();
+        for limit in [0, 100, 200, 1200] {
+            let hits = index.search(&[0.0, 0.0], limit);
+            assert_eq!(hits.len(), limit.min(docs.len()));
+            let ids: std::collections::HashSet<_> = hits.iter().map(|hit| hit.frame_id).collect();
+            assert_eq!(ids.len(), hits.len());
+            assert!(hits.iter().all(|hit| hit.frame_id < 1100));
+        }
+        let empty = HnswVecIndex::build(&[]).unwrap();
+        assert!(empty.search(&[0.0, 0.0], 100).is_empty());
+        let single = HnswVecIndex::build(&docs[..1]).unwrap();
+        assert_eq!(single.search(&[0.0, 0.0], 100).len(), 1);
     }
 
     #[test]

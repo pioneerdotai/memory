@@ -33,6 +33,7 @@ fn replay_save_does_not_corrupt_lex_index() {
         mem.start_session(Some("Test".to_string()), None).unwrap();
         let _ = mem
             .search(SearchRequest {
+                query_embedding: None,
                 query: "climate".to_string(),
                 top_k: 5,
                 snippet_chars: 120,
@@ -81,6 +82,7 @@ fn replay_save_does_not_corrupt_lex_index() {
     let mut reopened = Memvid::open_read_only(&path).unwrap();
     let results = reopened
         .search(SearchRequest {
+            query_embedding: None,
             query: "climate".to_string(),
             top_k: 5,
             snippet_chars: 120,
