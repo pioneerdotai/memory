@@ -573,6 +573,55 @@ mod tests {
     use super::*;
 
     #[test]
+    fn postfilter_rejections_do_not_end_the_initial_document_window() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut mem = Memvid::create(dir.path().join("postfilter.mv2")).unwrap();
+        mem.enable_lex().unwrap();
+        let mut rejected = Vec::new();
+        for _ in 0..120 {
+            rejected.push(mem.put_bytes(b"needle").unwrap());
+        }
+        let mut expected = std::collections::HashSet::new();
+        for i in 0..13 {
+            let text = format!("needle {}", "padding ".repeat(100));
+            expected.insert(
+                mem.put_bytes_with_options(
+                    text.as_bytes(),
+                    crate::PutOptions::builder()
+                        .uri(format!("mv2://kept/{i}"))
+                        .build(),
+                )
+                .unwrap(),
+            );
+        }
+        mem.commit().unwrap();
+        // Tantivy still ranks these strongly, while authoritative evaluation
+        // rejects them after retrieval. No scope/filter pushdown can hide them.
+        for id in rejected {
+            mem.toc.frames[id as usize].search_text = Some("unrelated".into());
+        }
+        let mut cursor = None;
+        let mut found = std::collections::HashSet::new();
+        for page in 0..3 {
+            let request: SearchRequest = serde_json::from_value(serde_json::json!({
+                "query": "needle", "top_k": 5, "snippet_chars": 120,
+                "cursor": cursor, "no_sketch": true,
+            }))
+            .unwrap();
+            let response = mem.search(request).unwrap();
+            assert_eq!(response.engine, SearchEngineKind::Tantivy);
+            assert_eq!(response.hits.len(), if page == 2 { 3 } else { 5 });
+            for hit in response.hits {
+                assert!(expected.contains(&hit.frame_id));
+                assert!(found.insert(hit.frame_id));
+            }
+            cursor = response.next_cursor;
+            assert_eq!(cursor.is_none(), page == 2);
+        }
+        assert_eq!(found, expected);
+    }
+
+    #[test]
     fn test_parse_spelled_date_with_newlines() {
         // PDF extraction produces dates with newlines
         let date_with_newlines = "September\n1,\n2024";

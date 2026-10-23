@@ -54,87 +54,7 @@ impl Memvid {
         }
 
         let total_start = Instant::now();
-        let lexical_query = sanitize_question_for_lexical(&request.question);
-        let primary_tokens: Vec<String> = lexical_query
-            .split_whitespace()
-            .map(str::to_ascii_lowercase)
-            .collect();
-
-        // Detect aggregation questions that need multi-session retrieval
-        let is_aggregation = is_aggregation_question(&request.question);
-        // Detect recency questions that need the most recent information
-        let is_recency = is_recency_question(&request.question);
-        // Detect analytical/comparative questions that need comprehensive context
-        let is_analytical = is_analytical_question(&request.question);
-
-        let effective_top_k = if is_analytical {
-            // Analytical questions require comprehensive context across all time periods
-            // to detect changes, reversions, comparisons, etc.
-            request.top_k.saturating_mul(5).max(50)
-        } else if is_aggregation {
-            // For aggregation questions, retrieve more candidates to ensure diversity
-            request.top_k.saturating_mul(3).max(30)
-        } else if is_recency {
-            // For recency questions, retrieve more candidates so recency boost can find the newest
-            request.top_k.saturating_mul(2).max(20)
-        } else {
-            request.top_k
-        };
-
-        // For analytical questions, use broad OR query to get comprehensive context
-        // These questions require seeing all time periods to compare/analyze
-        let search_query = if is_analytical && !primary_tokens.is_empty() {
-            let analytical_query = build_analytical_query(&primary_tokens);
-            tracing::debug!(
-                "analytical question detected, using broad OR query: {}",
-                analytical_query
-            );
-            analytical_query
-        } else if is_recency && !primary_tokens.is_empty() {
-            // For recency questions, use OR query from the start to maximize recall
-            // This ensures we find all relevant documents even with different terminology
-            let recency_query = build_recency_query(&primary_tokens);
-            tracing::debug!(
-                "recency question detected, using OR query: {}",
-                recency_query
-            );
-            recency_query
-        } else if lexical_query.is_empty() {
-            request.question.clone()
-        } else {
-            lexical_query.clone()
-        };
-
-        let mut search_request = SearchRequest {
-            query_embedding: None,
-            query: search_query,
-            top_k: effective_top_k,
-            snippet_chars: request.snippet_chars,
-            uri: request.uri.clone(),
-            scope: request.scope.clone(),
-            cursor: request.cursor.clone(),
-            #[cfg(feature = "temporal_track")]
-            temporal: request.temporal.clone().or_else(|| {
-                if request.start.is_some() || request.end.is_some() {
-                    Some(TemporalFilter {
-                        start_utc: request.start,
-                        end_utc: request.end,
-                        phrase: None,
-                        tz: None,
-                    })
-                } else {
-                    None
-                }
-            }),
-            as_of_frame: request.as_of_frame,
-            as_of_ts: request.as_of_ts,
-            // Disable sketch pre-filter for ask queries - accuracy is more important than speed
-            // SimHash can filter out semantically relevant documents that use different wording
-            no_sketch: true,
-            acl_context: request.acl_context.clone(),
-            acl_enforcement_mode: request.acl_enforcement_mode,
-        };
-
+        let mut request = request;
         // Pre-compute the query embedding once so we can reuse it for vector recall and semantic re-rank
         let mut query_embedding: Option<Vec<f32>> = None;
         if let Some(embedder) = embedder {
@@ -143,24 +63,233 @@ impl Memvid {
             }
         }
 
-        tracing::debug!("ask search query: {}", search_request.query);
-        let mut retrieval = self.search(search_request.clone())?;
-        self.filter_hits_in_time_range(
-            &mut retrieval.hits,
-            request.start,
-            request.end,
-            &mut retrieval.total_hits,
-        )?;
+        let (
+            mut retrieval,
+            semantic_scores,
+            semantics_applied,
+            lex_fallback_used,
+            timeline_fallback_used,
+        ) = loop {
+            let mut more_candidates = false;
+            let lexical_query = sanitize_question_for_lexical(&request.question);
+            let primary_tokens: Vec<String> = lexical_query
+                .split_whitespace()
+                .map(str::to_ascii_lowercase)
+                .collect();
 
-        let mut lex_fallback_used = false;
-        let mut timeline_fallback_used = false;
-        if retrieval.hits.is_empty() {
-            if !primary_tokens.is_empty() {
+            // Detect aggregation questions that need multi-session retrieval
+            let is_aggregation = is_aggregation_question(&request.question);
+            // Detect recency questions that need the most recent information
+            let is_recency = is_recency_question(&request.question);
+            // Detect analytical/comparative questions that need comprehensive context
+            let is_analytical = is_analytical_question(&request.question);
+
+            let effective_top_k = if is_analytical {
+                // Analytical questions require comprehensive context across all time periods
+                // to detect changes, reversions, comparisons, etc.
+                request.top_k.saturating_mul(5).max(50)
+            } else if is_aggregation {
+                // For aggregation questions, retrieve more candidates to ensure diversity
+                request.top_k.saturating_mul(3).max(30)
+            } else if is_recency {
+                // For recency questions, retrieve more candidates so recency boost can find the newest
+                request.top_k.saturating_mul(2).max(20)
+            } else {
+                request.top_k
+            };
+
+            // For analytical questions, use broad OR query to get comprehensive context
+            // These questions require seeing all time periods to compare/analyze
+            let search_query = if is_analytical && !primary_tokens.is_empty() {
+                let analytical_query = build_analytical_query(&primary_tokens);
+                tracing::debug!(
+                    "analytical question detected, using broad OR query: {}",
+                    analytical_query
+                );
+                analytical_query
+            } else if is_recency && !primary_tokens.is_empty() {
+                // For recency questions, use OR query from the start to maximize recall
+                // This ensures we find all relevant documents even with different terminology
+                let recency_query = build_recency_query(&primary_tokens);
+                tracing::debug!(
+                    "recency question detected, using OR query: {}",
+                    recency_query
+                );
+                recency_query
+            } else if lexical_query.is_empty() {
+                request.question.clone()
+            } else {
+                lexical_query.clone()
+            };
+
+            let mut search_request = SearchRequest {
+                query_embedding: None,
+                query: search_query,
+                top_k: effective_top_k,
+                snippet_chars: request.snippet_chars,
+                uri: request.uri.clone(),
+                scope: request.scope.clone(),
+                cursor: request.cursor.clone(),
+                #[cfg(feature = "temporal_track")]
+                temporal: request.temporal.clone().or_else(|| {
+                    if request.start.is_some() || request.end.is_some() {
+                        Some(TemporalFilter {
+                            start_utc: request.start,
+                            end_utc: request.end,
+                            phrase: None,
+                            tz: None,
+                        })
+                    } else {
+                        None
+                    }
+                }),
+                as_of_frame: request.as_of_frame,
+                as_of_ts: request.as_of_ts,
+                // Disable sketch pre-filter for ask queries - accuracy is more important than speed
+                // SimHash can filter out semantically relevant documents that use different wording
+                no_sketch: true,
+                acl_context: request.acl_context.clone(),
+                acl_enforcement_mode: request.acl_enforcement_mode,
+            };
+
+            tracing::debug!("ask search query: {}", search_request.query);
+            let mut retrieval = self.search(search_request.clone())?;
+            more_candidates |= retrieval.next_cursor.is_some();
+            self.filter_hits_in_time_range(
+                &mut retrieval.hits,
+                request.start,
+                request.end,
+                &mut retrieval.total_hits,
+            )?;
+
+            let mut lex_fallback_used = false;
+            let mut timeline_fallback_used = false;
+            if retrieval.hits.is_empty() {
+                if !primary_tokens.is_empty() {
+                    if let Some(or_query) = build_disjunctive_query(&primary_tokens) {
+                        if or_query != search_request.query {
+                            let mut or_request = search_request.clone();
+                            or_request.query = or_query.clone();
+                            let mut or_response = self.search(or_request)?;
+                            more_candidates |= or_response.next_cursor.is_some();
+                            self.filter_hits_in_time_range(
+                                &mut or_response.hits,
+                                request.start,
+                                request.end,
+                                &mut or_response.total_hits,
+                            )?;
+                            if !or_response.hits.is_empty() {
+                                retrieval = or_response;
+                                search_request.query = or_query;
+                                lex_fallback_used = true;
+                            }
+                        }
+                    }
+                }
+                if retrieval.hits.is_empty() {
+                    if let Some(fallback_query) = lexical_fallback_query(&request.question) {
+                        if fallback_query != search_request.query {
+                            let mut fallback_request = search_request.clone();
+                            fallback_request.query = fallback_query.clone();
+                            let mut fallback_response = self.search(fallback_request)?;
+                            more_candidates |= fallback_response.next_cursor.is_some();
+                            self.filter_hits_in_time_range(
+                                &mut fallback_response.hits,
+                                request.start,
+                                request.end,
+                                &mut fallback_response.total_hits,
+                            )?;
+                            if !fallback_response.hits.is_empty() {
+                                retrieval = fallback_response;
+                                search_request.query = fallback_query;
+                                lex_fallback_used = true;
+                            }
+                        }
+                    }
+                }
+                // Expanded query fallback: try singular/plural variants for better recall
+                if retrieval.hits.is_empty() {
+                    let expanded_queries = build_expanded_queries(&primary_tokens);
+                    for expanded_query in expanded_queries {
+                        if expanded_query != search_request.query {
+                            let mut expanded_request = search_request.clone();
+                            expanded_request.query = expanded_query.clone();
+                            let mut expanded_response = self.search(expanded_request)?;
+                            more_candidates |= expanded_response.next_cursor.is_some();
+                            self.filter_hits_in_time_range(
+                                &mut expanded_response.hits,
+                                request.start,
+                                request.end,
+                                &mut expanded_response.total_hits,
+                            )?;
+                            if !expanded_response.hits.is_empty() {
+                                retrieval = expanded_response;
+                                search_request.query = expanded_query;
+                                lex_fallback_used = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+                // Timeline fallback: if still no hits, sample from timeline to provide context
+                if retrieval.hits.is_empty() {
+                    tracing::debug!("ask: no search hits, falling back to timeline sampling");
+                    if let Ok(timeline_response) = self.build_timeline_fallback_response(
+                        &request,
+                        &search_request,
+                        retrieval.elapsed_ms,
+                    ) {
+                        more_candidates |= timeline_response.next_cursor.is_some();
+                        if !timeline_response.hits.is_empty() {
+                            retrieval = timeline_response;
+                            timeline_fallback_used = true;
+                        }
+                    }
+                }
+            }
+
+            // Build multiple candidate lists (lexical variants + vector) and fuse with RRF.
+            let mut candidate_lists: Vec<Vec<SearchHit>> = Vec::new();
+            let mut vector_used = false;
+
+            // For analytical questions, use timeline directly (skip RRF mixing with search)
+            // This ensures full-text hits are preserved - search hits are truncated and would
+            // replace timeline hits in RRF due to rank comparison
+            if is_analytical {
+                // Create a modified request with a large top_k to retrieve the full timeline
+                // Analytical questions need to see ALL time periods to detect changes/reversions
+                let mut analytical_request = request.clone();
+                analytical_request.top_k = effective_top_k;
+                if let Ok(timeline_response) = self.build_timeline_fallback_response(
+                    &analytical_request,
+                    &search_request,
+                    retrieval.elapsed_ms,
+                ) {
+                    more_candidates |= timeline_response.next_cursor.is_some();
+                    if !timeline_response.hits.is_empty() {
+                        tracing::debug!(
+                            "analytical question: using {} timeline documents (full text) as primary context",
+                            timeline_response.hits.len()
+                        );
+                        // For analytical questions, use ONLY timeline hits (with full text)
+                        // Skip mixing with search hits which have truncated text
+                        candidate_lists.push(timeline_response.hits);
+                    }
+                }
+            } else {
+                // For non-analytical questions, add search hits to candidate list
+                candidate_lists.push(retrieval.hits.clone());
+            }
+
+            // OR-expanded lexical query even when base has hits to widen recall.
+            // Skip for analytical questions - they use timeline directly with full text
+            if !is_analytical {
                 if let Some(or_query) = build_disjunctive_query(&primary_tokens) {
                     if or_query != search_request.query {
                         let mut or_request = search_request.clone();
                         or_request.query = or_query.clone();
                         let mut or_response = self.search(or_request)?;
+                        more_candidates |= or_response.next_cursor.is_some();
                         self.filter_hits_in_time_range(
                             &mut or_response.hits,
                             request.start,
@@ -168,240 +297,148 @@ impl Memvid {
                             &mut or_response.total_hits,
                         )?;
                         if !or_response.hits.is_empty() {
-                            retrieval = or_response;
-                            search_request.query = or_query;
-                            lex_fallback_used = true;
+                            candidate_lists.push(or_response.hits);
                         }
                     }
                 }
-            }
-            if retrieval.hits.is_empty() {
-                if let Some(fallback_query) = lexical_fallback_query(&request.question) {
-                    if fallback_query != search_request.query {
-                        let mut fallback_request = search_request.clone();
-                        fallback_request.query = fallback_query.clone();
-                        let mut fallback_response = self.search(fallback_request)?;
-                        self.filter_hits_in_time_range(
-                            &mut fallback_response.hits,
-                            request.start,
-                            request.end,
-                            &mut fallback_response.total_hits,
-                        )?;
-                        if !fallback_response.hits.is_empty() {
-                            retrieval = fallback_response;
-                            search_request.query = fallback_query;
-                            lex_fallback_used = true;
-                        }
-                    }
-                }
-            }
-            // Expanded query fallback: try singular/plural variants for better recall
-            if retrieval.hits.is_empty() {
-                let expanded_queries = build_expanded_queries(&primary_tokens);
-                for expanded_query in expanded_queries {
-                    if expanded_query != search_request.query {
-                        let mut expanded_request = search_request.clone();
-                        expanded_request.query = expanded_query.clone();
-                        let mut expanded_response = self.search(expanded_request)?;
-                        self.filter_hits_in_time_range(
-                            &mut expanded_response.hits,
-                            request.start,
-                            request.end,
-                            &mut expanded_response.total_hits,
-                        )?;
-                        if !expanded_response.hits.is_empty() {
-                            retrieval = expanded_response;
-                            search_request.query = expanded_query;
-                            lex_fallback_used = true;
-                            break;
-                        }
-                    }
-                }
-            }
-            // Timeline fallback: if still no hits, sample from timeline to provide context
-            if retrieval.hits.is_empty() {
-                tracing::debug!("ask: no search hits, falling back to timeline sampling");
-                if let Ok(timeline_response) = self.build_timeline_fallback_response(
-                    &request,
-                    &search_request,
-                    retrieval.elapsed_ms,
-                ) {
-                    if !timeline_response.hits.is_empty() {
-                        retrieval = timeline_response;
-                        timeline_fallback_used = true;
-                    }
-                }
-            }
-        }
 
-        // Build multiple candidate lists (lexical variants + vector) and fuse with RRF.
-        let mut candidate_lists: Vec<Vec<SearchHit>> = Vec::new();
-        let mut vector_used = false;
-
-        // For analytical questions, use timeline directly (skip RRF mixing with search)
-        // This ensures full-text hits are preserved - search hits are truncated and would
-        // replace timeline hits in RRF due to rank comparison
-        if is_analytical {
-            // Create a modified request with a large top_k to retrieve the full timeline
-            // Analytical questions need to see ALL time periods to detect changes/reversions
-            let mut analytical_request = request.clone();
-            analytical_request.top_k = effective_top_k;
-            if let Ok(timeline_response) = self.build_timeline_fallback_response(
-                &analytical_request,
-                &search_request,
-                retrieval.elapsed_ms,
-            ) {
-                if !timeline_response.hits.is_empty() {
-                    tracing::debug!(
-                        "analytical question: using {} timeline documents (full text) as primary context",
-                        timeline_response.hits.len()
-                    );
-                    // For analytical questions, use ONLY timeline hits (with full text)
-                    // Skip mixing with search hits which have truncated text
-                    candidate_lists.push(timeline_response.hits);
-                }
-            }
-        } else {
-            // For non-analytical questions, add search hits to candidate list
-            candidate_lists.push(retrieval.hits.clone());
-        }
-
-        // OR-expanded lexical query even when base has hits to widen recall.
-        // Skip for analytical questions - they use timeline directly with full text
-        if !is_analytical {
-            if let Some(or_query) = build_disjunctive_query(&primary_tokens) {
-                if or_query != search_request.query {
-                    let mut or_request = search_request.clone();
-                    or_request.query = or_query.clone();
-                    let mut or_response = self.search(or_request)?;
-                    self.filter_hits_in_time_range(
-                        &mut or_response.hits,
-                        request.start,
-                        request.end,
-                        &mut or_response.total_hits,
+                // Vector-only candidate list.
+                if self.vec_enabled && query_embedding.is_some() {
+                    let (vec_hits, vector_more) = vector_hits(
+                        self,
+                        query_embedding.as_deref().unwrap_or(&[]),
+                        &request,
+                        effective_top_k.max(24),
                     )?;
-                    if !or_response.hits.is_empty() {
-                        candidate_lists.push(or_response.hits);
+                    more_candidates |= vector_more;
+                    if !vec_hits.is_empty() {
+                        candidate_lists.push(vec_hits);
+                        vector_used = true;
                     }
                 }
             }
 
-            // Vector-only candidate list.
-            if self.vec_enabled && query_embedding.is_some() {
-                let vec_hits = vector_hits(
+            // Search for corrections that might be relevant to the question
+            // Corrections have high priority and should override older information
+            if !primary_tokens.is_empty() {
+                let correction_query = format!(
+                    "uri:mv2://correction/* AND ({})",
+                    primary_tokens.join(" OR ")
+                );
+                let mut correction_request = search_request.clone();
+                correction_request.query = correction_query;
+                correction_request.top_k = effective_top_k;
+                if let Ok(correction_response) = self.search(correction_request) {
+                    more_candidates |= correction_response.next_cursor.is_some();
+                    if !correction_response.hits.is_empty() {
+                        tracing::debug!(
+                            "found {} potential corrections for question",
+                            correction_response.hits.len()
+                        );
+                        candidate_lists.push(correction_response.hits);
+                    }
+                }
+            }
+
+            // Fuse all candidates with RRF and rebuild retrieval.
+            if let Some(fused) = fuse_hits_rrf(candidate_lists, effective_top_k.max(24)) {
+                retrieval.hits = fused;
+                retrieval.total_hits = retrieval.hits.len();
+                if vector_used {
+                    retrieval.engine = SearchEngineKind::Hybrid;
+                }
+            }
+
+            if lex_fallback_used && !primary_tokens.is_empty() {
+                tracing::debug!(
+                    "lex fallback reordering with {} primary tokens",
+                    primary_tokens.len()
+                );
+                reorder_hits_by_token_matches(&mut retrieval.hits, &primary_tokens);
+                if let Some(best_idx) = retrieval
+                    .hits
+                    .iter()
+                    .position(|hit| tokens_present_in_hit(hit, &primary_tokens))
+                {
+                    if best_idx != 0 {
+                        retrieval.hits.swap(0, best_idx);
+                    }
+                }
+                retrieval.context = build_context(&retrieval.hits);
+            }
+
+            if is_update_question(&request.question) || is_recency {
+                promote_temporal_extremes(
                     self,
-                    query_embedding.as_deref().unwrap_or(&[]),
-                    &request,
-                    effective_top_k.max(24),
+                    &mut retrieval.hits,
+                    is_update_question(&request.question),
                 )?;
-                if !vec_hits.is_empty() {
-                    candidate_lists.push(vec_hits);
-                    vector_used = true;
-                }
             }
-        }
 
-        // Search for corrections that might be relevant to the question
-        // Corrections have high priority and should override older information
-        if !primary_tokens.is_empty() {
-            let correction_query = format!(
-                "uri:mv2://correction/* AND ({})",
-                primary_tokens.join(" OR ")
-            );
-            let mut correction_request = search_request.clone();
-            correction_request.query = correction_query;
-            correction_request.top_k = 10; // Limit to 10 corrections
-            if let Ok(correction_response) = self.search(correction_request) {
-                if !correction_response.hits.is_empty() {
-                    tracing::debug!(
-                        "found {} potential corrections for question",
-                        correction_response.hits.len()
-                    );
-                    candidate_lists.push(correction_response.hits);
-                }
+            // For aggregation questions, diversify hits to ensure unique sessions are represented
+            if is_aggregation && retrieval.hits.len() > request.top_k {
+                tracing::debug!(
+                    "aggregation question detected: diversifying {} hits to {} unique sessions",
+                    retrieval.hits.len(),
+                    request.top_k
+                );
+                diversify_hits_for_aggregation(&mut retrieval.hits, request.top_k);
+                retrieval.total_hits = retrieval.hits.len();
             }
-        }
 
-        // Fuse all candidates with RRF and rebuild retrieval.
-        if let Some(fused) = fuse_hits_rrf(candidate_lists, effective_top_k.max(24)) {
-            retrieval.hits = fused;
-            retrieval.total_hits = retrieval.hits.len();
-            if vector_used {
-                retrieval.engine = SearchEngineKind::Hybrid;
+            let mut semantic_scores: HashMap<u64, f32> = HashMap::new();
+            let semantics_applied = if request.mode == AskMode::Lex {
+                false
+            } else {
+                self.apply_semantic_ranking(
+                    embedder,
+                    &request,
+                    &mut retrieval.hits,
+                    &mut semantic_scores,
+                    query_embedding.as_deref(),
+                )?
+            };
+
+            if semantics_applied && (is_update_question(&request.question) || is_recency) {
+                promote_temporal_extremes(
+                    self,
+                    &mut retrieval.hits,
+                    is_update_question(&request.question),
+                )?;
             }
-        }
 
-        if lex_fallback_used && !primary_tokens.is_empty() {
-            tracing::debug!(
-                "lex fallback reordering with {} primary tokens",
-                primary_tokens.len()
-            );
-            reorder_hits_by_token_matches(&mut retrieval.hits, &primary_tokens);
-            if let Some(best_idx) = retrieval
-                .hits
-                .iter()
-                .position(|hit| tokens_present_in_hit(hit, &primary_tokens))
-            {
-                if best_idx != 0 {
-                    retrieval.hits.swap(0, best_idx);
-                }
-            }
-            retrieval.context = build_context(&retrieval.hits);
-        }
+            // Apply correction boost AFTER all other reranking - corrections should have final priority
+            // This ensures user corrections override all other ranking signals
+            promote_corrections(self, &mut retrieval.hits)?;
 
-        if is_update_question(&request.question) || is_recency {
-            promote_temporal_extremes(
-                self,
+            self.apply_acl_to_search_hits(
                 &mut retrieval.hits,
-                is_update_question(&request.question),
+                request.acl_context.as_ref(),
+                request.acl_enforcement_mode,
             )?;
-        }
+            if request.acl_enforcement_mode == crate::types::AclEnforcementMode::Enforce {
+                retrieval.total_hits = retrieval.hits.len();
+            }
 
-        // For aggregation questions, diversify hits to ensure unique sessions are represented
-        if is_aggregation && retrieval.hits.len() > request.top_k {
-            tracing::debug!(
-                "aggregation question detected: diversifying {} hits to {} unique sessions",
-                retrieval.hits.len(),
-                request.top_k
-            );
-            diversify_hits_for_aggregation(&mut retrieval.hits, request.top_k);
-            retrieval.total_hits = retrieval.hits.len();
-        }
-
-        let retrieval_ms = retrieval.elapsed_ms;
-        let mut semantic_scores: HashMap<u64, f32> = HashMap::new();
-        let semantics_applied = if request.mode == AskMode::Lex {
-            false
-        } else {
-            self.apply_semantic_ranking(
-                embedder,
-                &request,
+            self.filter_hits_in_time_range(
                 &mut retrieval.hits,
-                &mut semantic_scores,
-                query_embedding.as_deref(),
-            )?
+                request.start,
+                request.end,
+                &mut retrieval.total_hits,
+            )?;
+            let wanted = offset.saturating_add(page_size).saturating_add(1);
+            if retrieval.hits.len() >= wanted || !more_candidates || request.top_k == usize::MAX {
+                break (
+                    retrieval,
+                    semantic_scores,
+                    semantics_applied,
+                    lex_fallback_used,
+                    timeline_fallback_used,
+                );
+            }
+            request.top_k = request.top_k.saturating_mul(2);
         };
-
-        if semantics_applied && (is_update_question(&request.question) || is_recency) {
-            promote_temporal_extremes(
-                self,
-                &mut retrieval.hits,
-                is_update_question(&request.question),
-            )?;
-        }
-
-        // Apply correction boost AFTER all other reranking - corrections should have final priority
-        // This ensures user corrections override all other ranking signals
-        promote_corrections(self, &mut retrieval.hits)?;
-
-        self.apply_acl_to_search_hits(
-            &mut retrieval.hits,
-            request.acl_context.as_ref(),
-            request.acl_enforcement_mode,
-        )?;
-        if request.acl_enforcement_mode == crate::types::AclEnforcementMode::Enforce {
-            retrieval.total_hits = retrieval.hits.len();
-        }
+        let retrieval_ms = total_start.elapsed().as_millis();
 
         let end = offset.saturating_add(page_size);
         retrieval.next_cursor = (retrieval.hits.len() > end).then(|| end.to_string());
@@ -685,13 +722,14 @@ impl Memvid {
 
         let context = context_parts.join("\n\n");
         let total_hits = hits.len();
+        let next_cursor = (entries.len() >= request.top_k).then(|| request.top_k.to_string());
 
         Ok(SearchResponse {
             query: search_request.query.clone(),
             hits,
             total_hits,
             context,
-            next_cursor: None,
+            next_cursor,
             engine: SearchEngineKind::LexFallback, // Mark as fallback
             elapsed_ms,
             params: SearchParams {
@@ -1376,32 +1414,15 @@ fn vector_hits(
     query_embedding: &[f32],
     request: &AskRequest,
     limit: usize,
-) -> Result<Vec<SearchHit>> {
+) -> Result<(Vec<SearchHit>, bool)> {
     if !memvid.vec_enabled || query_embedding.is_empty() {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), false));
     }
 
-    // Use adaptive retrieval if configured
-    if let Some(ref adaptive_config) = request.adaptive {
-        if adaptive_config.enabled {
-            let result = memvid.search_adaptive_acl(
-                &request.question,
-                query_embedding,
-                adaptive_config.clone(),
-                request.snippet_chars,
-                request.scope.as_deref(),
-                request.acl_context.as_ref(),
-                request.acl_enforcement_mode,
-            )?;
-            tracing::debug!(
-                "adaptive retrieval: {} -> {} results ({})",
-                result.stats.total_considered,
-                result.stats.returned,
-                result.stats.triggered_by
-            );
-            return Ok(result.results);
-        }
-    }
+    // Adaptive ranking remains a heuristic; it must not hide engine exhaustion
+    // from the outer page-filling loop or freeze its candidate width.
+    let adaptive = request.adaptive.as_ref().filter(|config| config.enabled);
+    let limit = adaptive.map_or(limit, |config| limit.max(config.max_results));
 
     let filter = SearchRequest {
         query_embedding: None,
@@ -1426,7 +1447,7 @@ fn vector_hits(
         acl_context: request.acl_context.clone(),
         acl_enforcement_mode: request.acl_enforcement_mode,
     };
-    let vec_response = memvid.vec_search_page(
+    let mut vec_response = memvid.vec_search_page(
         &request.question,
         query_embedding,
         limit,
@@ -1438,7 +1459,18 @@ fn vector_hits(
         Some(&filter),
     )?;
 
-    Ok(vec_response.hits)
+    if let Some(config) = adaptive {
+        let scores: Vec<_> = vec_response
+            .hits
+            .iter()
+            .filter_map(|hit| hit.score)
+            .collect();
+        if !scores.is_empty() {
+            let (cutoff, _) = crate::types::find_adaptive_cutoff(&scores, config);
+            vec_response.hits.truncate(cutoff);
+        }
+    }
+    Ok((vec_response.hits, vec_response.next_cursor.is_some()))
 }
 
 /// Fuse multiple hit lists using Reciprocal Rank Fusion.

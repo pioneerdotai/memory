@@ -276,3 +276,104 @@ fn lexical_continuation_reaches_later_snippets_of_one_document() {
     }
     assert_eq!(ranges.len(), 8);
 }
+
+#[test]
+fn ask_pages_grow_past_duplicate_snippets_before_later_sources() {
+    let dir = TempDir::new().unwrap();
+    let mut mem = Memvid::create(dir.path().join("ask-snippets.mv2")).unwrap();
+    mem.enable_lex().unwrap();
+    let repeated = format!("needle. {}", "padding. ".repeat(30)).repeat(12);
+    let mut expected = std::collections::HashSet::new();
+    expected.insert(mem.put_bytes(repeated.as_bytes()).unwrap());
+    for i in 0..3 {
+        let text = format!("needle {}", "padding ".repeat(1000));
+        expected.insert(
+            mem.put_bytes_with_options(
+                text.as_bytes(),
+                PutOptions::builder()
+                    .uri(format!("mv2://later/{i}"))
+                    .build(),
+            )
+            .unwrap(),
+        );
+    }
+    mem.commit().unwrap();
+    let mut cursor = None;
+    let mut seen = std::collections::HashSet::new();
+    for page in 0..2 {
+        let req: memvid_core::AskRequest = serde_json::from_value(serde_json::json!({
+            "question": "needle", "top_k": 2, "snippet_chars": 80,
+            "context_only": true, "mode": "lex", "cursor": cursor,
+        }))
+        .unwrap();
+        let response = mem.ask::<dyn memvid_core::VecEmbedder>(req, None).unwrap();
+        assert_eq!(response.retrieval.hits.len(), 2);
+        for hit in response.retrieval.hits {
+            assert!(seen.insert(hit.frame_id));
+        }
+        cursor = response.retrieval.next_cursor;
+        assert_eq!(cursor.is_none(), page == 1);
+    }
+    assert_eq!(seen, expected);
+}
+
+#[test]
+#[cfg(not(feature = "temporal_track"))]
+fn ask_pages_grow_past_timestamp_postfilters_before_later_sources() {
+    // Without temporal_track, ask's timestamp checks are strictly post-retrieval.
+    let dir = TempDir::new().unwrap();
+    let mut mem = Memvid::create(dir.path().join("ask-time.mv2")).unwrap();
+    mem.enable_lex().unwrap();
+    let first = mem
+        .put_bytes_with_options(
+            b"needle",
+            PutOptions {
+                timestamp: Some(200),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    for _ in 0..40 {
+        mem.put_bytes_with_options(
+            b"needle padding",
+            PutOptions {
+                timestamp: Some(50),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    }
+    let mut expected: std::collections::HashSet<_> = [first].into_iter().collect();
+    for i in 0..3 {
+        let text = format!("needle {}", "padding ".repeat(100));
+        expected.insert(
+            mem.put_bytes_with_options(
+                text.as_bytes(),
+                PutOptions {
+                    timestamp: Some(200),
+                    uri: Some(format!("mv2://later/{i}")),
+                    ..Default::default()
+                },
+            )
+            .unwrap(),
+        );
+    }
+    mem.commit().unwrap();
+    let mut cursor = None;
+    let mut seen = std::collections::HashSet::new();
+    for page in 0..2 {
+        let req: memvid_core::AskRequest = serde_json::from_value(serde_json::json!({
+            "question": "needle", "top_k": 2, "snippet_chars": 80,
+            "context_only": true, "mode": "lex", "start": 100, "cursor": cursor,
+        }))
+        .unwrap();
+        let response = mem.ask::<dyn memvid_core::VecEmbedder>(req, None).unwrap();
+        assert_eq!(response.retrieval.hits.len(), 2);
+        for hit in response.retrieval.hits {
+            assert!(seen.insert(hit.frame_id));
+        }
+        cursor = response.retrieval.next_cursor;
+        assert_eq!(cursor.is_none(), page == 1);
+    }
+    assert_eq!(seen, expected);
+}

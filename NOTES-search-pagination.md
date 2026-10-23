@@ -66,10 +66,11 @@ ceiling were removed; the requested prefix determines retrieval width.
 
 ## Requirement map
 
-- A: `src/vec.rs`: zero/empty exits; output buffer bounded by graph size and
-  requested limit; search width at least the output size (minimum 50, capped by
-  graph size); only the returned neighbor slice is converted to hits. No panic
-  catching or result ceiling of 50.
+- A: `src/vec.rs`: zero/empty exits; ANN graph traversal with an empty output
+  destination (safe even for a short actual neighbor pool); collect metric
+  evaluations through Memvid's own metric and rank only visited candidates.
+  Search width is max(50, requested), capped by graph size. No panic catching,
+  result ceiling of 50, or full-corpus distance scan.
 - B: `src/memvid/search/api.rs`: growing vector candidate prefixes, active-frame
   and scope checks, request URI/replay/temporal filters when supplied, ACL before
   deciding whether a page is full, positional cursor, and continuation.
@@ -98,9 +99,10 @@ or saved full result set. Deeper pages and extensive rejections cost more intern
 work. Candidate windows grow by two rather than imposing a fixed corpus ceiling.
 The minimum internal starting prefix is 32 for vector/hybrid and 20 documents for
 Tantivy; these are service quanta, not maximum searched counts. Vector snippets
-retain the existing minimum of 80 characters. Existing ask correction retrieval
-still uses its separate 10-correction heuristic; ordinary `search` does not use it.
-There is no new query-length limit or page-size maximum in Memvid.
+retain the existing minimum of 80 characters. Ask correction retrieval now grows
+with the shared prefix, so its former 10-correction window cannot hide later
+eligible corrections. There is no new query-length limit or page-size maximum
+in Memvid.
 Pioneer owns its 100-fragment/2 MiB output policy and current-source authorization.
 
 ## Written regressions (NOT RUN)
@@ -179,3 +181,106 @@ git -c core.hooksPath=/dev/null commit -m "fix(search): paginate filtered lexica
 This is a local implementation candidate for complete external review, not an
 acceptance claim. The new Memvid revision is not published on GitHub; a separate
 authorized publication is required before an external Git consumer can fetch it.
+
+
+## Revision round 1 — postfilter completion and short HNSW pools
+
+Previous candidate commit: `da735d06816032c718df419fedd9fe4c23ada633`.
+The public API contract above is unchanged by this revision.
+
+### Corrected page completion
+
+`ask_unpaged` now retains engine continuation flags before time/ACL postfilters
+and RRF source deduplication. If fewer than offset + page size + one eligible
+sources remain while any participating engine still has candidates, it doubles
+the prefix and repeats retrieval internally. Query embedding is computed before
+this loop and reused. Synthesis/citations/context are still generated only for
+the final requested page. The retry block wraps existing answer-oriented query
+heuristics; raw `search` remains separate and does not acquire those heuristics.
+
+Vector recall uses the existing shared `vec_search_page` primitive and carries
+its continuation flag. Optional adaptive ranking still applies its configured
+score cutoff, but its retrieval width grows with the requested prefix and the
+underlying engine continuation is preserved. Corrections use the growing prefix.
+Timeline fallback signals a full service window so it can grow too; a full window
+is not asserted to be the true end. Final time checks also cover correction and
+timeline candidates before page completion is decided.
+
+### HNSW dependency contract
+
+Source inspection confirmed a healthy graph can have fewer reachable neighbors
+than either ef_search or graph.len(), notably when equal distances prevent reverse
+edges from replacing full neighbor lists. Merely clamping the destination to
+min(requested, graph.len()) was therefore insufficient.
+
+The new adapter calls the public `nearest` method with an empty destination. In
+hnsw 0.11 `found = min(dest.len(), searcher.nearest.len())` is then always zero,
+so `dest.copy_from_slice(&nearest[..found])` has matching lengths for every actual
+pool size. Its graph traversal is independent of destination length. Memvid's
+existing Euclidean metric observes the candidate references/distances evaluated
+by that traversal; it does not inspect Searcher's private fields. The result is
+the best requested number of actually visited candidates, potentially fewer
+when the reachable pool is short. ANN order may differ from the former pool-only
+selection, which is within the allowed approximate semantics.
+
+A per-index lazy scalar map associates addresses of publicly borrowed
+`graph.feature(i)` references with existing frame IDs. It never dereferences
+stored addresses and assumes no private object layout, pointer offset, debug
+format, or serialization layout. The graph is immutable after construction.
+Cloning resets this map; deserialization defaults it empty. The field is
+`serde(skip)`, leaving the stored three-field HNSW representation unchanged.
+The first query creates O(number of graph features) scalar identity entries;
+queries do not export or clone all vectors or compute full-corpus distances.
+Only ANN's actual metric evaluations are ranked. Query observation is thread-local
+scratch, cleared by a Drop guard, not a query/vector cache.
+
+### Additional regressions (NOT RUN)
+
+- `src/memvid/search/tantivy.rs::tests::postfilter_rejections_do_not_end_the_initial_document_window`:
+  120 strongly ranked Tantivy documents remain indexed while authoritative
+  frame.search_text is changed to unrelated text. No scope/filter pushdown is
+  used. Thirteen later eligible sources remain reachable through pages 5/5/3,
+  with engine=Tantivy and exact eligible frame IDs.
+- `tests/search_pagination.rs::ask_pages_grow_past_duplicate_snippets_before_later_sources`:
+  multiple initial snippets collapse into one source; later sources still fill
+  two pages of two, with no premature EOF.
+- `ask_pages_grow_past_timestamp_postfilters_before_later_sources`:
+  one early eligible source, forty timestamp-rejected candidates, then three
+  later eligible sources; pages 2/2. This regression is gated to no temporal_track,
+  where timestamp filtering is necessarily after lexical retrieval. The duplicate
+  snippet regression covers all lex feature configurations.
+- `src/vec.rs::tests::hnsw_short_neighbor_pool_and_cloned_decoded_indexes_are_safe`:
+  1100 identical embeddings inserted through the real HNSW builder produce a
+  short reachable pool; requests 1100 and 1200 return its actual valid neighbors
+  without panic. Cloned and decoded indexes remain searchable. Serialized bytes
+  after populating the transient map equal the legacy three-field representation.
+
+### Revision audit and exact validation commands
+
+Re-read the full substantive diff using `git diff -w -- src/memvid/ask.rs` and
+all four changed code/test paths. Inspected hnsw 0.11 nearest/search_layer,
+search_zero_layer/search_single_layer, initialize_searcher, add_neighbor,
+and public feature lookup contracts from the installed source without editing
+it. Checked vector_hits callers, all engine-continuation capture points, timestamp
+postfilters, adaptive handling, clone/serde behavior, and optional feature gates.
+The former scope integration test remains coverage for scope pagination; the new
+authoritative-text unit test specifically owns post-retrieval window rejection.
+
+Revision validation commands:
+
+```text
+cargo +1.98.1 fmt
+cargo +1.98.1 fmt --check
+git diff --check
+git diff -w -- src/memvid/ask.rs
+git diff -- src/vec.rs src/memvid/search/tantivy.rs tests/search_pagination.rs NOTES-search-pagination.md
+git add src/vec.rs src/memvid/ask.rs src/memvid/search/tantivy.rs tests/search_pagination.rs NOTES-search-pagination.md
+git -c core.hooksPath=/dev/null commit -m "fix(search): fill ask pages after postfilters and safely collect ANN candidates"
+git diff HEAD^ HEAD --check
+git status --short --branch
+git rev-parse HEAD
+```
+
+All test cases remain unexecuted. No compiler, build, project code, app, agent,
+example, benchmark, schema generator, hook, CI, or publication was run.
+Компилируемость и прохождение тестов не подтверждены.
