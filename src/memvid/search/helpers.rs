@@ -46,7 +46,7 @@ pub(super) fn timestamp_to_rfc3339(timestamp: i64) -> Option<String> {
         })
 }
 
-pub(super) fn parse_cursor(cursor: Option<&str>, total_hits: usize) -> Result<usize> {
+pub(crate) fn parse_cursor(cursor: Option<&str>, total_hits: usize) -> Result<usize> {
     let Some(token) = cursor else {
         return Ok(0);
     };
@@ -470,5 +470,18 @@ mod unicode_occurrence_tests {
             .map(|&(start, end)| &content[start..end])
             .collect();
         assert_eq!(matched, ["İ", "K", "ПРИМУ", "ΟΣ"]);
+    }
+}
+
+pub(super) fn uri_matches(candidate: Option<&str>, expected: &str) -> bool {
+    let Some(uri) = candidate else {
+        return false;
+    };
+    if expected.contains('#') {
+        uri.eq_ignore_ascii_case(expected)
+    } else {
+        let expected_lower = expected.to_ascii_lowercase();
+        let candidate_lower = uri.to_ascii_lowercase();
+        candidate_lower.starts_with(&expected_lower)
     }
 }

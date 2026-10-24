@@ -60,6 +60,7 @@ fn main() -> memvid_core::Result<()> {
         // Warm up
         for _ in 0..10 {
             let _ = mem.search(SearchRequest {
+                query_embedding: None,
                 query: query.to_string(),
                 top_k: 100,
                 snippet_chars: 200,
@@ -85,6 +86,7 @@ fn main() -> memvid_core::Result<()> {
 
         for _ in 0..iterations {
             let results = mem.search(SearchRequest {
+                query_embedding: None,
                 query: query.to_string(),
                 top_k: 100,
                 snippet_chars: 200,

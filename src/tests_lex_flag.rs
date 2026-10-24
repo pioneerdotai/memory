@@ -23,6 +23,7 @@ mod tests {
                     let opts = PutOptions::builder()
                         .uri(format!("mv2://doc/{i}"))
                         .search_text(content.clone())
+                        .extract_triplets(false)
                         .build();
                     mem.put_bytes_with_options(content.as_bytes(), opts)
                         .unwrap();
@@ -58,6 +59,7 @@ mod tests {
 
                 let resp = mem
                     .search(SearchRequest {
+                        query_embedding: None,
                         query: "artificial intelligence".into(),
                         top_k: 10,
                         snippet_chars: 200,
@@ -137,6 +139,7 @@ mod tests {
                 let mut mem = wrapper.lock().unwrap();
                 let resp = mem
                     .search(SearchRequest {
+                        query_embedding: None,
                         query: "login".into(),
                         top_k: 10,
                         snippet_chars: 200,
@@ -191,6 +194,7 @@ mod tests {
 
             let resp = mem
                 .search(SearchRequest {
+                    query_embedding: None,
                     query: "login".into(),
                     top_k: 10,
                     snippet_chars: 200,

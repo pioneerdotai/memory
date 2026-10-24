@@ -86,6 +86,7 @@ fn main() -> Result<()> {
 
     // Search for "memvid"
     let request = SearchRequest {
+        query_embedding: None,
         query: "memvid".to_string(),
         top_k: 10,
         snippet_chars: 200,
@@ -117,6 +118,7 @@ fn main() -> Result<()> {
 
     // Search within a scope
     let request = SearchRequest {
+        query_embedding: None,
         query: "documentation".to_string(),
         top_k: 10,
         snippet_chars: 100,

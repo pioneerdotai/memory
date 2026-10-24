@@ -86,6 +86,7 @@ fn build_commit_each(path: &Path, count: usize, reopen_each: bool) -> u64 {
 fn lexical_uris(mem: &mut Memvid, query: &str) -> Vec<String> {
     let mut uris = mem
         .search(SearchRequest {
+            query_embedding: None,
             query: query.to_string(),
             top_k: 64,
             snippet_chars: 120,

@@ -8,6 +8,7 @@ use tempfile::TempDir;
 #[cfg(feature = "lex")]
 fn search_uris(mem: &mut Memvid, query: &str, top_k: usize) -> Vec<String> {
     mem.search(memvid_core::SearchRequest {
+        query_embedding: None,
         query: query.to_string(),
         top_k,
         snippet_chars: 160,
@@ -311,6 +312,7 @@ fn reopen_per_append_keeps_single_compact_index_layer() {
     assert!(stats.has_lex_index, "lex index should be persisted");
 
     let result = mem.search(memvid_core::SearchRequest {
+        query_embedding: None,
         query: "reopen amplification regression".into(),
         top_k: 5,
         snippet_chars: 160,
@@ -378,6 +380,7 @@ fn reopen_append_after_skip_finalize_keeps_indexes_searchable() {
 
     let response = mem
         .search(memvid_core::SearchRequest {
+            query_embedding: None,
             query: "reopenedmarker".into(),
             top_k: 5,
             snippet_chars: 160,
@@ -447,6 +450,7 @@ fn reopen_delete_then_append_keeps_tombstone_and_search_consistent() {
     let mut mem = Memvid::open_read_only(&path).unwrap();
     let deleted = mem
         .search(memvid_core::SearchRequest {
+            query_embedding: None,
             query: "onlyword".into(),
             top_k: 5,
             snippet_chars: 120,
@@ -469,6 +473,7 @@ fn reopen_delete_then_append_keeps_tombstone_and_search_consistent() {
 
     let live = mem
         .search(memvid_core::SearchRequest {
+            query_embedding: None,
             query: "new live append".into(),
             top_k: 5,
             snippet_chars: 120,
@@ -520,6 +525,7 @@ fn reopen_append_preserves_existing_search_ranking() {
         let mut mem = Memvid::open_read_only(&path).unwrap();
         let response = mem
             .search(memvid_core::SearchRequest {
+                query_embedding: None,
                 query: "alpha beta".into(),
                 top_k: 10,
                 snippet_chars: 160,
@@ -562,6 +568,7 @@ fn reopen_append_preserves_existing_search_ranking() {
         let mut mem = Memvid::open_read_only(&path).unwrap();
         let response = mem
             .search(memvid_core::SearchRequest {
+                query_embedding: None,
                 query: "alpha beta".into(),
                 top_k: 10,
                 snippet_chars: 160,
@@ -764,6 +771,7 @@ fn reopen_append_keeps_temporal_filter_searchable() {
     let mut mem = Memvid::open_read_only(&path).unwrap();
     let response = mem
         .search(memvid_core::SearchRequest {
+            query_embedding: None,
             query: "temporal regression".into(),
             top_k: 10,
             snippet_chars: 120,

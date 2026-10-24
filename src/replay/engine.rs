@@ -225,6 +225,7 @@ impl<'a> ReplayEngine<'a> {
                         // Re-execute the search using the search() API which handles
                         // both lex-only and hybrid search modes
                         let search_request = crate::types::SearchRequest {
+                            query_embedding: None,
                             query: query.clone(),
                             top_k: replay_top_k,
                             snippet_chars: 120,

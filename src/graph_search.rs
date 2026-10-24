@@ -316,6 +316,7 @@ pub fn hybrid_search(memvid: &mut Memvid, plan: &QueryPlan) -> Result<Vec<Hybrid
             // Fall back to regular lexical search
             let query = query_text.as_deref().unwrap_or("");
             let request = SearchRequest {
+                query_embedding: None,
                 query: query.to_string(),
                 top_k: *top_k,
                 snippet_chars: 200,
@@ -382,6 +383,7 @@ pub fn hybrid_search(memvid: &mut Memvid, plan: &QueryPlan) -> Result<Vec<Hybrid
                 // No graph matches - fall back to lexical search
                 let query = query_text.as_deref().unwrap_or("");
                 let request = SearchRequest {
+                    query_embedding: None,
                     query: query.to_string(),
                     top_k: *top_k,
                     snippet_chars: 200,

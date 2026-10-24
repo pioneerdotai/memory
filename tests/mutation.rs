@@ -36,6 +36,7 @@ fn put_bytes_basic() {
 
     let _frame_id = mem.put_bytes_with_options(b"Hello, World!", opts).unwrap();
     mem.commit().unwrap();
+    drop(mem);
 
     // Verify frame was created
     // Verify frame was created (FrameId is u64 so >= 0 is implied)
@@ -277,6 +278,7 @@ fn embedding_identity_summary_unknown_when_missing() {
     mem.put_bytes_with_options(b"hello", PutOptions::default())
         .unwrap();
     mem.commit().unwrap();
+    drop(mem);
 
     let mem = Memvid::open_read_only(&path).unwrap();
     assert_eq!(
@@ -302,6 +304,7 @@ fn embedding_identity_summary_single() {
     );
     mem.put_bytes_with_options(b"hello", options).unwrap();
     mem.commit().unwrap();
+    drop(mem);
 
     let mem = Memvid::open_read_only(&path).unwrap();
     match mem.embedding_identity_summary(1_000) {
@@ -343,6 +346,7 @@ fn embedding_identity_summary_mixed() {
     mem.put_bytes_with_options(b"b", options_b).unwrap();
 
     mem.commit().unwrap();
+    drop(mem);
 
     let mem = Memvid::open_read_only(&path).unwrap();
     match mem.embedding_identity_summary(1_000) {

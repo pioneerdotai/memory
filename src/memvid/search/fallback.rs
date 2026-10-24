@@ -76,7 +76,10 @@ pub(super) fn search_with_lex_fallback(
 
     let matches: Vec<LexMatch> = index.compute_matches(query_tokens, uri_filter, scope_filter);
     let snippet_window = request.snippet_chars.max(80);
-    let max_snippets_per_doc = request.top_k.max(1);
+    let offset_hint = parse_cursor(request.cursor.as_deref(), usize::MAX)?;
+    let max_snippets_per_doc = offset_hint
+        .saturating_add(request.top_k.max(1))
+        .saturating_add(1);
 
     let mut evaluated = Vec::new();
     let mut stale_skips = 0u32;
@@ -412,6 +415,7 @@ mod tests {
         memvid.toc.frames[id as usize].search_text = Some("unrelated".into());
         let result = memvid
             .search(SearchRequest {
+                query_embedding: None,
                 query: "searchable".into(),
                 top_k: 10,
                 snippet_chars: 160,
@@ -442,6 +446,7 @@ mod tests {
         });
         let parsed = crate::search::parse_query("searchable").unwrap();
         let request = SearchRequest {
+            query_embedding: None,
             query: "searchable".into(),
             top_k: 10,
             snippet_chars: 160,

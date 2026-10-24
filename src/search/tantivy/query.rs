@@ -114,7 +114,14 @@ impl QueryPlanner<'_> {
             TextTerm::Word(word) => self.build_word_query(word),
             TextTerm::Phrase(phrase) => self.build_phrase_query(phrase),
             TextTerm::Wildcard(pattern) => {
-                let regex = pattern.regex.as_str().to_ascii_lowercase();
+                // FST regexes already match a complete term and reject the
+                // explicit anchors used by the authoritative text evaluator.
+                let regex = pattern.regex.as_str();
+                let regex = regex.strip_prefix('^').unwrap_or(regex);
+                let regex = regex
+                    .strip_suffix('$')
+                    .unwrap_or(regex)
+                    .to_ascii_lowercase();
                 let query =
                     RegexQuery::from_pattern(&regex, self.engine.content).map_err(|err| {
                         MemvidError::Tantivy {

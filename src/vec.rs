@@ -230,7 +230,7 @@ impl VecIndex {
 
     #[must_use]
     pub fn search(&self, query: &[f32], limit: usize) -> Vec<VecSearchHit> {
-        if query.is_empty() {
+        if query.is_empty() || limit == 0 {
             return Vec::new();
         }
         match self {
@@ -346,6 +346,27 @@ fn l2_distance(a: &[f32], b: &[f32]) -> f32 {
     crate::simd::l2_distance_simd(a, b)
 }
 
+// hnsw 0.11 cannot safely copy a short result pool into a larger output
+// slice. Observe its metric evaluations instead, keeping the ANN graph walk.
+#[cfg(any(feature = "vec", feature = "hnsw_bench"))]
+thread_local! {
+    static SEARCH_VISITS: std::cell::RefCell<Option<Vec<(usize, u32)>>> = const {
+        std::cell::RefCell::new(None)
+    };
+}
+
+#[cfg(any(feature = "vec", feature = "hnsw_bench"))]
+struct SearchVisitGuard;
+
+#[cfg(any(feature = "vec", feature = "hnsw_bench"))]
+impl Drop for SearchVisitGuard {
+    fn drop(&mut self) {
+        SEARCH_VISITS.with(|visits| {
+            *visits.borrow_mut() = None;
+        });
+    }
+}
+
 #[cfg(any(feature = "vec", feature = "hnsw_bench"))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Euclidean;
@@ -356,17 +377,38 @@ impl Metric<Vec<f32>> for Euclidean {
     fn distance(&self, a: &Vec<f32>, b: &Vec<f32>) -> u32 {
         let d = l2_distance(a, b);
         // Saturating cast prevents overflow for huge distances (though unlikely for embeddings)
-        (d * HNSW_DISTANCE_SCALE).min(u32::MAX as f32) as u32
+        let distance = (d * HNSW_DISTANCE_SCALE).min(u32::MAX as f32) as u32;
+        SEARCH_VISITS.with(|visits| {
+            if let Some(visits) = visits.borrow_mut().as_mut() {
+                visits.push((std::ptr::from_ref(b) as usize, distance));
+            }
+        });
+        distance
     }
 }
 
 #[cfg(any(feature = "vec", feature = "hnsw_bench"))]
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[allow(clippy::unsafe_derive_deserialize)]
 pub struct HnswVecIndex {
     graph: Hnsw<Euclidean, Vec<f32>, Pcg64, 16, 32>,
     ids: Vec<FrameId>,
     dimension: u32,
+    // Only identities of public feature references, never serialized or dereferenced.
+    #[serde(skip)]
+    feature_ids: std::sync::OnceLock<std::collections::HashMap<usize, FrameId>>,
+}
+
+#[cfg(any(feature = "vec", feature = "hnsw_bench"))]
+impl Clone for HnswVecIndex {
+    fn clone(&self) -> Self {
+        Self {
+            graph: self.graph.clone(),
+            ids: self.ids.clone(),
+            dimension: self.dimension,
+            feature_ids: std::sync::OnceLock::new(),
+        }
+    }
 }
 
 #[cfg(any(feature = "vec", feature = "hnsw_bench"))]
@@ -396,6 +438,7 @@ impl HnswVecIndex {
         Ok(Self {
             graph,
             ids,
+            feature_ids: std::sync::OnceLock::new(),
             dimension: documents
                 .first()
                 .map(|d| d.embedding.len() as u32)
@@ -405,53 +448,52 @@ impl HnswVecIndex {
 
     #[must_use]
     pub fn search(&self, query: &[f32], limit: usize) -> Vec<VecSearchHit> {
-        // Use thread-local searcher and dest buffer to avoid per-query allocations
         thread_local! {
             static SEARCHER: std::cell::RefCell<Searcher<u32>> = std::cell::RefCell::new(Searcher::new());
-            static DEST: std::cell::RefCell<Vec<space::Neighbor<u32>>> = const { std::cell::RefCell::new(Vec::new()) };
         }
-
-        // ef_search: query-time search width. Higher = better recall, slower search.
-        // Default: 50 as per maintainer specification. Can be exposed as option later.
-        let ef_search = 50;
-
-        SEARCHER.with(|searcher_cell| {
-            DEST.with(|dest_cell| {
-                let mut searcher = searcher_cell.borrow_mut();
-                let mut dest = dest_cell.borrow_mut();
-
-                // Ensure dest has enough capacity
-                let required_size = limit.max(ef_search);
-                if dest.len() < required_size {
-                    dest.resize(
-                        required_size,
-                        space::Neighbor {
-                            index: !0,
-                            distance: 0,
-                        },
-                    );
-                }
-
-                // Convert query slice to Vec for the graph
-                let query_vec: Vec<f32> = query.to_vec();
-
-                let found = self.graph.nearest(
-                    &query_vec,
-                    ef_search,
-                    &mut searcher,
-                    &mut dest[..required_size],
-                );
-
-                found
-                    .iter()
-                    .take(limit)
-                    .map(|neighbor| VecSearchHit {
-                        frame_id: self.ids[neighbor.index],
-                        distance: (neighbor.distance as f32) / HNSW_DISTANCE_SCALE,
-                    })
-                    .collect()
+        if limit == 0 || self.graph.is_empty() || query.is_empty() {
+            return Vec::new();
+        }
+        let ef_search = limit.max(50).min(self.graph.len());
+        let feature_ids = self.feature_ids.get_or_init(|| {
+            (0..self.graph.layer_len(0))
+                .filter_map(|index| {
+                    self.ids
+                        .get(index)
+                        .map(|id| (std::ptr::from_ref(self.graph.feature(index)) as usize, *id))
+                })
+                .collect()
+        });
+        SEARCH_VISITS.with(|visits| *visits.borrow_mut() = Some(Vec::new()));
+        let _guard = SearchVisitGuard;
+        SEARCHER.with(|searcher| {
+            // An empty destination always matches the slice hnsw copies, even
+            // when the graph walk finds fewer neighbors than requested.
+            self.graph.nearest(
+                &query.to_vec(),
+                ef_search,
+                &mut searcher.borrow_mut(),
+                &mut [],
+            );
+        });
+        let visits = SEARCH_VISITS.with(|visits| visits.borrow_mut().take().unwrap_or_default());
+        let mut candidates = std::collections::HashMap::new();
+        for (feature, distance) in visits {
+            if let Some(id) = feature_ids.get(&feature) {
+                candidates.insert(*id, distance);
+            }
+        }
+        // Rank only candidates actually visited by ANN, not the full corpus.
+        let mut candidates: Vec<_> = candidates.into_iter().collect();
+        candidates.sort_unstable_by_key(|(id, distance)| (*distance, *id));
+        candidates
+            .into_iter()
+            .take(limit)
+            .map(|(frame_id, distance)| VecSearchHit {
+                frame_id,
+                distance: distance as f32 / HNSW_DISTANCE_SCALE,
             })
-        })
+            .collect()
     }
 
     fn documents(&self) -> Result<Vec<VecDocument>> {
@@ -538,6 +580,77 @@ mod tests {
         let index = VecIndex::decode(&artifact.bytes).expect("decode");
         let hits = index.search(&[0.0, 1.0, 2.0], 10);
         assert_eq!(hits[0].frame_id, 1);
+    }
+
+    #[test]
+    #[cfg(any(feature = "vec", feature = "hnsw_bench"))]
+    fn hnsw_large_requests_and_empty_indexes_do_not_panic() {
+        let docs: Vec<_> = (0..1100)
+            .map(|i| VecDocument {
+                frame_id: i,
+                embedding: vec![i as f32, (i % 17) as f32],
+            })
+            .collect();
+        let index = HnswVecIndex::build(&docs).unwrap();
+        for limit in [0, 100, 200, 1200] {
+            let hits = index.search(&[0.0, 0.0], limit);
+            assert_eq!(hits.len(), limit.min(docs.len()));
+            let ids: std::collections::HashSet<_> = hits.iter().map(|hit| hit.frame_id).collect();
+            assert_eq!(ids.len(), hits.len());
+            assert!(hits.iter().all(|hit| hit.frame_id < 1100));
+        }
+        let empty = HnswVecIndex::build(&[]).unwrap();
+        assert!(empty.search(&[0.0, 0.0], 100).is_empty());
+        let single = HnswVecIndex::build(&docs[..1]).unwrap();
+        assert_eq!(single.search(&[0.0, 0.0], 100).len(), 1);
+    }
+
+    #[test]
+    #[cfg(any(feature = "vec", feature = "hnsw_bench"))]
+    fn hnsw_short_neighbor_pool_and_cloned_decoded_indexes_are_safe() {
+        // Equal distances do not replace full neighbor lists in hnsw 0.11.
+        // This produces a valid inserted graph whose reachable pool is smaller
+        // than its feature count, without corrupting serialized graph internals.
+        let docs: Vec<_> = (0..1100)
+            .map(|frame_id| VecDocument {
+                frame_id,
+                embedding: vec![1.0, 1.0],
+            })
+            .collect();
+        let index = HnswVecIndex::build(&docs).unwrap();
+        let hits = index.search(&[1.0, 1.0], 1100);
+        assert!(!hits.is_empty());
+        assert!(
+            hits.len() < docs.len(),
+            "fixture must exercise a short ANN pool"
+        );
+        assert!(
+            hits.iter()
+                .all(|hit| hit.frame_id < 1100 && hit.distance == 0.0)
+        );
+        let bytes = bincode::serde::encode_to_vec(&index, vec_config()).unwrap();
+        // The persisted v3.1.8 representation is exactly these three fields;
+        // populating the transient feature identity map must not change it.
+        let legacy_bytes = bincode::serde::encode_to_vec(
+            (&index.graph, &index.ids, index.dimension),
+            vec_config(),
+        )
+        .unwrap();
+        assert_eq!(bytes, legacy_bytes);
+        for other in [
+            index.clone(),
+            bincode::serde::decode_from_slice::<HnswVecIndex, _>(&bytes, vec_config())
+                .unwrap()
+                .0,
+        ] {
+            let results = other.search(&[1.0, 1.0], 1200);
+            assert_eq!(results.len(), hits.len());
+            assert!(
+                results
+                    .iter()
+                    .all(|hit| hit.frame_id < 1100 && hit.distance == 0.0)
+            );
+        }
     }
 
     #[test]

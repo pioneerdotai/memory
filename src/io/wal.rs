@@ -74,7 +74,7 @@ impl EmbeddedWal {
             file: clone,
             region_offset,
             region_size,
-            write_head: next_head % region_size,
+            write_head: next_head,
             checkpoint_head: header.wal_checkpoint_pos % region_size,
             pending_bytes,
             sequence,
@@ -144,7 +144,7 @@ impl EmbeddedWal {
         );
         self.write_record(self.write_head, next_sequence, payload)?;
 
-        self.write_head = (self.write_head + entry_size) % self.region_size;
+        self.write_head += entry_size;
         self.pending_bytes += entry_size;
         self.sequence = self.sequence.wrapping_add(1);
         self.appends_since_checkpoint = self.appends_since_checkpoint.saturating_add(1);
@@ -166,7 +166,7 @@ impl EmbeddedWal {
 
     pub fn record_checkpoint(&mut self, header: &mut Header) -> Result<()> {
         self.assert_writable()?;
-        self.checkpoint_head = self.write_head;
+        self.checkpoint_head = self.write_head % self.region_size;
         self.pending_bytes = 0;
         self.appends_since_checkpoint = 0;
         self.checkpoint_sequence = self.sequence;
@@ -189,7 +189,7 @@ impl EmbeddedWal {
             .filter(|entry| entry.sequence > self.checkpoint_sequence)
             .map(|entry| entry.total_size)
             .sum();
-        self.write_head = next_head % self.region_size;
+        self.write_head = next_head;
         if !self.read_only {
             self.initialise_sentinel()?;
         }
@@ -312,6 +312,12 @@ impl EmbeddedWal {
             return Ok(());
         }
         if self.pending_bytes >= self.region_size {
+            return Ok(());
+        }
+        // A sentinel must not wrap while records are pending. Moving the head
+        // to zero would hide pending tail records from the linear scanner and
+        // let the next append overwrite them without triggering WAL growth.
+        if self.pending_bytes > 0 && self.region_size - self.write_head < ENTRY_HEADER_SIZE as u64 {
             return Ok(());
         }
         // Sentinel marks end of valid entries - always keep write_head in sync
@@ -492,6 +498,41 @@ mod tests {
         let records = wal.pending_records().expect("after append");
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].payload, vec![0xCC; 32]);
+    }
+
+    #[test]
+    fn pending_tail_survives_short_sentinel_space_and_reopen() {
+        for remaining in [0, 1, ENTRY_HEADER_SIZE as u64 - 1] {
+            let size = 2 * (ENTRY_HEADER_SIZE as u64 + 16) + remaining;
+            let (file, mut header) = prepare_wal(size);
+            let mut wal = EmbeddedWal::open(&file, &header).unwrap();
+            wal.append_entry(&[0xAA; 16]).unwrap();
+            wal.record_checkpoint(&mut header).unwrap();
+            wal.append_entry(&[0xBB; 16]).unwrap();
+            let expected = vec![WalRecord {
+                sequence: 2,
+                payload: vec![0xBB; 16],
+            }];
+            assert_eq!(wal.pending_records().unwrap(), expected);
+            drop(wal);
+
+            let mut wal = EmbeddedWal::open(&file, &header).unwrap();
+            assert_eq!(wal.pending_records().unwrap(), expected);
+            assert!(matches!(
+                wal.append_entry(&[0xCC; 16]),
+                Err(MemvidError::CheckpointFailed { .. })
+            ));
+            assert_eq!(wal.pending_records().unwrap(), expected);
+            wal.record_checkpoint(&mut header).unwrap();
+            assert_eq!(wal.append_entry(&[0xCC; 16]).unwrap(), 3);
+            assert_eq!(
+                wal.pending_records().unwrap(),
+                vec![WalRecord {
+                    sequence: 3,
+                    payload: vec![0xCC; 16],
+                }]
+            );
+        }
     }
 
     #[test]

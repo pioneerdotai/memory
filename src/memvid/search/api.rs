@@ -15,6 +15,13 @@ use crate::types::{
 };
 use crate::{LexSearchHit, MemvidError, Result, VecSearchHit};
 
+#[cfg(feature = "lex")]
+enum TantivyInitOutcome {
+    Disabled,
+    OpenedOrCreated,
+    Rebuilt,
+}
+
 impl Memvid {
     pub fn enable_lex(&mut self) -> Result<()> {
         self.ensure_writable()?;
@@ -282,10 +289,12 @@ impl Memvid {
             scope,
             None,
             AclEnforcementMode::Audit,
+            None,
         )
     }
 
     /// Perform pure vector search using a pre-computed query embedding with ACL filtering.
+    /// Continue with the returned `next_cursor`; offsets apply after scope and ACL checks.
     pub fn vec_search_with_embedding_acl(
         &mut self,
         query: &str,
@@ -295,6 +304,32 @@ impl Memvid {
         scope: Option<&str>,
         acl_context: Option<&AclContext>,
         acl_enforcement_mode: AclEnforcementMode,
+        cursor: Option<&str>,
+    ) -> Result<crate::types::SearchResponse> {
+        self.vec_search_page(
+            query,
+            query_embedding,
+            top_k,
+            snippet_chars,
+            scope,
+            acl_context,
+            acl_enforcement_mode,
+            cursor,
+            None,
+        )
+    }
+
+    pub(crate) fn vec_search_page(
+        &mut self,
+        query: &str,
+        query_embedding: &[f32],
+        top_k: usize,
+        snippet_chars: usize,
+        scope: Option<&str>,
+        acl_context: Option<&AclContext>,
+        acl_enforcement_mode: AclEnforcementMode,
+        cursor: Option<&str>,
+        filter: Option<&crate::types::SearchRequest>,
     ) -> Result<crate::types::SearchResponse> {
         use super::helpers::{build_context, timestamp_to_rfc3339};
         use crate::types::{
@@ -302,6 +337,12 @@ impl Memvid {
         };
         use std::time::Instant;
 
+        if top_k == 0 {
+            return Err(MemvidError::InvalidQuery {
+                reason: "top_k must be positive".into(),
+            });
+        }
+        let parsed = crate::search::parse_query(query)?;
         if !self.vec_enabled {
             return Err(MemvidError::VecNotEnabled);
         }
@@ -333,6 +374,15 @@ impl Memvid {
             });
         }
 
+        #[cfg(feature = "temporal_track")]
+        let temporal_ids =
+            if let Some(temporal) = filter.and_then(|request| request.temporal.as_ref()) {
+                super::time_filter::frame_ids_for_temporal_filter(self, temporal)?
+                    .map(|ids| ids.into_iter().collect::<std::collections::HashSet<_>>())
+            } else {
+                None
+            };
+
         let start_time = Instant::now();
 
         // Ensure vector index is loaded
@@ -340,110 +390,139 @@ impl Memvid {
             self.ensure_vec_index()?;
         }
 
-        let vec_index = self.vec_index.as_ref().ok_or(MemvidError::VecNotEnabled)?;
+        let scope = scope.filter(|_| filter.and_then(|request| request.uri.as_ref()).is_none());
+        let offset = super::helpers::parse_cursor(cursor, usize::MAX)?;
+        let wanted = offset.saturating_add(top_k).saturating_add(1);
+        let mut candidate_limit = wanted.max(32);
+        let (mut hits, exhausted) = loop {
+            let vec_hits = self
+                .vec_index
+                .as_ref()
+                .ok_or(MemvidError::VecNotEnabled)?
+                .search(query_embedding, candidate_limit);
+            let exhausted = vec_hits.len() < candidate_limit;
 
-        // Do pure vector search over entire index
-        let vec_hits = vec_index.search(query_embedding, top_k * 2);
+            // Convert VecSearchHit to SearchHit with full metadata
+            let mut hits = Vec::new();
+            let snippet_limit = snippet_chars.max(80);
 
-        if vec_hits.is_empty() {
-            let elapsed_ms = start_time.elapsed().as_millis();
-            return Ok(SearchResponse {
-                query: query.to_string(),
-                elapsed_ms,
-                total_hits: 0,
-                params: SearchParams {
-                    top_k,
-                    snippet_chars,
-                    cursor: None,
-                },
-                hits: Vec::new(),
-                context: build_context(&[]),
-                next_cursor: None,
-                engine: SearchEngineKind::Hybrid,
-                stale_index_skips: 0,
-            });
-        }
+            for vec_hit in vec_hits {
+                // Apply scope filter if provided
+                let frame_idx = if let Ok(idx) = usize::try_from(vec_hit.frame_id) {
+                    idx
+                } else {
+                    continue;
+                };
 
-        // Convert VecSearchHit to SearchHit with full metadata
-        let mut hits = Vec::new();
-        let snippet_limit = snippet_chars.max(80);
+                let frame = match self.toc.frames.get(frame_idx) {
+                    Some(f) => f.clone(),
+                    None => continue,
+                };
 
-        for vec_hit in vec_hits {
-            // Apply scope filter if provided
-            // Apply scope filter if provided
-            let frame_idx = if let Ok(idx) = usize::try_from(vec_hit.frame_id) {
-                idx
-            } else {
-                continue;
-            };
-
-            let frame = match self.toc.frames.get(frame_idx) {
-                Some(f) => f.clone(),
-                None => continue,
-            };
-
-            if let Some(scope_prefix) = scope {
-                let default_uri = crate::default_uri(frame.id);
-                let uri = frame.uri.as_ref().unwrap_or(&default_uri);
-                if !uri.starts_with(scope_prefix) {
+                if frame.status != FrameStatus::Active {
                     continue;
                 }
-            }
-
-            // Get frame content for snippet
-            let content = match self.frame_content(&frame) {
-                Ok(c) => c,
-                Err(_) => continue,
-            };
-
-            let snippet: String = content.chars().take(snippet_limit).collect();
-            let snippet_bytes = snippet.len();
-
-            let uri = frame
-                .uri
-                .clone()
-                .unwrap_or_else(|| crate::default_uri(frame.id));
-            let title = frame
-                .title
-                .clone()
-                .or_else(|| crate::infer_title_from_uri(&uri));
-
-            // VecIndex returns distance (lower is better), convert back to similarity (higher is better)
-            // distance = 1.0 - similarity, so similarity = 1.0 - distance
-            let similarity_score = 1.0 - vec_hit.distance;
-
-            let metadata = SearchHitMetadata {
-                matches: 1,
-                tags: frame.tags.clone(),
-                labels: frame.labels.clone(),
-                track: frame.track.clone(),
-                created_at: timestamp_to_rfc3339(frame.timestamp),
-                content_dates: frame.content_dates.clone(),
-                entities: Vec::new(),
-                extra_metadata: frame.extra_metadata.clone(),
+                if let Some(request) = filter {
+                    let uri_mismatch = request
+                        .uri
+                        .as_ref()
+                        .is_some_and(|uri| !super::helpers::uri_matches(frame.uri.as_deref(), uri));
+                    if uri_mismatch
+                        || request.as_of_frame.is_some_and(|id| frame.id > id)
+                        || request.as_of_ts.is_some_and(|ts| frame.timestamp > ts)
+                    {
+                        continue;
+                    }
+                }
                 #[cfg(feature = "temporal_track")]
-                temporal: None,
-            };
+                if temporal_ids
+                    .as_ref()
+                    .is_some_and(|ids| !ids.contains(&frame.id))
+                {
+                    continue;
+                }
 
-            hits.push(SearchHit {
-                rank: hits.len() + 1,
-                frame_id: vec_hit.frame_id,
-                uri,
-                title,
-                range: (0, snippet_bytes),
-                text: snippet.clone(),
-                matches: 1,
-                chunk_range: Some((0, snippet_bytes)),
-                chunk_text: Some(snippet),
-                score: Some(similarity_score),
-                metadata: Some(metadata),
-            });
+                let evaluation = crate::search::EvaluationContext {
+                    frame: &frame,
+                    content_lower: "",
+                };
+                if !parsed.permits_semantic_match(&evaluation) {
+                    continue;
+                }
 
-            if hits.len() >= top_k {
-                break;
+                if let Some(scope_prefix) = scope {
+                    let default_uri = crate::default_uri(frame.id);
+                    let uri = frame.uri.as_ref().unwrap_or(&default_uri);
+                    if !uri.starts_with(scope_prefix) {
+                        continue;
+                    }
+                }
+
+                // Get frame content for snippet
+                let content = match self.frame_content(&frame) {
+                    Ok(c) => c,
+                    Err(_) => continue,
+                };
+
+                let snippet: String = content.chars().take(snippet_limit).collect();
+                let snippet_bytes = snippet.len();
+
+                let uri = frame
+                    .uri
+                    .clone()
+                    .unwrap_or_else(|| crate::default_uri(frame.id));
+                let title = frame
+                    .title
+                    .clone()
+                    .or_else(|| crate::infer_title_from_uri(&uri));
+
+                // VecIndex returns distance (lower is better), convert back to similarity (higher is better)
+                // distance = 1.0 - similarity, so similarity = 1.0 - distance
+                let similarity_score = 1.0 - vec_hit.distance;
+
+                let metadata = SearchHitMetadata {
+                    matches: 1,
+                    tags: frame.tags.clone(),
+                    labels: frame.labels.clone(),
+                    track: frame.track.clone(),
+                    created_at: timestamp_to_rfc3339(frame.timestamp),
+                    content_dates: frame.content_dates.clone(),
+                    entities: Vec::new(),
+                    extra_metadata: frame.extra_metadata.clone(),
+                    #[cfg(feature = "temporal_track")]
+                    temporal: None,
+                };
+
+                hits.push(SearchHit {
+                    rank: hits.len() + 1,
+                    frame_id: vec_hit.frame_id,
+                    uri,
+                    title,
+                    range: (0, snippet_bytes),
+                    text: snippet.clone(),
+                    matches: 1,
+                    chunk_range: Some((0, snippet_bytes)),
+                    chunk_text: Some(snippet),
+                    score: Some(similarity_score),
+                    metadata: Some(metadata),
+                });
             }
+            self.apply_acl_to_search_hits(&mut hits, acl_context, acl_enforcement_mode)?;
+            if hits.len() >= wanted || exhausted || candidate_limit == usize::MAX {
+                break (hits, exhausted);
+            }
+            candidate_limit = candidate_limit.saturating_mul(2);
+        };
+        let total_hits = hits.len();
+        let next_cursor = if total_hits > offset.saturating_add(top_k) || !exhausted {
+            Some(offset.saturating_add(top_k).to_string())
+        } else {
+            None
+        };
+        hits = hits.into_iter().skip(offset).take(top_k).collect();
+        for (i, hit) in hits.iter_mut().enumerate() {
+            hit.rank = offset + i + 1;
         }
-
         let elapsed_ms = start_time.elapsed().as_millis();
 
         #[cfg(feature = "temporal_track")]
@@ -455,15 +534,15 @@ impl Memvid {
         Ok(SearchResponse {
             query: query.to_string(),
             elapsed_ms,
-            total_hits: hits.len(),
+            total_hits,
             params: SearchParams {
                 top_k,
                 snippet_chars,
-                cursor: None,
+                cursor: cursor.map(str::to_owned),
             },
             hits,
             context,
-            next_cursor: None,
+            next_cursor,
             engine: SearchEngineKind::Hybrid,
             stale_index_skips: 0,
         })
@@ -531,13 +610,15 @@ impl Memvid {
                 scope,
                 acl_context,
                 acl_enforcement_mode,
+                None,
             )?;
+            let returned = response.hits.len();
             return Ok(AdaptiveResult {
                 results: response.hits,
                 stats: AdaptiveStats {
                     total_considered: response.total_hits,
-                    returned: response.total_hits,
-                    cutoff_index: response.total_hits,
+                    returned,
+                    cutoff_index: returned,
                     cutoff_score: None,
                     top_score: None,
                     cutoff_ratio: None,
@@ -557,6 +638,7 @@ impl Memvid {
             scope,
             acl_context,
             acl_enforcement_mode,
+            None,
         )?;
 
         if response.hits.is_empty() {
@@ -568,12 +650,13 @@ impl Memvid {
 
         if scores.is_empty() {
             // No scores available, return all results
+            let returned = response.hits.len();
             return Ok(AdaptiveResult {
                 results: response.hits,
                 stats: AdaptiveStats {
                     total_considered: response.total_hits,
-                    returned: response.total_hits,
-                    cutoff_index: response.total_hits,
+                    returned,
+                    cutoff_index: returned,
                     cutoff_score: None,
                     top_score: None,
                     cutoff_ratio: None,
@@ -818,10 +901,30 @@ impl Memvid {
     }
 
     pub(crate) fn init_tantivy(&mut self) -> Result<()> {
+        self.prepare_tantivy().map(|_| ())
+    }
+
+    /// Ensure a full rebuild, reusing one already completed during preparation.
+    pub(crate) fn rebuild_tantivy_index(&mut self) -> Result<()> {
+        let outcome = self.prepare_tantivy()?;
+        let Some(mut engine) = self.tantivy.take() else {
+            return Err(MemvidError::InvalidToc {
+                reason: "tantivy engine missing during rebuild".into(),
+            });
+        };
+        if !matches!(outcome, TantivyInitOutcome::Rebuilt) {
+            self.rebuild_tantivy_engine(&mut engine)?;
+        }
+        self.tantivy = Some(engine);
+        Ok(())
+    }
+
+    /// Reports work done in this call, independently of the flush/instant-index dirty flag.
+    fn prepare_tantivy(&mut self) -> Result<TantivyInitOutcome> {
         if !self.lex_enabled {
             self.tantivy = None;
             self.tantivy_dirty = false;
-            return Ok(());
+            return Ok(TantivyInitOutcome::Disabled);
         }
 
         let segments = if self.toc.segment_catalog.tantivy_segments.is_empty() {
@@ -907,7 +1010,11 @@ impl Memvid {
         // This handles files created before the segment-based lex_enabled check was added
         self.lex_enabled = true;
 
-        Ok(())
+        Ok(if rebuilt {
+            TantivyInitOutcome::Rebuilt
+        } else {
+            TantivyInitOutcome::OpenedOrCreated
+        })
     }
 
     #[must_use]
@@ -1036,6 +1143,13 @@ pub fn is_frame_text_indexable(frame: &crate::types::Frame) -> bool {
 #[cfg(feature = "lex")]
 impl Memvid {
     pub(crate) fn rebuild_tantivy_engine(&mut self, engine: &mut TantivyEngine) -> Result<bool> {
+        #[cfg(test)]
+        {
+            crate::memvid::mutation::TANTIVY_REBUILDS.with(|count| count.set(count.get() + 1));
+            if crate::memvid::mutation::FAIL_TANTIVY_REBUILD.with(|flag| flag.replace(false)) {
+                return Err(std::io::Error::other("injected Tantivy rebuild failure").into());
+            }
+        }
         let mut prepared_docs: Vec<(Frame, String)> = Vec::new();
         let frames = self.toc.frames.clone();
         let active_frames: Vec<_> = frames
