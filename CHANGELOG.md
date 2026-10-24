@@ -5,6 +5,23 @@ All notable changes to Memvid will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.0] - 2026-10-24
+
+### Changed
+- Lexical, vector, hybrid, and ask retrieval paginate eligible results after filtering. A zero-sized public search page now returns an error.
+- Semantic query filters preserve Boolean relationships between repeated text predicates while allowing semantic matches without literal word overlap.
+
+### Fixed
+- Continue searching past rejected candidates and internal lexical windows; remove the fixed hybrid vector candidate ceiling.
+- Handle large HNSW requests and short neighbor pools without panicking.
+- Apply consistent case-insensitive URI prefix matching and explicit URI precedence across lexical and semantic retrieval.
+- Keep pending WAL records visible when the remaining region cannot hold a sentinel.
+- Use supported ort session and tensor APIs for CLIP and NER.
+
+### Compatibility
+- This is the next major release of the Pioneer Memvid fork. The `.mv2` format is unchanged and existing indexes do not require reindexing.
+- Includes the changes previously shipped in v3.1.8.
+
 ## [Unreleased]
 
 ### Added
