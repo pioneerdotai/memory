@@ -403,6 +403,9 @@ fn hybrid_query_fields_filter_semantic_candidates_before_paging() {
         "absenttoken AND (tag:allowed OR tag:missing)",
         "absenttoken AND NOT (tag:denied OR tag:missing)",
         "absenttoken AND date:[2024-01-01 TO 2024-12-31]",
+        "NOT (absenttoken OR tag:denied)",
+        "(absenttoken AND tag:allowed) OR (anotherabsent AND tag:missing)",
+        "absenttoken AND NOT date:[2000-01-01 TO 2000-12-31]",
     ] {
         let mut cursor = None;
         let mut seen = std::collections::HashSet::new();
