@@ -397,6 +397,25 @@ fn hybrid_query_fields_filter_semantic_candidates_before_paging() {
         .unwrap();
     }
     mem.commit().unwrap();
+    let mut search_page = |query: &str, cursor: Option<String>, hybrid: bool| {
+        if hybrid {
+            let mut req = request(query, 2, cursor);
+            req.query_embedding = Some(vec![1.0, 0.0]);
+            mem.search(req)
+        } else {
+            mem.vec_search_with_embedding_acl(
+                query,
+                &[1.0, 0.0],
+                2,
+                120,
+                None,
+                None,
+                AclEnforcementMode::Audit,
+                cursor.as_deref(),
+            )
+        }
+        .unwrap()
+    };
     for query in [
         "absenttoken AND tag:allowed",
         "absenttoken AND NOT tag:denied",
@@ -406,22 +425,38 @@ fn hybrid_query_fields_filter_semantic_candidates_before_paging() {
         "NOT (semantically OR tag:denied)",
         "(absenttoken AND tag:allowed) OR (anotherabsent AND tag:missing)",
         "absenttoken AND NOT date:[2000-01-01 TO 2000-12-31]",
+        "(needle OR tag:allowed) AND NOT needle",
+        "(NEEDLE OR tag:allowed) AND NOT \"needle\"",
+        "(needle OR otherneedle OR tag:allowed) AND NOT needle AND NOT otherneedle",
+        "(need* OR tag:allowed) AND NOT need*",
     ] {
-        let mut cursor = None;
-        let mut seen = std::collections::HashSet::new();
-        for count in [2, 2, 1] {
-            let mut req = request(query, 2, cursor);
-            req.query_embedding = Some(vec![1.0, 0.0]);
-            let response = mem.search(req).unwrap();
-            assert_eq!(response.hits.len(), count, "{query}");
-            for hit in response.hits {
-                assert!(hit.frame_id >= 80, "{query}");
-                seen.insert(hit.frame_id);
+        for hybrid in [false, true] {
+            let mut cursor = None;
+            let mut seen = std::collections::HashSet::new();
+            for count in [2, 2, 1] {
+                let response = search_page(query, cursor, hybrid);
+                assert_eq!(response.hits.len(), count, "{query}, hybrid={hybrid}");
+                for hit in response.hits {
+                    assert!(hit.frame_id >= 80, "{query}, hybrid={hybrid}");
+                    seen.insert(hit.frame_id);
+                }
+                cursor = response.next_cursor;
+                assert_eq!(cursor.is_none(), count == 1);
             }
-            cursor = response.next_cursor;
-            assert_eq!(cursor.is_none(), count == 1);
+            assert_eq!(seen.len(), 5);
         }
-        assert_eq!(seen.len(), 5);
+    }
+    for query in [
+        "needle AND NOT needle",
+        "(needle OR otherneedle) AND NOT needle AND NOT otherneedle",
+        "\"same phrase\" AND NOT \"SAME PHRASE\"",
+        "need* AND NOT need*",
+    ] {
+        for hybrid in [false, true] {
+            let response = search_page(query, None, hybrid);
+            assert!(response.hits.is_empty(), "{query}, hybrid={hybrid}");
+            assert!(response.next_cursor.is_none(), "{query}, hybrid={hybrid}");
+        }
     }
 }
 
@@ -431,14 +466,27 @@ fn hybrid_uri_uses_lexical_prefix_case_and_scope_precedence() {
     let mut mem = Memvid::create(dir.path().join("uri.mv2")).unwrap();
     mem.enable_lex().unwrap();
     mem.enable_vec().unwrap();
+    // Short exact text matches outrank the wanted, longer documents in BM25.
+    // These nearer vectors also precede the wanted ones in semantic retrieval.
+    // Both paths must refill past their first internal candidate window.
+    for i in 0..80 {
+        mem.put_with_embedding_and_options(
+            b"needle",
+            vec![1.0, 0.0],
+            PutOptions::builder()
+                .uri(format!("mv2://other/{i}"))
+                .build(),
+        )
+        .unwrap();
+    }
     for uri in [
         "mv2://Wanted/parent#one",
         "mv2://Wanted/parent#two",
         "mv2://other",
     ] {
         mem.put_with_embedding_and_options(
-            b"needle",
-            vec![1.0, 0.0],
+            b"needle with additional context about the saved decision",
+            vec![1.0, 1.0],
             PutOptions::builder().uri(uri).build(),
         )
         .unwrap();

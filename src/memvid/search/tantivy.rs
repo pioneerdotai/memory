@@ -74,7 +74,9 @@ pub(super) fn try_tantivy_search(
         };
         let search_hits = match engine.search_documents(
             parsed,
-            uri_filter,
+            // The engine's URI TermQuery is exact. Request URI filters allow
+            // case-insensitive prefixes, so apply them only to fetched frames.
+            None,
             scope_filter,
             frame_filter_slice,
             doc_limit,

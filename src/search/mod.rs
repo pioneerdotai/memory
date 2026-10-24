@@ -3,6 +3,8 @@ mod parser;
 #[cfg(feature = "lex")]
 mod tantivy;
 
+use std::collections::BTreeMap;
+
 use crate::types::Frame;
 use parser::{Expr, FieldTerm, Term, TextTerm};
 
@@ -25,9 +27,51 @@ impl ParsedQuery {
         self.expr.evaluate(ctx)
     }
 
-    /// Check mandatory fields while leaving semantic text terms unknown.
+    /// Check whether fields permit a consistent assignment of semantic text predicates.
     pub(crate) fn permits_semantic_match(&self, ctx: &EvaluationContext<'_>) -> bool {
-        self.expr.semantic_truth(ctx).0
+        let mut polarities = BTreeMap::new();
+        self.expr.collect_text_polarities(false, &mut polarities);
+        let mut assignments = BTreeMap::new();
+        let mut choices = Vec::new();
+        for (key, (positive, negative)) in polarities {
+            // A predicate used in only one polarity can always satisfy that
+            // polarity. Ordinary positive queries need no assignment search.
+            let value = if positive && negative {
+                choices.push(key.clone());
+                None
+            } else {
+                Some(positive)
+            };
+            assignments.insert(key, value);
+        }
+
+        // Branch only on predicates occurring in both polarities. Partial
+        // evaluation prunes impossible branches; all occurrences share a value.
+        // Iterative backtracking avoids adding stack depth per text predicate.
+        let mut depth = 0;
+        loop {
+            let (can_be_true, can_be_false) = self.expr.semantic_truth(ctx, &assignments);
+            if !can_be_false {
+                return true;
+            }
+            if can_be_true && depth < choices.len() {
+                assignments.insert(choices[depth].clone(), Some(false));
+                depth += 1;
+                continue;
+            }
+            while depth > 0 {
+                let key = &choices[depth - 1];
+                if assignments.get(key) == Some(&Some(false)) {
+                    assignments.insert(key.clone(), Some(true));
+                    break;
+                }
+                assignments.insert(key.clone(), None);
+                depth -= 1;
+            }
+            if depth == 0 {
+                return false;
+            }
+        }
     }
 
     pub fn text_tokens(&self) -> Vec<String> {
@@ -44,6 +88,17 @@ impl ParsedQuery {
 }
 
 impl TextTerm {
+    // Word and phrase matching use the same case-folded substring predicate.
+    // Wildcards retain their distinct regex semantics.
+    fn semantic_key(&self) -> String {
+        match self {
+            TextTerm::Word(text) | TextTerm::Phrase(text) => {
+                format!("literal:{}", text.to_lowercase())
+            }
+            TextTerm::Wildcard(pattern) => format!("wildcard:{}", pattern.regex.as_str()),
+        }
+    }
+
     pub(crate) fn matches(&self, haystack: &str) -> bool {
         match self {
             TextTerm::Word(word) => {
@@ -150,25 +205,56 @@ impl DateRange {
 }
 
 impl Expr {
-    // (can be true, can be false). Unknown text stays unknown under NOT,
-    // so negated/composite field restrictions keep their Boolean meaning.
-    fn semantic_truth(&self, ctx: &EvaluationContext<'_>) -> (bool, bool) {
+    fn collect_text_polarities(
+        &self,
+        negated: bool,
+        polarities: &mut BTreeMap<String, (bool, bool)>,
+    ) {
         match self {
-            Expr::Term(Term::Text(_)) => (true, true),
+            Expr::Term(Term::Text(text)) => {
+                let entry = polarities.entry(text.semantic_key()).or_default();
+                if negated {
+                    entry.1 = true;
+                } else {
+                    entry.0 = true;
+                }
+            }
+            Expr::Not(child) => child.collect_text_polarities(!negated, polarities),
+            Expr::And(children) | Expr::Or(children) => {
+                for child in children {
+                    child.collect_text_polarities(negated, polarities);
+                }
+            }
+            Expr::Term(Term::Field(_)) => {}
+        }
+    }
+
+    // (can be true, can be false) under one shared, partial assignment.
+    fn semantic_truth(
+        &self,
+        ctx: &EvaluationContext<'_>,
+        assignments: &BTreeMap<String, Option<bool>>,
+    ) -> (bool, bool) {
+        match self {
+            Expr::Term(Term::Text(text)) => assignments
+                .get(&text.semantic_key())
+                .copied()
+                .flatten()
+                .map_or((true, true), |value| (value, !value)),
             Expr::Term(Term::Field(field)) => {
                 let matched = field.matches(ctx);
                 (matched, !matched)
             }
             Expr::Not(child) => {
-                let (yes, no) = child.semantic_truth(ctx);
+                let (yes, no) = child.semantic_truth(ctx, assignments);
                 (no, yes)
             }
             Expr::And(children) => children.iter().fold((true, false), |(yes, no), child| {
-                let (child_yes, child_no) = child.semantic_truth(ctx);
+                let (child_yes, child_no) = child.semantic_truth(ctx, assignments);
                 (yes && child_yes, no || child_no)
             }),
             Expr::Or(children) => children.iter().fold((false, true), |(yes, no), child| {
-                let (child_yes, child_no) = child.semantic_truth(ctx);
+                let (child_yes, child_no) = child.semantic_truth(ctx, assignments);
                 (yes || child_yes, no && child_no)
             }),
         }
