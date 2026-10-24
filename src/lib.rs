@@ -532,12 +532,17 @@ impl Memvid {
         const HASH_BUFFER_SIZE: usize = 64 * 1024;
         let file_len = self.file.metadata()?.len();
         let mut hasher = blake3::Hasher::new();
-        let mut buffer = [0_u8; HASH_BUFFER_SIZE];
+        let mut buffer = vec![0_u8; HASH_BUFFER_SIZE];
         let mut offset = 0_u64;
         while offset < file_len {
             let remaining = file_len - offset;
-            let requested = usize::try_from(remaining.min(HASH_BUFFER_SIZE as u64))
-                .expect("bounded fingerprint read size");
+            let requested =
+                usize::try_from(remaining.min(HASH_BUFFER_SIZE as u64)).map_err(|_| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "fingerprint read size exceeds platform range",
+                    )
+                })?;
             #[cfg(test)]
             let requested = {
                 let mut requested = requested;

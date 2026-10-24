@@ -84,10 +84,10 @@ pub fn find_last_valid_footer(bytes: &[u8]) -> Option<FooterSlice<'_>> {
 ///
 /// The public footer API remains unbounded for compatibility; recovery supplies one shared
 /// budget covering footer search and its later fallback phases.
-pub(crate) fn find_last_valid_footer_with_charge<'a, F, E>(
-    bytes: &'a [u8],
+pub(crate) fn find_last_valid_footer_with_charge<F, E>(
+    bytes: &[u8],
     mut charge_hash: F,
-) -> std::result::Result<Option<FooterSlice<'a>>, E>
+) -> std::result::Result<Option<FooterSlice<'_>>, E>
 where
     F: FnMut(usize) -> std::result::Result<(), E>,
 {
