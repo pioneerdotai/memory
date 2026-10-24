@@ -1,5 +1,6 @@
 //! Regression coverage for the two full-rebuild branches and their shared preparation path.
 
+use super::commit_publication_tests::snapshot_bytes;
 use super::*;
 use crate::{AclEnforcementMode, SearchEngineKind, SearchRequest, SketchVariant};
 
@@ -250,7 +251,8 @@ fn incremental_rebuild_indexes_publishes_new_and_existing_documents() {
     assert!(!mem.tantivy_dirty);
     assert_text(&mut mem, "addedword", &[]);
     let records = mem.wal.pending_records().unwrap();
-    let before = std::fs::read(&path).unwrap();
+    let original_file = mem.file.try_clone().unwrap();
+    let before = snapshot_bytes(&original_file, &path);
     reset_rebuilds();
     mem.with_staging_lock(|staged| {
         staged.generation = staged.generation.wrapping_add(1);
@@ -295,10 +297,11 @@ fn incremental_rebuild_indexes_publishes_new_and_existing_documents() {
         }
         staged.pending_frame_inserts = 0;
         staged.dirty = false;
-        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert_eq!(snapshot_bytes(&original_file, &path), before);
         Ok(())
     })
     .unwrap();
+    drop(original_file);
     assert_rebuilds(0);
     assert!(!mem.tantivy_dirty);
     assert!(mem.wal.pending_records().unwrap().is_empty());
@@ -490,7 +493,7 @@ fn rebuild_and_publication_errors_preserve_complete_snapshots() {
                 assert!(!mem.tantivy_dirty);
                 mem.insert_sketch(0, "failure metadata", SketchVariant::Small);
             }
-            let before = std::fs::read(&path).unwrap();
+            let before = snapshot_bytes(&mem.file, &path);
             match failure {
                 "rebuild" => FAIL_TANTIVY_REBUILD.with(|flag| flag.set(true)),
                 "publish" => FAIL_BEFORE_ATOMIC_PUBLISH.with(|flag| flag.set(true)),
@@ -513,7 +516,7 @@ fn rebuild_and_publication_errors_preserve_complete_snapshots() {
                 "a terminal handle must not retry publication"
             );
             if failure != "post-publish" {
-                assert_eq!(std::fs::read(&path).unwrap(), before);
+                assert_eq!(snapshot_bytes(&mem.file, &path), before);
             }
             drop(mem); // Terminal handles must not retry from Drop either.
             let after = std::fs::read(&path).unwrap();

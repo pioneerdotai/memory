@@ -4442,13 +4442,24 @@ mod commit_publication_tests {
     #[cfg(not(feature = "replay"))]
     use crate::replay::ReplayManifest;
 
-    fn header(path: &Path) -> crate::types::Header {
-        let mut file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(path)
-            .unwrap();
-        HeaderCodec::read(&mut file).unwrap()
+    pub(super) fn snapshot_bytes(file: &File, path: &Path) -> Vec<u8> {
+        assert!(FileLock::is_current_path_file(file, path).unwrap());
+        // A separate open cannot read an exclusively locked file on Windows.
+        // Clones share the cursor, so restore it even if reading fails.
+        let mut reader = file.try_clone().unwrap();
+        let position = reader.stream_position().unwrap();
+        let mut bytes = Vec::new();
+        let result = reader
+            .seek(SeekFrom::Start(0))
+            .and_then(|_| reader.read_to_end(&mut bytes));
+        let restored = reader.seek(SeekFrom::Start(position));
+        restored.unwrap();
+        result.unwrap();
+        bytes
+    }
+
+    fn header(file: &File, path: &Path) -> crate::types::Header {
+        HeaderCodec::read(&mut std::io::Cursor::new(snapshot_bytes(file, path))).unwrap()
     }
 
     fn fault_options(name: &str) -> PutOptions {
@@ -4706,7 +4717,7 @@ mod commit_publication_tests {
         );
         // init_tantivy can rebuild an index on open even without pending frame records.
         writer.tantivy_dirty = true;
-        let before = std::fs::read(&path).unwrap();
+        let before = snapshot_bytes(&writer.file, &path);
         FAIL_BEFORE_ATOMIC_PUBLISH.with(|flag| flag.set(true));
         let error = writer
             .recover_wal()
@@ -4774,7 +4785,7 @@ mod commit_publication_tests {
         .unwrap();
         mem.commit().unwrap();
 
-        let committed_header = header(&path);
+        let committed_header = header(&mem.file, &path);
         let committed_len = std::fs::metadata(&path).unwrap().len();
 
         mem.put_with_embedding_and_options(
@@ -4789,7 +4800,7 @@ mod commit_publication_tests {
                 .build(),
         )
         .unwrap();
-        let file_with_pending_wal = std::fs::read(&path).unwrap();
+        let file_with_pending_wal = snapshot_bytes(&mem.file, &path);
         FAIL_BEFORE_ATOMIC_PUBLISH.with(|flag| flag.set(true));
         let err = mem
             .commit()
@@ -4800,11 +4811,20 @@ mod commit_publication_tests {
         // The compacted staging copy was never published: the committed file
         // still has the exact old header and length. Its WAL remains available
         // for the normal open-time recovery path.
-        assert_eq!(header(&path).footer_offset, committed_header.footer_offset);
+        assert_eq!(
+            header(&mem.file, &path).footer_offset,
+            committed_header.footer_offset
+        );
         assert_eq!(std::fs::metadata(&path).unwrap().len(), committed_len);
-        assert_eq!(std::fs::read(&path).unwrap(), file_with_pending_wal);
+        assert_eq!(snapshot_bytes(&mem.file, &path), file_with_pending_wal);
         let recovery_path = dir.path().join("publish-failure-recovery.mv2");
-        std::fs::copy(&path, &recovery_path).unwrap();
+        OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&recovery_path)
+            .unwrap()
+            .write_all(&snapshot_bytes(&mem.file, &path))
+            .unwrap();
 
         // Prevent Drop from consuming the one-shot fault and successfully
         // retrying commit on the source instance. Recovery below operates on
@@ -5014,15 +5034,21 @@ mod commit_publication_tests {
         // WAL appends happen before commit and are legitimately present in
         // the main file. Snapshot only after that append, then prove that the
         // destructive staging truncate cannot alter the committed inode.
-        let file_with_pending_wal = std::fs::read(&path).unwrap();
+        let file_with_pending_wal = snapshot_bytes(&mem.file, &path);
         FAIL_AFTER_COMPACT_TRUNCATE.with(|flag| flag.set(true));
         let err = mem
             .commit()
             .expect_err("fault injection must abort after staging truncate");
         assert!(err.to_string().contains("after compact truncate"));
-        assert_eq!(std::fs::read(&path).unwrap(), file_with_pending_wal);
+        assert_eq!(snapshot_bytes(&mem.file, &path), file_with_pending_wal);
         let recovery_path = dir.path().join("truncate-failure-recovery.mv2");
-        std::fs::copy(&path, &recovery_path).unwrap();
+        OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&recovery_path)
+            .unwrap()
+            .write_all(&snapshot_bytes(&mem.file, &path))
+            .unwrap();
         mem.dirty = false;
         drop(mem);
 
@@ -5419,7 +5445,7 @@ mod commit_publication_tests {
         let err = result.unwrap().expect_err("invalid geometry must abort");
         assert!(matches!(err, MemvidError::InvalidToc { .. }));
         assert!(!err.to_string().contains("after compact truncate"));
-        assert_eq!(std::fs::read(&path).unwrap(), committed);
+        assert_eq!(snapshot_bytes(&writer.file, &path), committed);
         writer.dirty = false;
         drop(writer);
 

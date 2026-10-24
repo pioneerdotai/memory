@@ -70,7 +70,7 @@ impl FileLock {
                     }));
                 }
                 Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
-                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => return Ok(None),
+                Err(err) if Self::is_lock_contended(&err) => return Ok(None),
                 Err(err) => return Err(MemvidError::Lock(err.to_string())),
             }
         }
@@ -206,6 +206,12 @@ impl FileLock {
         }
     }
 
+    fn is_lock_contended(error: &std::io::Error) -> bool {
+        // Windows reports ERROR_LOCK_VIOLATION as Uncategorized rather than WouldBlock.
+        error.kind() == std::io::ErrorKind::WouldBlock
+            || error.raw_os_error() == fs2::lock_contended_error().raw_os_error()
+    }
+
     fn lock_with_retry(file: &File, mode: LockMode) -> Result<()> {
         const MAX_ATTEMPTS: u32 = 200; // ~10 seconds with 50ms backoff
         const BACKOFF: Duration = Duration::from_millis(50);
@@ -223,7 +229,7 @@ impl FileLock {
             match result {
                 Ok(()) => return Ok(()),
                 Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
-                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                Err(err) if Self::is_lock_contended(&err) => {
                     if attempts >= max_attempts {
                         return Err(MemvidError::Lock(
                             "exclusive access unavailable; file is in use by another process"
