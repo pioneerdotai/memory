@@ -566,28 +566,43 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
         let mut mem = Memvid::create(dir.path().join("postfilter.mv2")).unwrap();
         mem.enable_lex().unwrap();
-        let mut rejected = Vec::new();
-        for _ in 0..120 {
-            rejected.push(mem.put_bytes(b"needle").unwrap());
+        for i in 0..120 {
+            mem.put_bytes_with_options(
+                b"needle",
+                crate::PutOptions::builder()
+                    .uri(format!("mv2://rejected/{i}"))
+                    .extract_triplets(false)
+                    .build(),
+            )
+            .unwrap();
         }
         let mut expected = std::collections::HashSet::new();
         for i in 0..13 {
             let text = format!("needle {}", "padding ".repeat(100));
-            expected.insert(
-                mem.put_bytes_with_options(
-                    text.as_bytes(),
-                    crate::PutOptions::builder()
-                        .uri(format!("mv2://kept/{i}"))
-                        .build(),
-                )
-                .unwrap(),
-            );
+            let uri = format!("mv2://kept/{i}");
+            expected.insert(uri.clone());
+            mem.put_bytes_with_options(
+                text.as_bytes(),
+                crate::PutOptions::builder()
+                    .uri(uri)
+                    .extract_triplets(false)
+                    .build(),
+            )
+            .unwrap();
         }
         mem.commit().unwrap();
+        assert_eq!(mem.toc.frames.len(), 133);
         // Tantivy still ranks these strongly, while authoritative evaluation
         // rejects them after retrieval. No scope/filter pushdown can hide them.
-        for id in rejected {
-            mem.toc.frames[id as usize].search_text = Some("unrelated".into());
+        // Put returns WAL sequence numbers, not committed frame IDs.
+        for frame in &mut mem.toc.frames {
+            if frame
+                .uri
+                .as_deref()
+                .is_some_and(|uri| uri.starts_with("mv2://rejected/"))
+            {
+                frame.search_text = Some("unrelated".into());
+            }
         }
         let mut cursor = None;
         let mut found = std::collections::HashSet::new();
@@ -601,8 +616,8 @@ mod tests {
             assert_eq!(response.engine, SearchEngineKind::Tantivy);
             assert_eq!(response.hits.len(), if page == 2 { 3 } else { 5 });
             for hit in response.hits {
-                assert!(expected.contains(&hit.frame_id));
-                assert!(found.insert(hit.frame_id));
+                assert!(expected.contains(&hit.uri));
+                assert!(found.insert(hit.uri));
             }
             cursor = response.next_cursor;
             assert_eq!(cursor.is_none(), page == 2);

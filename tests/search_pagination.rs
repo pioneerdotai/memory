@@ -4,6 +4,18 @@ use memvid_core::types::{AclContext, AclEnforcementMode};
 use memvid_core::{Memvid, PutOptions, SearchRequest};
 use tempfile::TempDir;
 
+// These fixtures exercise committed retrieval, not enrichment or instant indexing.
+// Stable metadata keeps additional inferred query words out of snippet counts.
+fn search_options() -> memvid_core::PutOptionsBuilder {
+    PutOptions::builder()
+        .title("Search pagination fixture")
+        .instant_index(false)
+        .auto_tag(false)
+        .extract_dates(false)
+        .extract_triplets(false)
+        .extraction_budget_ms(0)
+}
+
 fn request(query: &str, limit: usize, cursor: Option<String>) -> SearchRequest {
     SearchRequest {
         query_embedding: None,
@@ -31,9 +43,7 @@ fn lexical_pages_reach_matches_after_rejected_document_windows() {
     for i in 0..120 {
         mem.put_bytes_with_options(
             b"needle",
-            PutOptions::builder()
-                .uri(format!("mv2://other/{i}"))
-                .build(),
+            search_options().uri(format!("mv2://other/{i}")).build(),
         )
         .unwrap();
     }
@@ -41,9 +51,7 @@ fn lexical_pages_reach_matches_after_rejected_document_windows() {
         let text = format!("needle {}", "filler ".repeat(100));
         mem.put_bytes_with_options(
             text.as_bytes(),
-            PutOptions::builder()
-                .uri(format!("mv2://wanted/{i}"))
-                .build(),
+            search_options().uri(format!("mv2://wanted/{i}")).build(),
         )
         .unwrap();
     }
@@ -70,22 +78,22 @@ fn analytical_wording_does_not_replace_search_with_timeline() {
     let mut mem = Memvid::create(dir.path().join("analytical.mv2")).unwrap();
     mem.enable_lex().unwrap();
     mem.enable_vec().unwrap();
-    let id = mem
-        .put_with_embedding_and_options(
-            b"compare changes providers",
-            vec![1.0, 0.0],
-            PutOptions {
-                timestamp: Some(100),
-                ..Default::default()
-            },
-        )
-        .unwrap();
+    mem.put_with_embedding_and_options(
+        b"compare changes providers",
+        vec![1.0, 0.0],
+        PutOptions {
+            uri: Some("mv2://providers".into()),
+            timestamp: Some(100),
+            ..search_options().build()
+        },
+    )
+    .unwrap();
     mem.put_with_embedding_and_options(
         b"unrelated recent entry",
         vec![0.0, 1.0],
         PutOptions {
             timestamp: Some(200),
-            ..Default::default()
+            ..search_options().build()
         },
     )
     .unwrap();
@@ -95,7 +103,7 @@ fn analytical_wording_does_not_replace_search_with_timeline() {
         req.query_embedding = Some(vec![1.0, 0.0]);
         let response = mem.search(req).unwrap();
         assert_eq!(response.hits.len(), 1);
-        assert_eq!(response.hits[0].frame_id, id);
+        assert_eq!(response.hits[0].uri, "mv2://providers");
         assert!(response.next_cursor.is_some());
     }
 }
@@ -122,7 +130,7 @@ fn hybrid_pages_fill_after_vector_scope_and_acl_rejections() {
             ]
             .into_iter()
             .collect(),
-            ..Default::default()
+            ..search_options().build()
         };
         mem.put_with_embedding_and_options(b"indexed document", vec![i as f32, 1.0], options)
             .unwrap();
@@ -189,7 +197,7 @@ fn ask_hybrid_continuation_pages_the_combined_order() {
         mem.put_with_embedding_and_options(
             b"needle",
             vec![1.0, i as f32 / 180.0],
-            PutOptions::builder().uri(format!("mv2://doc/{i}")).build(),
+            search_options().uri(format!("mv2://doc/{i}")).build(),
         )
         .unwrap();
     }
@@ -233,7 +241,7 @@ fn lexical_pages_apply_acl_before_counting_hits() {
                 ]
                 .into_iter()
                 .collect(),
-                ..Default::default()
+                ..search_options().build()
             },
         )
         .unwrap();
@@ -261,7 +269,15 @@ fn lexical_continuation_reaches_later_snippets_of_one_document() {
     let mut mem = Memvid::create(dir.path().join("snippets.mv2")).unwrap();
     mem.enable_lex().unwrap();
     let text = format!("needle. {}", "filler. ".repeat(30)).repeat(8);
-    mem.put_bytes(text.as_bytes()).unwrap();
+    mem.put_bytes_with_options(
+        text.as_bytes(),
+        search_options()
+            .title("Snippet pagination document")
+            .auto_tag(false)
+            .extract_triplets(false)
+            .build(),
+    )
+    .unwrap();
     mem.commit().unwrap();
     let mut cursor = None;
     let mut ranges = std::collections::HashSet::new();
@@ -282,20 +298,22 @@ fn ask_pages_grow_past_duplicate_snippets_before_later_sources() {
     let dir = TempDir::new().unwrap();
     let mut mem = Memvid::create(dir.path().join("ask-snippets.mv2")).unwrap();
     mem.enable_lex().unwrap();
-    let repeated = format!("needle. {}", "padding. ".repeat(30)).repeat(12);
+    // Keep each payload below automatic document chunking: this case needs
+    // repeated snippets of one frame, followed by three other source frames.
+    let repeated = format!("needle. {}", "padding. ".repeat(20)).repeat(12);
     let mut expected = std::collections::HashSet::new();
-    expected.insert(mem.put_bytes(repeated.as_bytes()).unwrap());
+    expected.insert("mv2://first".to_string());
+    mem.put_bytes_with_options(
+        repeated.as_bytes(),
+        search_options().uri("mv2://first").build(),
+    )
+    .unwrap();
     for i in 0..3 {
-        let text = format!("needle {}", "padding ".repeat(1000));
-        expected.insert(
-            mem.put_bytes_with_options(
-                text.as_bytes(),
-                PutOptions::builder()
-                    .uri(format!("mv2://later/{i}"))
-                    .build(),
-            )
-            .unwrap(),
-        );
+        let text = format!("needle {}", "padding ".repeat(100));
+        let uri = format!("mv2://later/{i}");
+        expected.insert(uri.clone());
+        mem.put_bytes_with_options(text.as_bytes(), search_options().uri(uri).build())
+            .unwrap();
     }
     mem.commit().unwrap();
     let mut cursor = None;
@@ -309,7 +327,7 @@ fn ask_pages_grow_past_duplicate_snippets_before_later_sources() {
         let response = mem.ask::<dyn memvid_core::VecEmbedder>(req, None).unwrap();
         assert_eq!(response.retrieval.hits.len(), 2);
         for hit in response.retrieval.hits {
-            assert!(seen.insert(hit.frame_id));
+            assert!(seen.insert(hit.uri));
         }
         cursor = response.retrieval.next_cursor;
         assert_eq!(cursor.is_none(), page == 1);
@@ -324,39 +342,40 @@ fn ask_pages_grow_past_timestamp_postfilters_before_later_sources() {
     let dir = TempDir::new().unwrap();
     let mut mem = Memvid::create(dir.path().join("ask-time.mv2")).unwrap();
     mem.enable_lex().unwrap();
-    let first = mem
-        .put_bytes_with_options(
-            b"needle",
-            PutOptions {
-                timestamp: Some(200),
-                ..Default::default()
-            },
-        )
-        .unwrap();
+    mem.put_bytes_with_options(
+        b"needle",
+        PutOptions {
+            uri: Some("mv2://first".into()),
+            timestamp: Some(200),
+            ..search_options().build()
+        },
+    )
+    .unwrap();
     for _ in 0..40 {
         mem.put_bytes_with_options(
             b"needle padding",
             PutOptions {
                 timestamp: Some(50),
-                ..Default::default()
+                ..search_options().build()
             },
         )
         .unwrap();
     }
-    let mut expected: std::collections::HashSet<_> = [first].into_iter().collect();
+    let mut expected: std::collections::HashSet<_> =
+        ["mv2://first".to_string()].into_iter().collect();
     for i in 0..3 {
         let text = format!("needle {}", "padding ".repeat(100));
-        expected.insert(
-            mem.put_bytes_with_options(
-                text.as_bytes(),
-                PutOptions {
-                    timestamp: Some(200),
-                    uri: Some(format!("mv2://later/{i}")),
-                    ..Default::default()
-                },
-            )
-            .unwrap(),
-        );
+        let uri = format!("mv2://later/{i}");
+        expected.insert(uri.clone());
+        mem.put_bytes_with_options(
+            text.as_bytes(),
+            PutOptions {
+                timestamp: Some(200),
+                uri: Some(uri),
+                ..search_options().build()
+            },
+        )
+        .unwrap();
     }
     mem.commit().unwrap();
     let mut cursor = None;
@@ -370,7 +389,7 @@ fn ask_pages_grow_past_timestamp_postfilters_before_later_sources() {
         let response = mem.ask::<dyn memvid_core::VecEmbedder>(req, None).unwrap();
         assert_eq!(response.retrieval.hits.len(), 2);
         for hit in response.retrieval.hits {
-            assert!(seen.insert(hit.frame_id));
+            assert!(seen.insert(hit.uri));
         }
         cursor = response.retrieval.next_cursor;
         assert_eq!(cursor.is_none(), page == 1);
@@ -391,7 +410,7 @@ fn hybrid_query_fields_filter_semantic_candidates_before_paging() {
             PutOptions {
                 tags: vec![if i >= 80 { "allowed" } else { "denied" }.into()],
                 timestamp: Some(if i >= 80 { 1_704_067_200 } else { 946_684_800 }),
-                ..Default::default()
+                ..search_options().build()
             },
         )
         .unwrap();
@@ -414,7 +433,7 @@ fn hybrid_query_fields_filter_semantic_candidates_before_paging() {
                 cursor.as_deref(),
             )
         }
-        .unwrap()
+        .unwrap_or_else(|err| panic!("query={query}, hybrid={hybrid}: {err:?}"))
     };
     for query in [
         "absenttoken AND tag:allowed",
@@ -473,9 +492,7 @@ fn hybrid_uri_uses_lexical_prefix_case_and_scope_precedence() {
         mem.put_with_embedding_and_options(
             b"needle",
             vec![1.0, 0.0],
-            PutOptions::builder()
-                .uri(format!("mv2://other/{i}"))
-                .build(),
+            search_options().uri(format!("mv2://other/{i}")).build(),
         )
         .unwrap();
     }
@@ -487,7 +504,7 @@ fn hybrid_uri_uses_lexical_prefix_case_and_scope_precedence() {
         mem.put_with_embedding_and_options(
             b"needle with additional context about the saved decision",
             vec![1.0, 1.0],
-            PutOptions::builder().uri(uri).build(),
+            search_options().uri(uri).build(),
         )
         .unwrap();
     }
@@ -520,7 +537,7 @@ fn zero_pages_are_rejected_without_nonadvancing_cursors() {
     let mut mem = Memvid::create(dir.path().join("zero.mv2")).unwrap();
     mem.enable_lex().unwrap();
     mem.enable_vec().unwrap();
-    mem.put_with_embedding_and_options(b"needle", vec![1.0, 0.0], PutOptions::default())
+    mem.put_with_embedding_and_options(b"needle", vec![1.0, 0.0], search_options().build())
         .unwrap();
     mem.commit().unwrap();
     for cursor in [None, Some("0".into()), Some("1".into())] {
@@ -549,7 +566,7 @@ fn zero_pages_are_rejected_without_nonadvancing_cursors() {
         ));
         for mode in ["lex", "sem", "hybrid"] {
             let req: memvid_core::AskRequest = serde_json::from_value(serde_json::json!({
-                "question": "needle", "top_k": 0, "context_only": true,
+                "question": "needle", "top_k": 0, "snippet_chars": 120, "context_only": true,
                 "mode": mode, "cursor": cursor,
             }))
             .unwrap();

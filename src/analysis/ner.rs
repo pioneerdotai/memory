@@ -277,37 +277,25 @@ mod model_impl {
 
             let seq_len = input_ids.len();
 
-            // Create input tensors using Tensor::from_array
-            let input_ids_array = ndarray::Array2::from_shape_vec((1, seq_len), input_ids)
-                .map_err(|e| MemvidError::NerModelNotAvailable {
-                    reason: format!("failed to create input_ids array: {}", e).into(),
-                })?;
-
-            let attention_mask_array =
-                ndarray::Array2::from_shape_vec((1, seq_len), attention_mask).map_err(|e| {
+            // Use shape/data inputs, independent of ort's ndarray version.
+            let input_ids_tensor =
+                Tensor::from_array(([1usize, seq_len], input_ids)).map_err(|e| {
                     MemvidError::NerModelNotAvailable {
-                        reason: format!("failed to create attention_mask array: {}", e).into(),
+                        reason: format!("failed to create input_ids tensor: {}", e).into(),
                     }
                 })?;
 
-            let input_ids_tensor = Tensor::from_array(input_ids_array).map_err(|e| {
-                MemvidError::NerModelNotAvailable {
-                    reason: format!("failed to create input_ids tensor: {}", e).into(),
-                }
-            })?;
-
-            let attention_mask_tensor = Tensor::from_array(attention_mask_array).map_err(|e| {
-                MemvidError::NerModelNotAvailable {
+            let attention_mask_tensor = Tensor::from_array(([1usize, seq_len], attention_mask))
+                .map_err(|e| MemvidError::NerModelNotAvailable {
                     reason: format!("failed to create attention_mask tensor: {}", e).into(),
-                }
-            })?;
+                })?;
 
             // Get output name before inference (avoid borrow conflict)
             let output_name = self
                 .session
-                .outputs
+                .outputs()
                 .first()
-                .map(|o| o.name.clone())
+                .map(|o| o.name().to_owned())
                 .unwrap_or_else(|| "logits".into());
 
             // Run inference

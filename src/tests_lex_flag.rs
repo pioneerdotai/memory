@@ -23,6 +23,7 @@ mod tests {
                     let opts = PutOptions::builder()
                         .uri(format!("mv2://doc/{i}"))
                         .search_text(content.clone())
+                        .extract_triplets(false)
                         .build();
                     mem.put_bytes_with_options(content.as_bytes(), opts)
                         .unwrap();

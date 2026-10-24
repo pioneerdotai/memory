@@ -6,6 +6,9 @@ use crate::{AclEnforcementMode, SearchEngineKind, SearchRequest, SketchVariant};
 fn options(text: &str, instant: bool) -> PutOptions {
     PutOptions::builder()
         .uri(format!("mv2://rebuild/{text}"))
+        // Updating payloads preserves titles; keep stale payload words out of
+        // metadata so searches below measure the rebuilt content itself.
+        .title("Rebuild regression document")
         .search_text(text)
         .instant_index(instant)
         .auto_tag(false)

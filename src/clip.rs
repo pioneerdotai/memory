@@ -587,7 +587,7 @@ impl From<ClipError> for MemvidError {
 mod model {
     use super::*;
     use image::{DynamicImage, GenericImageView, imageops::FilterType};
-    use ndarray::{Array, Array4};
+    use ndarray::Array4;
     use ort::session::{Session, builder::GraphOptimizationLevel};
     use ort::value::Tensor;
     use std::sync::Mutex;
@@ -918,21 +918,23 @@ mod model {
 
             // Get input and output names from session before running
             let input_name = session
-                .inputs
+                .inputs()
                 .first()
-                .map(|i| i.name.clone())
+                .map(|i| i.name().to_owned())
                 .unwrap_or_else(|| "pixel_values".into());
             let output_name = session
-                .outputs
+                .outputs()
                 .first()
-                .map(|o| o.name.clone())
+                .map(|o| o.name().to_owned())
                 .unwrap_or_else(|| "image_embeds".into());
 
-            // Create tensor from ndarray
+            // Use shape/data inputs, independent of ort's ndarray version.
+            let input_shape = pixel_values.shape().to_vec();
             let input_tensor =
-                Tensor::from_array(pixel_values).map_err(|e| ClipError::InferenceError {
-                    cause: format!("Failed to create input tensor: {}", e),
-                })?;
+                Tensor::from_array((input_shape, pixel_values.into_iter().collect::<Vec<_>>()))
+                    .map_err(|e| ClipError::InferenceError {
+                        cause: format!("Failed to create input tensor: {}", e),
+                    })?;
 
             // Run the model
             let outputs = session
@@ -1022,18 +1024,6 @@ mod model {
                 .collect();
             let max_length = input_ids.len();
 
-            // Create input arrays
-            let input_ids_array =
-                Array::from_shape_vec((1, max_length), input_ids).map_err(|e| {
-                    ClipError::InferenceError {
-                        cause: e.to_string(),
-                    }
-                })?;
-            let attention_mask_array = Array::from_shape_vec((1, max_length), attention_mask)
-                .map_err(|e| ClipError::InferenceError {
-                    cause: e.to_string(),
-                })?;
-
             // Update last used timestamp
             if let Ok(mut last) = self.last_used.lock() {
                 *last = Instant::now();
@@ -1052,23 +1042,28 @@ mod model {
                 })?;
 
             // Get input and output names from session before running
-            let input_names: Vec<String> = session.inputs.iter().map(|i| i.name.clone()).collect();
+            let input_names: Vec<String> = session
+                .inputs()
+                .iter()
+                .map(|i| i.name().to_owned())
+                .collect();
             let output_name = session
-                .outputs
+                .outputs()
                 .first()
-                .map(|o| o.name.clone())
+                .map(|o| o.name().to_owned())
                 .unwrap_or_else(|| "text_embeds".into());
 
-            // Create tensors from ndarray
+            // Create tensors from shape and owned data.
             let input_ids_tensor =
-                Tensor::from_array(input_ids_array).map_err(|e| ClipError::InferenceError {
-                    cause: format!("Failed to create input_ids tensor: {}", e),
+                Tensor::from_array(([1usize, max_length], input_ids)).map_err(|e| {
+                    ClipError::InferenceError {
+                        cause: format!("Failed to create input_ids tensor: {}", e),
+                    }
                 })?;
-            let attention_mask_tensor = Tensor::from_array(attention_mask_array).map_err(|e| {
-                ClipError::InferenceError {
+            let attention_mask_tensor = Tensor::from_array(([1usize, max_length], attention_mask))
+                .map_err(|e| ClipError::InferenceError {
                     cause: format!("Failed to create attention_mask tensor: {}", e),
-                }
-            })?;
+                })?;
 
             // Build inputs based on what the model expects
             let outputs = if input_names.len() >= 2 {
