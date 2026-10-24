@@ -110,6 +110,11 @@ impl Memvid {
     }
 
     pub fn search(&mut self, mut request: SearchRequest) -> Result<SearchResponse> {
+        if request.top_k == 0 {
+            return Err(MemvidError::InvalidQuery {
+                reason: "top_k must be positive".into(),
+            });
+        }
         if let Some(embedding) = request.query_embedding.take() {
             return self.search_with_embedding(request, &embedding);
         }

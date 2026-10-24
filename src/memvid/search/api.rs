@@ -337,6 +337,12 @@ impl Memvid {
         };
         use std::time::Instant;
 
+        if top_k == 0 {
+            return Err(MemvidError::InvalidQuery {
+                reason: "top_k must be positive".into(),
+            });
+        }
+        let parsed = crate::search::parse_query(query)?;
         if !self.vec_enabled {
             return Err(MemvidError::VecNotEnabled);
         }
@@ -384,6 +390,7 @@ impl Memvid {
             self.ensure_vec_index()?;
         }
 
+        let scope = scope.filter(|_| filter.and_then(|request| request.uri.as_ref()).is_none());
         let offset = super::helpers::parse_cursor(cursor, usize::MAX)?;
         let wanted = offset.saturating_add(top_k).saturating_add(1);
         let mut candidate_limit = wanted.max(32);
@@ -416,10 +423,11 @@ impl Memvid {
                     continue;
                 }
                 if let Some(request) = filter {
-                    if request
+                    let uri_mismatch = request
                         .uri
                         .as_ref()
-                        .is_some_and(|uri| frame.uri.as_ref() != Some(uri))
+                        .is_some_and(|uri| !super::helpers::uri_matches(frame.uri.as_deref(), uri));
+                    if uri_mismatch
                         || request.as_of_frame.is_some_and(|id| frame.id > id)
                         || request.as_of_ts.is_some_and(|ts| frame.timestamp > ts)
                     {
@@ -431,6 +439,14 @@ impl Memvid {
                     .as_ref()
                     .is_some_and(|ids| !ids.contains(&frame.id))
                 {
+                    continue;
+                }
+
+                let evaluation = crate::search::EvaluationContext {
+                    frame: &frame,
+                    content_lower: "",
+                };
+                if !parsed.permits_semantic_match(&evaluation) {
                     continue;
                 }
 

@@ -25,6 +25,11 @@ impl ParsedQuery {
         self.expr.evaluate(ctx)
     }
 
+    /// Check mandatory fields while leaving semantic text terms unknown.
+    pub(crate) fn permits_semantic_match(&self, ctx: &EvaluationContext<'_>) -> bool {
+        self.expr.semantic_truth(ctx).0
+    }
+
     pub fn text_tokens(&self) -> Vec<String> {
         self.expr.collect_tokens()
     }
@@ -145,6 +150,30 @@ impl DateRange {
 }
 
 impl Expr {
+    // (can be true, can be false). Unknown text stays unknown under NOT,
+    // so negated/composite field restrictions keep their Boolean meaning.
+    fn semantic_truth(&self, ctx: &EvaluationContext<'_>) -> (bool, bool) {
+        match self {
+            Expr::Term(Term::Text(_)) => (true, true),
+            Expr::Term(Term::Field(field)) => {
+                let matched = field.matches(ctx);
+                (matched, !matched)
+            }
+            Expr::Not(child) => {
+                let (yes, no) = child.semantic_truth(ctx);
+                (no, yes)
+            }
+            Expr::And(children) => children.iter().fold((true, false), |(yes, no), child| {
+                let (child_yes, child_no) = child.semantic_truth(ctx);
+                (yes && child_yes, no || child_no)
+            }),
+            Expr::Or(children) => children.iter().fold((false, true), |(yes, no), child| {
+                let (child_yes, child_no) = child.semantic_truth(ctx);
+                (yes || child_yes, no && child_no)
+            }),
+        }
+    }
+
     fn evaluate(&self, ctx: &EvaluationContext<'_>) -> bool {
         match self {
             Expr::Or(children) => children.iter().any(|child| child.evaluate(ctx)),

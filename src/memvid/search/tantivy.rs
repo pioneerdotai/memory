@@ -4,7 +4,7 @@
 #[cfg(feature = "temporal_track")]
 use super::helpers::attach_temporal_metadata;
 use super::helpers::{
-    build_context, collect_token_occurrences, parse_cursor, timestamp_to_rfc3339,
+    build_context, collect_token_occurrences, parse_cursor, timestamp_to_rfc3339, uri_matches,
 };
 use crate::Result;
 use crate::lex::compute_snippet_slices;
@@ -391,19 +391,6 @@ pub(super) fn try_tantivy_search(
         engine: SearchEngineKind::Tantivy,
         stale_index_skips: stale_skips,
     }))
-}
-
-fn uri_matches(candidate: Option<&str>, expected: &str) -> bool {
-    let Some(uri) = candidate else {
-        return false;
-    };
-    if expected.contains('#') {
-        uri.eq_ignore_ascii_case(expected)
-    } else {
-        let expected_lower = expected.to_ascii_lowercase();
-        let candidate_lower = uri.to_ascii_lowercase();
-        candidate_lower.starts_with(&expected_lower)
-    }
 }
 
 /// Parse content dates (from frame metadata) to find the most relevant timestamp.

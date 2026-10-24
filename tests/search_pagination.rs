@@ -377,3 +377,135 @@ fn ask_pages_grow_past_timestamp_postfilters_before_later_sources() {
     }
     assert_eq!(seen, expected);
 }
+
+#[test]
+fn hybrid_query_fields_filter_semantic_candidates_before_paging() {
+    let dir = TempDir::new().unwrap();
+    let mut mem = Memvid::create(dir.path().join("query-fields.mv2")).unwrap();
+    mem.enable_lex().unwrap();
+    mem.enable_vec().unwrap();
+    for i in 0..85 {
+        mem.put_with_embedding_and_options(
+            b"semantically related document",
+            vec![1.0, i as f32 / 100.0],
+            PutOptions {
+                tags: vec![if i >= 80 { "allowed" } else { "denied" }.into()],
+                timestamp: Some(if i >= 80 { 1_704_067_200 } else { 946_684_800 }),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    }
+    mem.commit().unwrap();
+    for query in [
+        "absenttoken AND tag:allowed",
+        "absenttoken AND NOT tag:denied",
+        "absenttoken AND (tag:allowed OR tag:missing)",
+        "absenttoken AND NOT (tag:denied OR tag:missing)",
+        "absenttoken AND date:[2024-01-01 TO 2024-12-31]",
+    ] {
+        let mut cursor = None;
+        let mut seen = std::collections::HashSet::new();
+        for count in [2, 2, 1] {
+            let mut req = request(query, 2, cursor);
+            req.query_embedding = Some(vec![1.0, 0.0]);
+            let response = mem.search(req).unwrap();
+            assert_eq!(response.hits.len(), count, "{query}");
+            for hit in response.hits {
+                assert!(hit.frame_id >= 80, "{query}");
+                seen.insert(hit.frame_id);
+            }
+            cursor = response.next_cursor;
+            assert_eq!(cursor.is_none(), count == 1);
+        }
+        assert_eq!(seen.len(), 5);
+    }
+}
+
+#[test]
+fn hybrid_uri_uses_lexical_prefix_case_and_scope_precedence() {
+    let dir = TempDir::new().unwrap();
+    let mut mem = Memvid::create(dir.path().join("uri.mv2")).unwrap();
+    mem.enable_lex().unwrap();
+    mem.enable_vec().unwrap();
+    for uri in [
+        "mv2://Wanted/parent#one",
+        "mv2://Wanted/parent#two",
+        "mv2://other",
+    ] {
+        mem.put_with_embedding_and_options(
+            b"needle",
+            vec![1.0, 0.0],
+            PutOptions::builder().uri(uri).build(),
+        )
+        .unwrap();
+    }
+    mem.commit().unwrap();
+    for semantic in [false, true] {
+        for (uri, expected) in [("MV2://WANTED/", 2), ("MV2://WANTED/PARENT#ONE", 1)] {
+            let mut cursor = None;
+            let mut seen = std::collections::HashSet::new();
+            for page in 0..expected {
+                let mut req = request(if semantic { "absenttoken" } else { "needle" }, 1, cursor);
+                req.uri = Some(uri.into());
+                req.scope = Some("mv2://other".into());
+                if semantic {
+                    req.query_embedding = Some(vec![1.0, 0.0]);
+                }
+                let response = mem.search(req).unwrap();
+                assert_eq!(response.hits.len(), 1);
+                assert!(response.hits[0].uri.starts_with("mv2://Wanted/"));
+                assert!(seen.insert(response.hits[0].uri.clone()));
+                cursor = response.next_cursor;
+                assert_eq!(cursor.is_none(), page + 1 == expected);
+            }
+        }
+    }
+}
+
+#[test]
+fn zero_pages_are_rejected_without_nonadvancing_cursors() {
+    let dir = TempDir::new().unwrap();
+    let mut mem = Memvid::create(dir.path().join("zero.mv2")).unwrap();
+    mem.enable_lex().unwrap();
+    mem.enable_vec().unwrap();
+    mem.put_with_embedding_and_options(b"needle", vec![1.0, 0.0], PutOptions::default())
+        .unwrap();
+    mem.commit().unwrap();
+    for cursor in [None, Some("0".into()), Some("1".into())] {
+        for hybrid in [false, true] {
+            let mut req = request("needle", 0, cursor.clone());
+            if hybrid {
+                req.query_embedding = Some(vec![1.0, 0.0]);
+            }
+            assert!(matches!(
+                mem.search(req),
+                Err(memvid_core::MemvidError::InvalidQuery { .. })
+            ));
+        }
+        assert!(matches!(
+            mem.vec_search_with_embedding_acl(
+                "needle",
+                &[1.0, 0.0],
+                0,
+                120,
+                None,
+                None,
+                AclEnforcementMode::Audit,
+                cursor.as_deref(),
+            ),
+            Err(memvid_core::MemvidError::InvalidQuery { .. })
+        ));
+        for mode in ["lex", "sem", "hybrid"] {
+            let req: memvid_core::AskRequest = serde_json::from_value(serde_json::json!({
+                "question": "needle", "top_k": 0, "context_only": true,
+                "mode": mode, "cursor": cursor,
+            }))
+            .unwrap();
+            assert!(matches!(
+                mem.ask::<dyn memvid_core::VecEmbedder>(req, None),
+                Err(memvid_core::MemvidError::InvalidQuery { .. })
+            ));
+        }
+    }
+}

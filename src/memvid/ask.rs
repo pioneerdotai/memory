@@ -24,6 +24,11 @@ impl Memvid {
     where
         E: VecEmbedder + ?Sized,
     {
+        if request.top_k == 0 {
+            return Err(MemvidError::InvalidQuery {
+                reason: "top_k must be positive".into(),
+            });
+        }
         let offset =
             crate::memvid::search::helpers::parse_cursor(request.cursor.as_deref(), usize::MAX)?;
         let mut prefix_request = request.clone();

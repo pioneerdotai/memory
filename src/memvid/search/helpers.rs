@@ -472,3 +472,16 @@ mod unicode_occurrence_tests {
         assert_eq!(matched, ["İ", "K", "ПРИМУ", "ΟΣ"]);
     }
 }
+
+pub(super) fn uri_matches(candidate: Option<&str>, expected: &str) -> bool {
+    let Some(uri) = candidate else {
+        return false;
+    };
+    if expected.contains('#') {
+        uri.eq_ignore_ascii_case(expected)
+    } else {
+        let expected_lower = expected.to_ascii_lowercase();
+        let candidate_lower = uri.to_ascii_lowercase();
+        candidate_lower.starts_with(&expected_lower)
+    }
+}
